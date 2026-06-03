@@ -1,0 +1,3742 @@
+import React, { useState, useRef, useEffect } from "react";
+import {
+  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone
+} from "lucide-react";
+import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
+
+const VISUALIZER_PALETTES = {
+  gold: {
+    center: { r: 199, g: 161, b: 122 },
+    peak: { r: 255, g: 255, b: 255 },
+    shadow: "rgba(212, 175, 55, ",
+  },
+  cyberpunk: {
+    center: { r: 255, g: 0, b: 255 },
+    peak: { r: 0, g: 255, b: 255 },
+    shadow: "rgba(255, 0, 255, ",
+  },
+  ocean: {
+    center: { r: 0, g: 153, b: 255 },
+    peak: { r: 0, g: 255, b: 153 },
+    shadow: "rgba(0, 153, 255, ",
+  },
+  monochrome: {
+    center: { r: 150, g: 150, b: 150 },
+    peak: { r: 255, g: 255, b: 255 },
+    shadow: "rgba(255, 255, 255, ",
+  },
+};
+
+const Visualizer = ({
+  analyser,
+  isPlaying,
+  settings,
+  className,
+  coverUrl,
+  onContainerClick,
+  isExpanded = false,
+  onToggleExpand,
+  isSignatureSound = false,
+}: {
+  analyser: AnalyserNode | null;
+  isPlaying: boolean;
+  settings: {
+    barWidthMultiplier: number;
+    barSpacing: number;
+    colorIntensity: number;
+    glowStrength: number;
+    type: string;
+    palette: string;
+  };
+  className?: string;
+  coverUrl?: string | null;
+  onContainerClick?: () => void;
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
+  isSignatureSound?: boolean;
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const requestRef = useRef<number>(0);
+  const particlesRef = useRef<any[]>([]);
+  const rotationAngleRef = useRef<number>(0);
+  const peaksRef = useRef<number[]>([]);
+  const peakVelsRef = useRef<number[]>([]);
+  
+  const [loadedImage, setLoadedImage] = useState<HTMLImageElement | null>(null);
+  const [showHUD, setShowHUD] = useState(true);
+
+  // Elite Auto-hide HUD and controllers after 3 seconds of inactivity
+  const hudTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const resetHUDTimer = () => {
+    setShowHUD(true);
+    if (hudTimerRef.current) {
+      clearTimeout(hudTimerRef.current);
+    }
+    hudTimerRef.current = setTimeout(() => {
+      setShowHUD(false);
+    }, 3000);
+  };
+
+  // Elite Zoom and Drag-pan refs and state
+  const zoomRef = useRef<number>(1.0);
+  const offsetXRef = useRef<number>(0);
+  const offsetYRef = useRef<number>(0);
+  const isDraggingRef = useRef<boolean>(false);
+  const startXRef = useRef<number>(0);
+  const startYRef = useRef<number>(0);
+  const dragStartPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const [currentZoom, setCurrentZoom] = useState<number>(1.0);
+  const [currentOffsetX, setCurrentOffsetX] = useState<number>(0);
+  const [currentOffsetY, setCurrentOffsetY] = useState<number>(0);
+
+  // Wheel zoom effect
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      resetHUDTimer();
+      const factor = e.deltaY < 0 ? 1.08 : 0.92;
+      const proposedZoom = zoomRef.current * factor;
+      zoomRef.current = Math.max(0.3, Math.min(proposedZoom, 6.0));
+      setCurrentZoom(zoomRef.current);
+    };
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      canvas.removeEventListener("wheel", handleWheel);
+    };
+  }, []);
+
+  // Pointer event handlers for silky freestyle drag/pan moves
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    resetHUDTimer();
+    isDraggingRef.current = true;
+    startXRef.current = e.clientX - offsetXRef.current;
+    startYRef.current = e.clientY - offsetYRef.current;
+    dragStartPosRef.current = { x: e.clientX, y: e.clientY };
+    canvasRef.current?.setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDraggingRef.current) return;
+    resetHUDTimer();
+    offsetXRef.current = e.clientX - startXRef.current;
+    offsetYRef.current = e.clientY - startYRef.current;
+    
+    // Smooth responsive rendering values
+    setCurrentOffsetX(offsetXRef.current);
+    setCurrentOffsetY(offsetYRef.current);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
+    canvasRef.current?.releasePointerCapture(e.pointerId);
+    resetHUDTimer();
+
+    // If it was barely panned, treat as a single click
+    const dist = Math.hypot(e.clientX - dragStartPosRef.current.x, e.clientY - dragStartPosRef.current.y);
+    if (dist < 6) {
+      if (!showHUD) {
+        // Just show the controls and HUD again, don't cycle yet to prevent accidental mode switches
+        resetHUDTimer();
+      } else {
+        if (onContainerClick) {
+          onContainerClick();
+        }
+      }
+    }
+  };
+
+  // Cross-origin safe loading of album covers for canvas rendering
+  useEffect(() => {
+    if (!coverUrl) {
+      setLoadedImage(null);
+      return;
+    }
+    let active = true;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.src = coverUrl;
+    img.onload = () => {
+      if (active) setLoadedImage(img);
+    };
+    img.onerror = () => {
+      if (active) setLoadedImage(null);
+    };
+    return () => {
+      active = false;
+    };
+  }, [coverUrl]);
+
+  // Flash HUD whenever style type changes
+  useEffect(() => {
+    resetHUDTimer();
+    return () => {
+      if (hudTimerRef.current) clearTimeout(hudTimerRef.current);
+    };
+  }, [settings.type]);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const handleResize = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+    };
+
+    handleResize();
+    const width = canvas.width / (window.devicePixelRatio || 1);
+    const height = canvas.height / (window.devicePixelRatio || 1);
+
+    // Set responsive FFT size based on visualizer style if active
+    if (analyser) {
+      analyser.fftSize = 256;
+    }
+    const bufferLength = analyser ? analyser.frequencyBinCount : 128;
+    const dataArray = new Uint8Array(bufferLength);
+
+    // Damped smoothing states
+    let smoothedVolume = 0;
+    let smoothedBass = 0;
+    let smoothedMid = 0;
+    let smoothedHigh = 0;
+
+    const draw = () => {
+      requestRef.current = requestAnimationFrame(draw);
+      
+      if (analyser) {
+        analyser.getByteFrequencyData(dataArray);
+      } else {
+        // Procedural generator for iOS Background Bypassed Mode (or when Web Audio is inactive)
+        const time = Date.now() * 0.0025;
+        const presenceFactor = isSignatureSound ? 1.45 : 1.0;
+        for (let i = 0; i < bufferLength; i++) {
+          if (isPlaying) {
+            const baseFreq = Math.sin(time + i * 0.08) * 35 * presenceFactor;
+            const subBass = Math.cos(time * 0.45) * 55 * presenceFactor;
+            const harmonics = Math.sin(time * 2.15 + i * 0.35) * 20 * presenceFactor;
+            const highFreq = Math.sin(time * 4.2 + i * 0.8) * 10 * presenceFactor;
+            
+            let val = 60 + baseFreq;
+            if (i < bufferLength * 0.15) {
+              val += Math.max(0, subBass) * 1.6 + Math.random() * 8;
+            } else if (i < bufferLength * 0.65) {
+              val += harmonics * 1.3 + Math.random() * 5;
+            } else {
+              val += highFreq * 1.1 + Math.random() * 3;
+            }
+            dataArray[i] = Math.max(10, Math.min(255, val));
+          } else {
+            // Calm, elegant resting breath pulse when paused
+            const pulse = (Math.sin(time * 0.5 + i * 0.05) * 8 + 12);
+            dataArray[i] = Math.max(4, pulse);
+          }
+        }
+      }
+
+      const centerY = height / 2;
+      const centerX = width / 2;
+
+      // Clean viewport
+      ctx.clearRect(0, 0, width, height);
+
+      // Save complete canvas state before any transformation
+      ctx.save();
+
+      // Implement premium zoom and drag offset positioning
+      ctx.translate(centerX + offsetXRef.current, centerY + offsetYRef.current);
+      ctx.scale(zoomRef.current, zoomRef.current);
+      ctx.translate(-centerX, -centerY);
+
+      // Calculations and groupings
+      let totalSum = 0;
+      let bassSum = 0;
+      let midSum = 0;
+      let highSum = 0;
+
+      const bassCutoff = Math.floor(bufferLength * 0.15); // Low frequencies (Sub-bass and Bass)
+      const midCutoff = Math.floor(bufferLength * 0.65);  // Core mid vocals
+
+      for (let i = 0; i < bufferLength; i++) {
+        const val = dataArray[i];
+        totalSum += val;
+        if (i < bassCutoff) {
+          bassSum += val;
+        } else if (i < midCutoff) {
+          midSum += val;
+        } else {
+          highSum += val;
+        }
+      }
+
+      const totalVol = totalSum / bufferLength / 255;
+      const bassVol = bassSum / (bassCutoff || 1) / 255;
+      const midVol = midSum / (midCutoff - bassCutoff || 1) / 255;
+      const highVol = highSum / (bufferLength - midCutoff || 1) / 255;
+
+      // Soft damping to make transitions silk-smooth (luxury studio standard)
+      smoothedVolume = smoothedVolume * 0.82 + totalVol * 0.18;
+      smoothedBass = smoothedBass * 0.82 + bassVol * 0.18;
+      smoothedMid = smoothedMid * 0.82 + midVol * 0.18;
+      smoothedHigh = smoothedHigh * 0.82 + highVol * 0.18;
+
+      // Ensure stable peaks buffers
+      if (peaksRef.current.length !== 16) {
+        peaksRef.current = Array(16).fill(0);
+        peakVelsRef.current = Array(16).fill(0);
+      }
+
+      // Render mode switcher
+      if (settings.type === "liquid_gold") {
+        // --- 1. GOLDEN NEBULA LIQUID WAVE ---
+        // Beautiful organic bezier curves wrapping dynamically like liquid silk
+        const gradientBg = ctx.createRadialGradient(centerX, centerY, 5, centerX, centerY, Math.max(width, height) / 2);
+        gradientBg.addColorStop(0, "rgba(22, 17, 12, 0.6)");
+        gradientBg.addColorStop(1, "rgba(5, 5, 8, 0.9)");
+        ctx.fillStyle = gradientBg;
+        ctx.fillRect(0, 0, width, height);
+
+        const wavesCount = 3;
+        const waveHeightMax = 95 * settings.colorIntensity;
+        const ptsCount = 8;
+        const segment = width / (ptsCount - 1);
+
+        for (let w = 0; w < wavesCount; w++) {
+          const speedFactor = 0.0018 + w * 0.0009;
+          const waveOpacity = 0.18 + (1.0 - w * 0.3) * 0.45;
+          const shiftPhase = w * (Math.PI / 2.5);
+
+          const gradLine = ctx.createLinearGradient(0, 0, width, 0);
+          gradLine.addColorStop(0, `rgba(180, 130, 80, ${waveOpacity * 0.2})`); // Darker bronze
+          gradLine.addColorStop(0.5, `rgba(251, 191, 36, ${waveOpacity * 1.5})`); // Rich Amber Gold
+          gradLine.addColorStop(1, `rgba(255, 230, 180, ${waveOpacity * 0.1})`); // Pale gold fade
+
+          ctx.strokeStyle = gradLine;
+          ctx.lineWidth = (4.5 - w) * settings.barWidthMultiplier * 0.8;
+          ctx.shadowBlur = 20 * settings.glowStrength;
+          ctx.shadowColor = `rgba(245, 158, 11, ${0.4 * settings.glowStrength})`;
+
+          ctx.beginPath();
+          for (let i = 0; i < ptsCount; i++) {
+            const px = i * segment;
+            // sound amplitude index mapping
+            const soundIndex = Math.floor((i / ptsCount) * bufferLength * 0.5);
+            const frequencyVal = dataArray[soundIndex] / 255;
+            const reactiveHeight = frequencyVal * waveHeightMax * (1.1 - w * 0.22);
+
+            const osc = Math.sin(Date.now() * speedFactor + i * 0.52 + shiftPhase);
+            // Center wave vertically, bouncing upwards with bass weight
+            const py = centerY + osc * reactiveHeight - (smoothedBass * 35);
+
+            if (i === 0) {
+              ctx.moveTo(px, py);
+            } else {
+              const prevX = (i - 1) * segment;
+              const prevSoundIndex = Math.floor(((i - 1) / ptsCount) * bufferLength * 0.5);
+              const prevFrequencyVal = dataArray[prevSoundIndex] / 255;
+              const prevReactiveHeight = prevFrequencyVal * waveHeightMax * (1.1 - w * 0.22);
+              const prevOsc = Math.sin(Date.now() * speedFactor + (i - 1) * 0.52 + shiftPhase);
+              const prevY = centerY + prevOsc * prevReactiveHeight - (smoothedBass * 35);
+
+              // Control points for cubic bezier splines
+              const cpX1 = prevX + segment / 2;
+              const cpY1 = prevY;
+              const cpX2 = px - segment / 2;
+              const cpY2 = py;
+
+              ctx.bezierCurveTo(cpX1, cpY1, cpX2, cpY2, px, py);
+            }
+          }
+          ctx.stroke();
+        }
+
+        // Generate gold micro-spark embers rising up
+        if (particlesRef.current.length < 45) {
+          particlesRef.current.push({
+            x: Math.random() * width,
+            y: centerY + (Math.random() * 40 - 20),
+            speedY: Math.random() * 1.2 + 0.4,
+            speedX: Math.random() * 0.8 - 0.4,
+            size: Math.random() * 2.5 + 1,
+            alpha: Math.random() * 0.6 + 0.4,
+            hue: 36 + Math.random() * 14 // warm amber gold tones (36-50)
+          });
+        }
+
+        particlesRef.current.forEach((p, index) => {
+          p.y -= p.speedY * (1.0 + smoothedBass * 2.5);
+          p.x += Math.sin(Date.now() * 0.01 + index) * 0.4 + p.speedX;
+          p.alpha -= 0.0075;
+
+          if (p.alpha <= 0 || p.y < 5 || p.x < 5 || p.x > width - 5) {
+            p.x = Math.random() * width;
+            p.y = centerY + (Math.random() * 50 - 25);
+            p.alpha = Math.random() * 0.7 + 0.3;
+            p.speedY = Math.random() * 1.2 + 0.4;
+          }
+
+          ctx.shadowBlur = 6 * settings.glowStrength;
+          ctx.shadowColor = `hsla(${p.hue}, 100%, 50%, ${p.alpha})`;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size * (1.0 + smoothedHigh * 0.8), 0, Math.PI * 2);
+          ctx.fillStyle = `hsla(${p.hue}, 100%, 80%, ${p.alpha})`;
+          ctx.fill();
+        });
+
+      } else if (settings.type === "stardust_orbit") {
+        // --- 2. LUXURY STARDUST ORBIT ---
+        // Rotating physical vinyl turntable core with expanding radial hairpins & orbital trails
+        const radBase = Math.min(width, height) / 4.4;
+        const reactiveCoreRad = radBase * (1.0 + smoothedBass * 0.22 * settings.colorIntensity);
+
+        ctx.translate(centerX, centerY);
+
+        // Spin logic (continuously spins, speeds up on high bass volume)
+        rotationAngleRef.current += 0.0055 + (smoothedBass * 0.015);
+
+        // Radial fine spectrogram spikes
+        const numSpikes = 110;
+        const spikeStep = (Math.PI * 2) / numSpikes;
+
+        ctx.shadowBlur = 15 * settings.glowStrength;
+        for (let i = 0; i < numSpikes; i++) {
+          const angle = i * spikeStep + rotationAngleRef.current * 0.25;
+          const mapIndex = Math.floor((i / numSpikes) * bufferLength * 0.7);
+          const rawAmp = dataArray[mapIndex] / 255;
+          const scaledAmpHeight = Math.pow(rawAmp, 1.7) * 55 * settings.colorIntensity;
+
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+
+          const xStart = cos * (reactiveCoreRad + 4);
+          const yStart = sin * (reactiveCoreRad + 4);
+          const xEnd = cos * (reactiveCoreRad + 4 + scaledAmpHeight);
+          const yEnd = sin * (reactiveCoreRad + 4 + scaledAmpHeight);
+
+          const gradLine = ctx.createLinearGradient(xStart, yStart, xEnd, yEnd);
+          gradLine.addColorStop(0, "rgba(220, 180, 130, 0.95)"); // Champagne gold rim
+          gradLine.addColorStop(0.5, "rgba(245, 158, 11, 0.75)"); // Intense amber aura
+          gradLine.addColorStop(1, "rgba(255, 255, 255, 0)"); // Air fade
+
+          ctx.strokeStyle = gradLine;
+          ctx.lineWidth = 1.35 * settings.barWidthMultiplier;
+          ctx.shadowColor = "rgba(245, 158, 11, 0.35)";
+
+          ctx.beginPath();
+          ctx.moveTo(xStart, yStart);
+          ctx.lineTo(xEnd, yEnd);
+          ctx.stroke();
+        }
+
+        // Spin stardust orbits around centered cover
+        if (particlesRef.current.length < 80 || !particlesRef.current[0]?.angle) {
+          particlesRef.current = [];
+          for (let i = 0; i < 80; i++) {
+            particlesRef.current.push({
+              angle: Math.random() * Math.PI * 2,
+              orbitRadius: radBase + 15 + Math.random() * 65,
+              rotSpeed: (Math.random() * 0.012 + 0.003),
+              pSize: Math.random() * 1.8 + 0.6,
+              opacity: Math.random() * 0.7 + 0.3,
+            });
+          }
+        }
+
+        particlesRef.current.forEach((p) => {
+          p.angle += p.rotSpeed * (1.0 + smoothedMid * 2.2);
+          const breathingShift = Math.sin(Date.now() * 0.0022 + p.orbitRadius) * (smoothedBass * 14);
+          const currentRadius = p.orbitRadius + breathingShift;
+
+          const px = Math.cos(p.angle) * currentRadius;
+          const py = Math.sin(p.angle) * currentRadius;
+
+          ctx.shadowBlur = 6 * settings.glowStrength;
+          ctx.shadowColor = "rgba(251, 191, 36, 0.45)";
+          ctx.fillStyle = `rgba(255, 235, 190, ${p.opacity * (0.55 + smoothedHigh * 0.45)})`;
+
+          ctx.beginPath();
+          ctx.arc(px, py, p.pSize * (1.0 + smoothedHigh * 0.7), 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        // Clip and render user album Cover Art directly inside canvas structure
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0, 0, reactiveCoreRad, 0, Math.PI * 2);
+        ctx.clip();
+
+        if (loadedImage) {
+          ctx.rotate(rotationAngleRef.current);
+          ctx.drawImage(
+            loadedImage,
+            -reactiveCoreRad,
+            -reactiveCoreRad,
+            reactiveCoreRad * 2,
+            reactiveCoreRad * 2
+          );
+          ctx.rotate(-rotationAngleRef.current);
+        } else {
+          // B&O Gold Turntable vinyl backing fallback
+          ctx.fillStyle = "#12141a";
+          ctx.fill();
+          ctx.fillStyle = "#dba960";
+          ctx.beginPath();
+          ctx.arc(0, 0, reactiveCoreRad * 0.3, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.06)";
+          ctx.lineWidth = 1;
+          for (let rFactor = 0.5; rFactor <= 0.85; rFactor += 0.15) {
+            ctx.beginPath();
+            ctx.arc(0, 0, reactiveCoreRad * rFactor, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+
+        // High gloss luxury metallic cover bezel
+        ctx.shadowBlur = 18 * settings.glowStrength;
+        ctx.shadowColor = "rgba(212, 175, 55, 0.55)";
+        
+        const metallicGrad = ctx.createLinearGradient(-reactiveCoreRad, -reactiveCoreRad, reactiveCoreRad, reactiveCoreRad);
+        metallicGrad.addColorStop(0, "rgba(130, 80, 30, 0.9)");
+        metallicGrad.addColorStop(0.25, "rgba(251, 191, 36, 0.9)"); // Bright Gold
+        metallicGrad.addColorStop(0.5, "rgba(255, 255, 255, 0.95)"); // Chrome Highlight
+        metallicGrad.addColorStop(0.75, "rgba(245, 158, 11, 0.9)"); // Gold
+        metallicGrad.addColorStop(1, "rgba(130, 80, 30, 0.9)");
+        
+        ctx.strokeStyle = metallicGrad;
+        ctx.lineWidth = 3.6;
+        ctx.beginPath();
+        ctx.arc(0, 0, reactiveCoreRad + 1.2, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Stylized spindle center hole
+        ctx.beginPath();
+        ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = "#020305";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+
+        ctx.translate(-centerX, -centerY);
+
+      } else if (settings.type === "neon_perspective") {
+        // --- 3. CYBERPUNK PERSPECTIVE RIFT ---
+        // A breathtaking 3D synthwave rift valley deforming on mid/bass frequencies
+        const horizonRatio = height * 0.35;
+        ctx.fillStyle = "#040508";
+        ctx.fillRect(0, 0, width, height);
+
+        // Perspective roads from horizon center down to bottom
+        const linesCount = 14;
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = `rgba(168, 85, 247, ${0.12 + smoothedBass * 0.16})`; // pulsing purple lanes
+        ctx.shadowBlur = 0;
+
+        for (let i = -linesCount; i <= linesCount; i++) {
+          const spreadFactor = (i * width) / linesCount;
+          ctx.beginPath();
+          ctx.moveTo(centerX, horizonRatio);
+          ctx.lineTo(centerX + spreadFactor * 1.6, height);
+          ctx.stroke();
+        }
+
+        // Perspective horizontal lines warping on bass hits
+        const horizontalLinesCount = 12;
+        ctx.strokeStyle = "rgba(6, 182, 212, 0.11)"; // Cyan horizon mesh
+        for (let j = 0; j < horizontalLinesCount; j++) {
+          const normY = j / (horizontalLinesCount - 1);
+          // quadratic scaling for true 3D perspective projection
+          const projectY = horizonRatio + normY * normY * (height - horizonRatio) + (smoothedBass * 9 * normY);
+          ctx.beginPath();
+          ctx.moveTo(0, projectY);
+          ctx.lineTo(width, projectY);
+          ctx.stroke();
+        }
+
+        // Spectrogram mountain ridges/walls along left & right borders
+        const steps = 28;
+        const leftRidge: { x: number; y: number }[] = [];
+        const rightRidge: { x: number; y: number }[] = [];
+
+        for (let i = 0; i < steps; i++) {
+          const factor = i / (steps - 1);
+          const drawY = horizonRatio + factor * (height - horizonRatio);
+
+          const matchFreq = Math.floor(factor * bufferLength * 0.65);
+          const value = dataArray[matchFreq] / 255;
+          const peakValEx = Math.pow(value, 1.45) * 44 * (0.35 + factor * 1.3) * settings.colorIntensity;
+
+          // Align ridge bounds
+          const normalLeftWall = (width * 0.13) * (1.0 - factor);
+          const normalRightWall = width - (width * 0.13) * (1.0 - factor);
+
+          leftRidge.push({ x: normalLeftWall - peakValEx, y: drawY });
+          rightRidge.push({ x: normalRightWall + peakValEx, y: drawY });
+        }
+
+        // Draw Left Canyon Wall surface fill
+        const leftCanyonGrad = ctx.createLinearGradient(0, horizonRatio, 0, height);
+        leftCanyonGrad.addColorStop(0, "rgba(219, 39, 119, 0.05)");
+        leftCanyonGrad.addColorStop(0.5, "rgba(168, 85, 247, 0.35)");
+        leftCanyonGrad.addColorStop(1, "rgba(6, 182, 212, 0.75)");
+
+        ctx.fillStyle = leftCanyonGrad;
+        ctx.beginPath();
+        ctx.moveTo(width * 0.13, horizonRatio);
+        leftRidge.forEach((pt) => ctx.lineTo(pt.x, pt.y));
+        ctx.lineTo(0, height);
+        ctx.lineTo(0, horizonRatio);
+        ctx.closePath();
+        ctx.fill();
+
+        // Neon outline left
+        ctx.strokeStyle = "rgba(236, 72, 153, 0.85)";
+        ctx.lineWidth = 1.8 * settings.barWidthMultiplier;
+        ctx.shadowBlur = 14 * settings.glowStrength;
+        ctx.shadowColor = "rgba(236, 72, 153, 0.6)";
+        ctx.beginPath();
+        ctx.moveTo(width * 0.13, horizonRatio);
+        leftRidge.forEach((pt) => ctx.lineTo(pt.x, pt.y));
+        ctx.stroke();
+
+        // Draw Right Canyon Wall surface fill
+        const rightCanyonGrad = ctx.createLinearGradient(0, horizonRatio, 0, height);
+        rightCanyonGrad.addColorStop(0, "rgba(219, 39, 119, 0.05)");
+        rightCanyonGrad.addColorStop(0.5, "rgba(168, 85, 247, 0.35)");
+        rightCanyonGrad.addColorStop(1, "rgba(6, 182, 212, 0.75)");
+
+        ctx.fillStyle = rightCanyonGrad;
+        ctx.beginPath();
+        ctx.moveTo(width - (width * 0.13), horizonRatio);
+        rightRidge.forEach((pt) => ctx.lineTo(pt.x, pt.y));
+        ctx.lineTo(width, height);
+        ctx.lineTo(width, horizonRatio);
+        ctx.closePath();
+        ctx.fill();
+
+        // Neon outline right
+        ctx.strokeStyle = "rgba(6, 182, 212, 0.85)";
+        ctx.shadowColor = "rgba(6, 182, 212, 0.6)";
+        ctx.beginPath();
+        ctx.moveTo(width - (width * 0.13), horizonRatio);
+        rightRidge.forEach((pt) => ctx.lineTo(pt.x, pt.y));
+        ctx.stroke();
+
+        // Radiant retro sunset glowing in distance
+        ctx.shadowBlur = 35 * settings.glowStrength;
+        ctx.shadowColor = "rgba(168, 85, 247, 0.45)";
+        const sunsetGlow = ctx.createRadialGradient(centerX, horizonRatio, 1, centerX, horizonRatio, 45 + smoothedBass * 40);
+        sunsetGlow.addColorStop(0, "rgba(255, 255, 255, 0.95)");
+        sunsetGlow.addColorStop(0.2, "rgba(219, 39, 119, 0.65)");
+        sunsetGlow.addColorStop(0.6, "rgba(168, 85, 247, 0.2)");
+        sunsetGlow.addColorStop(1, "rgba(0, 0, 0, 0)");
+
+        ctx.fillStyle = sunsetGlow;
+        ctx.beginPath();
+        ctx.arc(centerX, horizonRatio, 45 + smoothedBass * 40, 0, Math.PI * 2);
+        ctx.fill();
+
+      } else if (settings.type === "audio_ring") {
+        // --- 4. ETHEREAL SOUND LOOP RINGS ---
+        // Organic concentric harmonizer rings resembling hyper-premium smart screens
+        ctx.translate(centerX, centerY);
+
+        const rings = [
+          { r: Math.min(width, height) / 5.2, band: "bass", color: "rgba(245, 158, 11, ", phaseCount: 4, sizeAmp: 30, speed: 0.0025, direction: 1 },  // Bass ring
+          { r: Math.min(width, height) / 3.6, band: "mid", color: "rgba(168, 85, 247, ", phaseCount: 7, sizeAmp: 38, speed: -0.0016, direction: -1.2 }, // Vocal mid ring
+          { r: Math.min(width, height) / 2.6, band: "high", color: "rgba(6, 182, 212, ", phaseCount: 11, sizeAmp: 44, speed: 0.002, direction: 0.8 },  // Air high ring
+        ];
+
+        ctx.shadowBlur = 20 * settings.glowStrength;
+
+        rings.forEach((ringConfig, rIdx) => {
+          const stepsCount = 160;
+          const deltaAng = (Math.PI * 2) / stepsCount;
+
+          const ringIntensity = ringConfig.band === "bass" ? smoothedBass : ringConfig.band === "mid" ? smoothedMid : smoothedHigh;
+          const scrollFactor = Date.now() * ringConfig.speed;
+          const outerAngleOffset = Date.now() * 0.00028 * ringConfig.direction;
+
+          ctx.shadowColor = `${ringConfig.color} 0.55)`;
+          ctx.strokeStyle = `${ringConfig.color} 1.0)`;
+          ctx.lineWidth = (4.0 - rIdx) * settings.barWidthMultiplier * 0.72;
+
+          ctx.beginPath();
+          for (let i = 0; i <= stepsCount; i++) {
+            const angle = i * deltaAng + outerAngleOffset;
+            const sineWave = Math.sin(angle * ringConfig.phaseCount + scrollFactor) * ringIntensity * ringConfig.sizeAmp * settings.colorIntensity;
+            const currentRad = ringConfig.r + sineWave;
+
+            const rx = Math.cos(angle) * currentRad;
+            const ry = Math.sin(angle) * currentRad;
+
+            if (i === 0) {
+              ctx.moveTo(rx, ry);
+            } else {
+              ctx.lineTo(rx, ry);
+            }
+          }
+          ctx.closePath();
+          ctx.stroke();
+
+          // Outer secondary frequency spikes sprouting radially from the loops (mid-stage only)
+          if (rIdx === 1) {
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = `${ringConfig.color} 0.28)`;
+            ctx.beginPath();
+            for (let i = 0; i < stepsCount; i += 3) {
+              const angle = i * deltaAng + outerAngleOffset;
+              const sineWave = Math.sin(angle * ringConfig.phaseCount + scrollFactor) * ringIntensity * ringConfig.sizeAmp * settings.colorIntensity;
+              const baseRad = ringConfig.r + sineWave;
+
+              const x1 = Math.cos(angle) * baseRad;
+              const y1 = Math.sin(angle) * baseRad;
+              const extraHeight = (dataArray[Math.floor(i % bufferLength)] / 255) * 16 * settings.colorIntensity;
+              const x2 = Math.cos(angle) * (baseRad + extraHeight);
+              const y2 = Math.sin(angle) * (baseRad + extraHeight);
+
+              ctx.moveTo(x1, y1);
+              ctx.lineTo(x2, y2);
+            }
+            ctx.stroke();
+          }
+        });
+
+        // Add a core high-contrast concentric ring
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.07)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(0, 0, Math.min(width, height) / 9.5, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.translate(-centerX, -centerY);
+
+      } else if (settings.type === "cosmic_mandala") {
+        // --- 5. COSMIC MANDALA PORTAL (Photo 1 Style) ---
+        // Rotating sacred geometry portal with radiating spikes & central orbs
+        const radBase = Math.min(width, height) / 5.2;
+        const reactiveCoreRad = radBase * (1.1 + smoothedBass * 0.28 * settings.colorIntensity);
+        ctx.translate(centerX, centerY);
+
+        rotationAngleRef.current += 0.0055 + (smoothedBass * 0.015);
+
+        // Render back fuzzy glass blobs
+        const blobCount = 4;
+        for (let i = 0; i < blobCount; i++) {
+          const angle = (i * Math.PI / 2) + rotationAngleRef.current * 0.45;
+          const dist = 32 + smoothedBass * 45;
+          const bx = Math.cos(angle) * dist;
+          const by = Math.sin(angle) * dist;
+          const size = 60 + smoothedMid * 75;
+          
+          let blobColor = "rgba(168, 85, 247, 0.16)"; // purple
+          if (i === 1) blobColor = "rgba(236, 72, 153, 0.16)"; // hot pink
+          else if (i === 2) blobColor = "rgba(6, 182, 212, 0.16)"; // cyan
+          else if (i === 3) blobColor = "rgba(251, 191, 36, 0.14)"; // amber
+
+          const blobGrad = ctx.createRadialGradient(bx, by, 5, bx, by, size);
+          blobGrad.addColorStop(0, blobColor);
+          blobGrad.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = blobGrad;
+          ctx.beginPath();
+          ctx.arc(bx, by, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Concentric geometric rings with alternating speed rotation
+        ctx.shadowBlur = 15 * settings.glowStrength;
+        for (let rIdx = 0; rIdx < 3; rIdx++) {
+          const rRadius = reactiveCoreRad * (1.0 + rIdx * 0.42);
+          const rAngle = rotationAngleRef.current * (rIdx % 2 === 0 ? 0.6 : -0.8);
+          ctx.strokeStyle = rIdx === 0 
+            ? `rgba(236, 72, 153, ${0.45 + smoothedMid * 0.45})` 
+            : rIdx === 1 
+              ? `rgba(6, 182, 212, ${0.4 + smoothedHigh * 0.45})` 
+              : `rgba(251, 191, 36, ${0.3 + smoothedBass * 0.35})`;
+          ctx.lineWidth = 1.35 * settings.barWidthMultiplier;
+          ctx.shadowColor = ctx.strokeStyle as string;
+
+          ctx.beginPath();
+          ctx.setLineDash([4 + rIdx * 6, 8 + rIdx * 4]);
+          ctx.arc(0, 0, rRadius, rAngle, rAngle + Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Concentric high-density sound spikes radiating outwards
+        const numLasers = 180;
+        const angleStep = (Math.PI * 2) / numLasers;
+        for (let i = 0; i < numLasers; i++) {
+          const angle = i * angleStep + rotationAngleRef.current * 0.18;
+          const mapIndex = Math.floor((i / numLasers) * bufferLength * 0.72);
+          const rawAmp = dataArray[mapIndex] / 255;
+          const ampHeight = Math.pow(rawAmp, 1.7) * 90 * settings.colorIntensity;
+
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+
+          const startX = cos * reactiveCoreRad;
+          const startY = sin * reactiveCoreRad;
+          const endX = cos * (reactiveCoreRad + ampHeight);
+          const endY = sin * (reactiveCoreRad + ampHeight);
+
+          const cycleColor = Math.floor((i / numLasers) * 3);
+          const itemGrad = ctx.createLinearGradient(startX, startY, endX, endY);
+          if (cycleColor === 0) {
+            itemGrad.addColorStop(0, "rgba(236, 72, 153, 0.95)"); // hot pink
+            itemGrad.addColorStop(0.5, "rgba(168, 85, 247, 0.6)"); // violet
+            itemGrad.addColorStop(1, "rgba(6, 182, 212, 0)"); // cyan transparency fade
+          } else if (cycleColor === 1) {
+            itemGrad.addColorStop(0, "rgba(6, 182, 212, 0.95)"); // cyan
+            itemGrad.addColorStop(0.5, "rgba(34, 197, 94, 0.6)"); // emerald
+            itemGrad.addColorStop(1, "rgba(251, 191, 36, 0)"); // amber transparency fade
+          } else {
+            itemGrad.addColorStop(0, "rgba(251, 191, 36, 0.95)"); // amber
+            itemGrad.addColorStop(0.5, "rgba(239, 68, 68, 0.6)"); // red
+            itemGrad.addColorStop(1, "rgba(236, 72, 153, 0)"); // pink transparency fade
+          }
+
+          ctx.strokeStyle = itemGrad;
+          ctx.lineWidth = 1.25 * settings.barWidthMultiplier;
+          ctx.shadowBlur = 8 * settings.glowStrength;
+          ctx.shadowColor = cycleColor === 0 
+            ? "rgba(236, 72, 153, 0.35)" 
+            : cycleColor === 1 
+              ? "rgba(6, 182, 212, 0.35)" 
+              : "rgba(251, 191, 36, 0.35)";
+
+          ctx.beginPath();
+          ctx.moveTo(startX, startY);
+          ctx.lineTo(endX, endY);
+          ctx.stroke();
+        }
+
+        // Clip and draw album cover in center of mandala ring
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0, 0, reactiveCoreRad * 0.9, 0, Math.PI * 2);
+        ctx.clip();
+
+        if (loadedImage) {
+          ctx.rotate(-rotationAngleRef.current * 0.16);
+          ctx.drawImage(
+            loadedImage,
+            -reactiveCoreRad * 0.9,
+            -reactiveCoreRad * 0.9,
+            reactiveCoreRad * 1.8,
+            reactiveCoreRad * 1.8
+          );
+          ctx.rotate(rotationAngleRef.current * 0.16);
+        } else {
+          const fallbackGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, reactiveCoreRad);
+          fallbackGrad.addColorStop(0, "rgba(15, 23, 42, 1.0)");
+          fallbackGrad.addColorStop(0.5, "rgba(30, 41, 59, 1.0)");
+          fallbackGrad.addColorStop(1, "rgba(251, 191, 36, 0.4)");
+          ctx.fillStyle = fallbackGrad;
+          ctx.fill();
+
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+          ctx.lineWidth = 1.1;
+          for (let leaf = 0; leaf < 8; leaf++) {
+            const rotAng = (leaf * Math.PI) / 4;
+            ctx.rotate(rotAng);
+            ctx.beginPath();
+            ctx.ellipse(0, -reactiveCoreRad * 0.35, reactiveCoreRad * 0.15, reactiveCoreRad * 0.35, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.rotate(-rotAng);
+          }
+        }
+        ctx.restore();
+
+        // Elegant glass outer gold rim highlight
+        ctx.shadowBlur = 18 * settings.glowStrength;
+        ctx.shadowColor = "rgba(251, 191, 36, 0.65)";
+        
+        const mandalaRimGrad = ctx.createLinearGradient(-reactiveCoreRad, -reactiveCoreRad, reactiveCoreRad, reactiveCoreRad);
+        mandalaRimGrad.addColorStop(0, "rgba(236, 72, 153, 0.85)");
+        mandalaRimGrad.addColorStop(0.5, "rgba(251, 191, 36, 0.95)");
+        mandalaRimGrad.addColorStop(1, "rgba(6, 182, 212, 0.85)");
+
+        ctx.strokeStyle = mandalaRimGrad;
+        ctx.lineWidth = 3.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, reactiveCoreRad * 0.9 + 1, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.translate(-centerX, -centerY);
+        ctx.shadowBlur = 0;
+
+      } else if (settings.type === "liquid_terrain") {
+        // --- 6. GLOWING AUDIO TERRAIN (Photo 2 Style) ---
+        // Beautiful floating multi-layered particle terrain waves flowing like rich silk ribbons
+        ctx.fillStyle = "#030408"; 
+        ctx.fillRect(0, 0, width, height);
+
+        const layersCount = 4;
+        const ptsCount = 38;
+        const xStep = width / (ptsCount - 1);
+
+        ctx.shadowBlur = 12 * settings.glowStrength;
+
+        for (let layer = 0; layer < layersCount; layer++) {
+          const baseHeightRatio = 0.54 + (layer * 0.11); 
+          const layerBaseY = height * baseHeightRatio;
+
+          let bandVolume = smoothedMid;
+          if (layer === 0) bandVolume = smoothedBass;
+          else if (layer === 3) bandVolume = smoothedHigh;
+
+          let strokeColor = "rgba(168, 85, 247, 0.85)"; // Purple
+          let shadowColor = "rgba(168, 85, 247, 0.45)";
+          let fillColor = "rgba(168, 85, 247, 0.05)";
+
+          if (layer === 1) {
+            strokeColor = "rgba(236, 72, 153, 0.85)"; // Pink
+            shadowColor = "rgba(236, 72, 153, 0.45)";
+            fillColor = "rgba(236, 72, 153, 0.05)";
+          } else if (layer === 2) {
+            strokeColor = "rgba(6, 182, 212, 0.88)"; // Electric Cyan
+            shadowColor = "rgba(6, 182, 212, 0.45)";
+            fillColor = "rgba(6, 182, 212, 0.05)";
+          } else if (layer === 3) {
+            strokeColor = "rgba(34, 197, 94, 0.88)"; // Neon green
+            shadowColor = "rgba(34, 197, 94, 0.45)";
+            fillColor = "rgba(34, 197, 94, 0.05)";
+          }
+
+          ctx.strokeStyle = strokeColor;
+          ctx.shadowColor = shadowColor;
+          ctx.lineWidth = (2.4 - layer * 0.35) * settings.barWidthMultiplier;
+
+          const layerPts: { x: number; y: number }[] = [];
+          for (let i = 0; i < ptsCount; i++) {
+            const px = i * xStep;
+            
+            const symIndex = i < ptsCount / 2 ? i : (ptsCount - 1 - i);
+            const freqBin = Math.floor((symIndex / (ptsCount / 2)) * bufferLength * 0.6);
+            const rawAmp = dataArray[freqBin] / 255;
+            const reactiveHeight = Math.pow(rawAmp, 1.5) * 75 * settings.colorIntensity * (0.35 + (layer + 1) * 0.22);
+
+            const phase = Date.now() * (0.0014 + layer * 0.0006) + (i * 0.22);
+            const waveOsc = Math.sin(phase) * (14 + layer * 4);
+
+            const py = layerBaseY - reactiveHeight + waveOsc;
+            layerPts.push({ x: px, y: py });
+          }
+
+          ctx.beginPath();
+          ctx.moveTo(0, height);
+          layerPts.forEach((pt) => ctx.lineTo(pt.x, pt.y));
+          ctx.lineTo(width, height);
+          ctx.closePath();
+          ctx.fillStyle = fillColor;
+          ctx.fill();
+
+          ctx.beginPath();
+          layerPts.forEach((pt, i) => {
+            if (i === 0) ctx.moveTo(pt.x, pt.y);
+            else {
+              const prev = layerPts[i - 1];
+              const cpX1 = prev.x + xStep / 2;
+              const cpY1 = prev.y;
+              const cpX2 = pt.x - xStep / 2;
+              const cpY2 = pt.y;
+              ctx.bezierCurveTo(cpX1, cpY1, cpX2, cpY2, pt.x, pt.y);
+            }
+          });
+          ctx.stroke();
+
+          ctx.shadowBlur = 12 * settings.glowStrength;
+          ctx.fillStyle = "#ffffff";
+          for (let i = 2; i < ptsCount - 2; i += 2) {
+            const pt = layerPts[i];
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, (2.0 + bandVolume * 2.8), 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.shadowBlur = 0;
+
+      } else {
+        // --- 5. RETRO GLASS BENTO COLUMNS ("retro_glass" default fallback) ---
+        // Exquisite floating glass equalizer bento bars with physics-driven gravity peak particles
+        const totalPills = 14;
+        const gapStep = 7;
+        const pillWidth = (width - (totalPills - 1) * gapStep - 20) / totalPills;
+
+        ctx.shadowBlur = 0;
+        ctx.translate(10, 0);
+
+        for (let i = 0; i < totalPills; i++) {
+          const mapIndex = Math.floor(Math.pow(i / totalPills, 1.35) * (bufferLength * 0.75));
+          const value = dataArray[mapIndex] / 255;
+          const activeAmp = Math.pow(value, 1.25) * settings.colorIntensity;
+          const pillHeight = activeAmp * (height * 0.7);
+
+          const px = i * (pillWidth + gapStep);
+          const py = height - pillHeight - 14;
+
+          // Round Rect Utility
+          const drawRoundRect = (c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) => {
+            c.beginPath();
+            c.moveTo(x + r, y);
+            c.lineTo(x + w - r, y);
+            c.quadraticCurveTo(x + w, y, x + w, y + r);
+            c.lineTo(x + w, y + h - r);
+            c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            c.lineTo(x + r, y + h);
+            c.quadraticCurveTo(x, y + h, x, y + h - r);
+            c.lineTo(x, y + r);
+            c.quadraticCurveTo(x, y, x + r, y);
+            c.closePath();
+          };
+
+          // Draw frosted background glass channel slot
+          ctx.fillStyle = "rgba(255, 255, 255, 0.03)";
+          drawRoundRect(ctx, px, 14, pillWidth, height - 28, pillWidth / 2);
+          ctx.fill();
+
+          // Active level neon glass filling
+          const colorGrad = ctx.createLinearGradient(px, height - 14, px, py);
+          colorGrad.addColorStop(0, "rgba(147, 51, 234, 0.4)");  // Purple base
+          colorGrad.addColorStop(0.5, "rgba(236, 72, 153, 0.72)"); // Hot Pink mid
+          colorGrad.addColorStop(1, "rgba(255, 210, 210, 0.95)"); // Clear peach white peak
+
+          ctx.fillStyle = colorGrad;
+          if (pillHeight > 3) {
+            ctx.shadowBlur = 12 * settings.glowStrength;
+            ctx.shadowColor = "rgba(236, 72, 153, 0.4)";
+            drawRoundRect(ctx, px, py, pillWidth, pillHeight, pillWidth / 2);
+            ctx.fill();
+          }
+
+          // Physics computation for floating gravity peak cap structures
+          const gravityConstant = 0.16;
+          let currentPeak = peaksRef.current[i] || 0;
+          let currentVel = peakVelsRef.current[i] || 0;
+
+          if (pillHeight > currentPeak) {
+            currentPeak = pillHeight;
+            currentVel = -1.25; // instant burst lift
+          } else {
+            currentVel += gravityConstant;
+            currentPeak -= currentVel;
+            if (currentPeak < 0) {
+              currentPeak = 0;
+              currentVel = 0;
+            }
+          }
+
+          peaksRef.current[i] = currentPeak;
+          peakVelsRef.current[i] = currentVel;
+
+          // Render falling glowing capsule beads
+          const capHeightY = height - currentPeak - 19;
+          if (capHeightY < height - 14) {
+            ctx.shadowBlur = 15 * settings.glowStrength;
+            ctx.shadowColor = "rgba(255, 255, 255, 0.8)";
+            ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
+
+            ctx.beginPath();
+            ctx.arc(px + pillWidth / 2, capHeightY, Math.max(1.8, pillWidth * 0.38), 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        ctx.translate(-10, 0);
+        ctx.shadowBlur = 0;
+      }
+      ctx.restore();
+    };
+
+    draw();
+
+    return () => {
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    };
+  }, [analyser, isPlaying, settings, loadedImage, isExpanded, isSignatureSound]);
+
+  const getModeFriendlyName = (type: string) => {
+    switch (type) {
+      case "liquid_gold":
+        return "Golden Silk Wave";
+      case "stardust_orbit":
+        return "Stardust Halo Orbit";
+      case "neon_perspective":
+        return "Perspective Rift";
+      case "audio_ring":
+        return "Ethereal Loop Rings";
+      case "cosmic_mandala":
+        return "Cosmic Mandala Gate";
+      case "liquid_terrain":
+        return "Flowing Liquid Terrain";
+      case "retro_glass":
+        return "Glass Bento equalizers";
+      default:
+        return "Luxury Visualizer";
+    }
+  };
+
+  return (
+    <div 
+      className={className || "w-full h-full pointer-events-auto relative flex justify-center items-center bg-black/30 border border-white/5 rounded-3xl overflow-hidden shadow-inner cursor-pointer"}
+      onPointerDown={() => {
+        resetHUDTimer();
+      }}
+      onDoubleClick={(e) => {
+        e.stopPropagation();
+        resetHUDTimer();
+        if (onToggleExpand) onToggleExpand();
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        className="w-full h-full object-cover opacity-90 absolute inset-0 z-0 cursor-grab active:cursor-grabbing select-none touch-none"
+      />
+      
+      {/* Immersive radial shadow framing */}
+      <div className="absolute inset-0 bg-radial-gradient from-transparent via-black/15 to-black/70 pointer-events-none z-10" />
+      
+      {/* HUD overlays */}
+      <div className={`absolute inset-0 flex flex-col justify-between items-center p-3 z-25 pointer-events-none transition-all duration-700 ease-out ${showHUD ? 'opacity-100' : 'opacity-0 scale-[0.98]'}`}>
+        <div className="px-3 py-1 bg-black/60 backdrop-blur-md rounded-full border border-white/10 flex items-center gap-1.5 shadow-[0_4px_12px_rgba(0,0,0,0.5)]">
+          <Sparkles className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+          <span className="text-[10px] font-black tracking-widest text-[#E0E2E8] uppercase select-none">
+            {getModeFriendlyName(settings.type)}
+          </span>
+        </div>
+        <div className="text-[8.5px] font-bold text-white/30 tracking-widest uppercase select-none animate-bounce">
+          Drag to pan • Scroll to zoom • Double Click to resize
+        </div>
+      </div>
+
+      {/* Deluxe Glass Tool-Bar Controllers Overlay (Z-30, pointer-events-auto) */}
+      <div className={`absolute right-3 top-3 bottom-3 flex flex-col justify-between items-center z-30 pointer-events-none select-none transition-all duration-500 ease-out ${showHUD ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 translate-x-3 scale-95 pointer-events-none'}`}>
+        
+        {/* Toggle Expand Wide-screen icon */}
+        {onToggleExpand && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              resetHUDTimer();
+              onToggleExpand();
+            }}
+            className="pointer-events-auto w-8 h-8 rounded-full bg-black/55 hover:bg-black/85 backdrop-blur-md border border-white/10 flex items-center justify-center text-[#E0E2E8] hover:text-white transition-all active:scale-90 shadow-lg"
+            title={isExpanded ? "Collapse View" : "Expand Full Width"}
+          >
+            {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          </button>
+        )}
+
+        {/* Zoom controller panel */}
+        <div className="flex flex-col gap-1.5 pointer-events-auto bg-black/40 backdrop-blur-md p-1 rounded-full border border-white/5 shadow-xl">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              resetHUDTimer();
+              zoomRef.current = Math.min(zoomRef.current + 0.15, 6.0);
+              setCurrentZoom(zoomRef.current);
+            }}
+            className="w-7 h-7 rounded-full bg-white/5 hover:bg-white/15 flex items-center justify-center text-[#E0E2E8] hover:text-white transition-all active:scale-90"
+            title="Zoom In"
+          >
+            <span className="font-bold text-sm leading-none">+</span>
+          </button>
+
+          {/* Quick HUD percentage or indicator */}
+          {(zoomRef.current !== 1.0 || offsetXRef.current !== 0 || offsetYRef.current !== 0) ? (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                resetHUDTimer();
+                zoomRef.current = 1.0;
+                offsetXRef.current = 0;
+                offsetYRef.current = 0;
+                setCurrentZoom(1.0);
+                setCurrentOffsetX(0);
+                setCurrentOffsetY(0);
+              }}
+              className="w-7 h-7 rounded-full bg-amber-500/80 hover:bg-amber-500 flex items-center justify-center text-black font-extrabold text-[10px] transition-all active:scale-90 shadow-md animate-pulse"
+              title="Reset Zoom & Pan"
+            >
+              ↺
+            </button>
+          ) : (
+            <div className="w-7 h-4 flex items-center justify-center text-[8px] font-bold text-white/30 tracking-widest leading-none select-none">
+              {Math.round(currentZoom * 100)}%
+            </div>
+          )}
+
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              resetHUDTimer();
+              zoomRef.current = Math.max(zoomRef.current - 0.15, 0.3);
+              setCurrentZoom(zoomRef.current);
+            }}
+            className="w-7 h-7 rounded-full bg-white/5 hover:bg-white/15 flex items-center justify-center text-[#E0E2E8] hover:text-white transition-all active:scale-90"
+            title="Zoom Out"
+          >
+            <span className="font-bold text-sm leading-none">-</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const connectedAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sigInRef = useRef<GainNode | null>(null);
+  const sigOutRef = useRef<GainNode | null>(null);
+  const eqNodesRef = useRef<BiquadFilterNode[]>([]);
+  const widenGainRef = useRef<GainNode | null>(null);
+  const dryGainRef = useRef<GainNode | null>(null);
+  const wetGainRef = useRef<GainNode | null>(null);
+  const wetDetailGainRef = useRef<GainNode | null>(null);
+  const bassShelfRef = useRef<BiquadFilterNode | null>(null);
+  const bassPeakRef = useRef<BiquadFilterNode | null>(null);
+  const exciterHighShelfRef = useRef<BiquadFilterNode | null>(null);
+  const trebleAirRef = useRef<BiquadFilterNode | null>(null);
+  const vocalPresenceGainRef = useRef<GainNode | null>(null);
+  const vocalDeMudRef = useRef<BiquadFilterNode | null>(null);
+  const vocalPresenceNodeRef = useRef<BiquadFilterNode | null>(null);
+  const vocalAirRef = useRef<BiquadFilterNode | null>(null);
+
+  const eqSettingsRef = useRef(eqSettings);
+  const spatialSettingsRef = useRef(spatialSettings);
+
+  useEffect(() => {
+    eqSettingsRef.current = eqSettings;
+    spatialSettingsRef.current = spatialSettings;
+  }, [eqSettings, spatialSettings]);
+
+  const [isSignatureSound, setIsSignatureSound] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_is_signature_sound");
+      return saved === "true";
+    } catch {
+      return false;
+    }
+  });
+  const isSignatureSoundRef = useRef(isSignatureSound);
+  useEffect(() => {
+    isSignatureSoundRef.current = isSignatureSound;
+    localStorage.setItem("acoustic_presence_is_signature_sound", String(isSignatureSound));
+  }, [isSignatureSound]);
+
+  const [isContextReady, setIsContextReady] = useState(false);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+
+  const [audioError, setAudioError] = useState<string | null>(null);
+
+  const initAudio = (audioElement: HTMLAudioElement) => {
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new (
+          window.AudioContext || (window as any).webkitAudioContext
+        )();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === "running") setIsContextReady(true);
+
+      const isNewElement = connectedAudioElementRef.current !== audioElement;
+
+      if (isNewElement) {
+        if (sourceRef.current) {
+          try {
+            sourceRef.current.disconnect();
+          } catch (e) {
+            console.warn("Could not disconnect old source node:", e);
+          }
+          sourceRef.current = null;
+        }
+
+        sourceRef.current = ctx.createMediaElementSource(audioElement);
+        connectedAudioElementRef.current = audioElement;
+
+        if (!analyserRef.current) {
+          analyserRef.current = ctx.createAnalyser();
+          analyserRef.current.fftSize = 128;
+          analyserRef.current.smoothingTimeConstant = 0.8;
+          analyserRef.current.connect(ctx.destination);
+        }
+        setAnalyser(analyserRef.current);
+
+        if (!sigInRef.current) {
+          // --- HD Signature Pipeline ---
+          const pipeline = buildHDPipeline(
+            ctx,
+            eqSettingsRef.current,
+            spatialSettingsRef.current,
+          );
+
+          sigInRef.current = pipeline.input;
+          sigOutRef.current = pipeline.output;
+          eqNodesRef.current = pipeline.nodes.eqNodes;
+          bassShelfRef.current = pipeline.nodes.bassShelf;
+          bassPeakRef.current = pipeline.nodes.bassPeak;
+          wetDetailGainRef.current = pipeline.nodes.wetDetailGain;
+          exciterHighShelfRef.current = pipeline.nodes.exciterHighShelf as any;
+          trebleAirRef.current = pipeline.nodes.trebleAir as any;
+          vocalPresenceGainRef.current = pipeline.nodes.vocalPresenceGain;
+          vocalDeMudRef.current = pipeline.nodes.vocalDeMud as any;
+          vocalPresenceNodeRef.current = pipeline.nodes.vocalPresenceNode as any;
+          vocalAirRef.current = pipeline.nodes.vocalAir as any;
+          widenGainRef.current = pipeline.nodes.widenGain;
+          wetGainRef.current = pipeline.nodes.wetGain;
+          dryGainRef.current = pipeline.nodes.dryGain;
+        }
+
+        // Apply corresponding audio routing
+        const shouldEnableHD = isSignatureSoundRef.current;
+        if (shouldEnableHD) {
+          sourceRef.current.connect(sigInRef.current);
+          sigOutRef.current.connect(analyserRef.current);
+        } else {
+          sourceRef.current.connect(analyserRef.current);
+        }
+      }
+    } catch (err: any) {
+      setAudioError(err.message || "Unknown audio routing error");
+      console.error(err);
+    }
+  };
+
+  const updateEqNode = (
+    index: number,
+    param: "frequency" | "Q" | "gain",
+    value: number,
+  ) => {
+    const node = eqNodesRef.current[index];
+    if (node) {
+      if (param === "frequency") node.frequency.value = value;
+      else if (param === "Q") node.Q.value = value;
+      else if (param === "gain") node.gain.value = value;
+    }
+  };
+
+  const updateSpatial = (
+    param:
+      | "reverb"
+      | "wideness"
+      | "clarity"
+      | "treble"
+      | "punch"
+      | "bassWeight"
+      | "vocalHD",
+    value: number,
+  ) => {
+    if (param === "reverb" && wetGainRef.current && dryGainRef.current) {
+      wetGainRef.current.gain.value = value * 1.5;
+      dryGainRef.current.gain.value = 1.0 - value * 0.4;
+    }
+    if (param === "wideness" && widenGainRef.current) {
+      widenGainRef.current.gain.value = value * 1.2;
+    }
+    if (param === "clarity" && exciterHighShelfRef.current) {
+      exciterHighShelfRef.current.gain.value = value * 8.0;
+    }
+    if (param === "treble" && trebleAirRef.current) {
+      trebleAirRef.current.gain.value = value * 12.0;
+    }
+    if (param === "punch" && wetDetailGainRef.current) {
+      wetDetailGainRef.current.gain.value = value;
+    }
+    if (param === "bassWeight" && bassShelfRef.current && bassPeakRef.current) {
+      bassShelfRef.current.gain.value = value * 12.0;
+      bassPeakRef.current.gain.value = value * 6.0;
+    }
+    if (param === "vocalHD" && vocalPresenceGainRef.current) {
+      vocalPresenceGainRef.current.gain.value = value;
+      if (vocalDeMudRef.current) vocalDeMudRef.current.gain.value = -2.5 * value;
+      if (vocalPresenceNodeRef.current) vocalPresenceNodeRef.current.gain.value = 3.0 * value;
+      if (vocalAirRef.current) vocalAirRef.current.gain.value = 2.5 * value;
+    }
+  };
+
+  const toggleSignatureSound = (enable: boolean) => {
+    setIsSignatureSound(enable);
+    if (
+      !sourceRef.current ||
+      !analyserRef.current ||
+      !sigInRef.current ||
+      !sigOutRef.current ||
+      !audioContextRef.current
+    )
+      return;
+    const ctx = audioContextRef.current;
+
+    sourceRef.current.disconnect();
+    sigOutRef.current.disconnect();
+
+    if (enable) {
+      sourceRef.current.connect(sigInRef.current);
+      sigOutRef.current.connect(analyserRef.current);
+    } else {
+      sourceRef.current.connect(analyserRef.current);
+    }
+  };
+
+  const resumeContext = async () => {
+    if (
+      audioContextRef.current &&
+      audioContextRef.current.state === "suspended"
+    ) {
+      await audioContextRef.current.resume();
+      setIsContextReady(true);
+    }
+  };
+
+  return {
+    initAudio,
+    toggleSignatureSound,
+    isSignatureSound,
+    resumeContext,
+    isContextReady,
+    analyser,
+    updateEqNode,
+    updateSpatial,
+    audioError,
+    audioContextRef,
+  };
+}
+
+const EQ_BANDS_DEFAULT = [
+  { name: "Deep Sub", f: 25, q: 1.4, g: 0.0, type: "peaking", fRange: [20, 30] },
+  { name: "Sub", f: 40, q: 1.4, g: 0.0, type: "peaking", fRange: [30, 50] },
+  {
+    name: "Low Bass",
+    f: 63,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [50, 80],
+  },
+  { name: "Bass", f: 100, q: 1.4, g: 0.0, type: "peaking", fRange: [80, 125] },
+  {
+    name: "Upper Bass",
+    f: 160,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [125, 200],
+  },
+  {
+    name: "Low Mid",
+    f: 250,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [200, 315],
+  },
+  { name: "Mid", f: 400, q: 1.4, g: 0.0, type: "peaking", fRange: [315, 500] },
+  {
+    name: "Upper Mid",
+    f: 630,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [500, 800],
+  },
+  {
+    name: "High Mid",
+    f: 1000,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [800, 1250],
+  },
+  {
+    name: "Presence",
+    f: 1600,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [1250, 2000],
+  },
+  {
+    name: "Up Pres.",
+    f: 2500,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [2000, 3150],
+  },
+  {
+    name: "Clarity",
+    f: 4000,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [3150, 5000],
+  },
+  {
+    name: "Highs",
+    f: 6300,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [5000, 8000],
+  },
+  {
+    name: "Air",
+    f: 10000,
+    q: 1.4,
+    g: 0.0,
+    type: "peaking",
+    fRange: [8000, 12500],
+  },
+  {
+    name: "Sparkle",
+    f: 16000,
+    q: 1.4,
+    g: 0.0,
+    type: "highshelf",
+    fRange: [12500, 20000],
+  },
+];
+
+const PRESETS = [
+  {
+    id: "flat_original",
+    icon: AudioLines,
+    name: "Flat / Original",
+    desc: "Bypass all enhancements. Sounds exactly like the original uncolored audio.",
+    eq: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    spatial: {
+      bassWeight: 0.0,
+      punch: 0.0,
+      vocalHD: 0.0,
+      clarity: 0.0,
+      treble: 0.0,
+      reverb: 0.0,
+      wideness: 0.0,
+    },
+  },
+  {
+    id: "ultra_hd",
+    icon: Headset,
+    name: "Ultra HD Master",
+    desc: "Balanced 15-band enhancement for maximum detail and controlled punch.",
+    eq: [
+      0, 2.0, 3.5, 2.0, 0.5, -1.0, -1.5, -1.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.5,
+      4.5,
+    ],
+    spatial: {
+      bassWeight: 0.25,
+      punch: 0.45,
+      vocalHD: 0.6,
+      clarity: 0.15,
+      treble: 0.0,
+      reverb: 0.15,
+      wideness: 1.8,
+    },
+  },
+  {
+    id: "vocal_focus",
+    icon: Mic2,
+    name: "Crystal Vocal HD",
+    desc: "Pushes vocals forward with extreme 4D clarity while reducing muddy frequencies.",
+    eq: [
+      -1.0, -1.5, -2.0, -2.5, -3.0, -2.0, -1.0, 0.5, 2.5, 4.0, 4.5, 5.0, 3.5,
+      2.0, 3.0,
+    ],
+    spatial: {
+      bassWeight: 0.1,
+      punch: 0.35,
+      vocalHD: 1.3,
+      clarity: 0.35,
+      treble: 0.0,
+      reverb: 0.2,
+      wideness: 1.6,
+    },
+  },
+  {
+    id: "cinematic_4d",
+    icon: Film,
+    name: "Cinematic 4D Spatial",
+    desc: "Massive width, deep sub-bass, and immersive psychoacoustic wrapping.",
+    eq: [
+      6.0, 5.5, 4.0, 2.0, 0.5, -1.0, -1.0, -0.5, 1.0, 1.5, 2.0, 2.5, 3.5, 4.5,
+      5.0,
+    ],
+    spatial: {
+      bassWeight: 0.75,
+      punch: 0.55,
+      vocalHD: 0.4,
+      clarity: 0.3,
+      treble: 0.0,
+      reverb: 0.55,
+      wideness: 2.9,
+    },
+  },
+  {
+    id: "club_bass",
+    icon: Disc3,
+    name: "Booming Club Bass",
+    desc: "Heavy physical 3D bass thump for modern electronic and hip-hop.",
+    eq: [
+      8.5, 7.5, 5.5, 2.0, 0.0, -2.0, -2.5, -2.0, -1.0, 0.0, 1.5, 2.0, 1.5, 2.5,
+      3.0,
+    ],
+    spatial: {
+      bassWeight: 0.95,
+      punch: 0.85,
+      vocalHD: 0.2,
+      clarity: 0.1,
+      treble: 0.0,
+      reverb: 0.1,
+      wideness: 1.5,
+    },
+  },
+  {
+    id: "pure_air",
+    icon: Wind,
+    name: "Audiophile Air",
+    desc: "Maximum transparency, transient detail, and crystalline 4D high frequencies.",
+    eq: [
+      -2.0, -1.5, -1.0, -1.5, -1.0, -0.5, 0.0, 1.0, 2.0, 3.0, 4.5, 5.5, 6.0,
+      7.0, 8.0,
+    ],
+    spatial: {
+      bassWeight: 0.15,
+      punch: 0.3,
+      vocalHD: 0.9,
+      clarity: 0.6,
+      treble: 0.0,
+      reverb: 0.25,
+      wideness: 2.3,
+    },
+  },
+  {
+    id: "nordic_precision",
+    icon: Speaker,
+    name: "Nordic Acoustic Precision",
+    desc: "Inspired by premium Danish engineering. Immaculate clarity, tight articulate bass, and an ultra-wide, uncolored 4D soundstage.",
+    eq: [
+      -0.5, 1.0, 1.5, 0.5, 0.0, -0.5, -1.0, -0.5, 0.5, 1.0, 1.5, 2.5, 3.5, 4.0,
+      5.0,
+    ],
+    spatial: {
+      bassWeight: 0.35,
+      punch: 0.4,
+      vocalHD: 0.6,
+      clarity: 0.5,
+      treble: 0.2,
+      reverb: 0.15,
+      wideness: 2.2,
+    },
+  },
+  {
+    id: "beosound_signature",
+    icon: Sparkles,
+    name: "BeoSound AI Signature",
+    desc: "The pinnacle of Danish audio engineering. Intelligent harmonic excitement, multi-stage mastering, and holographic 4D spatial depth.",
+    eq: [
+      1.5, 2.5, 1.5, 0.0, -1.0, -1.5, -0.5, 0.0, 0.5, 1.5, 2.5, 4.0, 5.5, 7.0,
+      8.5,
+    ],
+    spatial: {
+      bassWeight: 0.55,
+      punch: 0.35,
+      vocalHD: 0.85,
+      clarity: 0.75,
+      treble: 0.5,
+      reverb: 0.25,
+      wideness: 2.6,
+    },
+  },
+  {
+    id: "lofi_warm",
+    icon: Coffee,
+    name: "Lofi Warm Analog",
+    desc: "Muffled highs, emphasized mids and warm bass for a cozy, vintage vinyl feel.",
+    eq: [
+      1.0, 2.0, 2.5, 3.0, 2.5, 1.0, 0.5, -1.0, -2.0, -3.0, -4.0, -5.0, -6.0, -7.0, -8.0,
+    ],
+    spatial: {
+      bassWeight: 0.15,
+      punch: 0.1,
+      vocalHD: 0.2,
+      clarity: 0.0,
+      treble: 0.0,
+      reverb: 0.1,
+      wideness: 0.5,
+    },
+  },
+  {
+    id: "gaming_footsteps",
+    icon: Crosshair,
+    name: "Tactical FPS Gaming",
+    desc: "Cut the rumble and boost upper-mid details to hear footsteps and specific audio cues.",
+    eq: [
+      -4.0, -3.0, -2.0, -1.0, -1.0, 0.0, 0.5, 1.0, 3.5, 5.5, 6.5, 5.5, 4.5, 2.0, 1.0,
+    ],
+    spatial: {
+      bassWeight: 0.0,
+      punch: 0.5,
+      vocalHD: 0.5,
+      clarity: 0.4,
+      treble: 0.0,
+      reverb: 0.05,
+      wideness: 1.0,
+    },
+  },
+  {
+    id: "podcast_voice",
+    icon: Podcast,
+    name: "Podcast & Audiobook",
+    desc: "Optimized for the human voice, ensuring crystal clear dialogue with a radio-like body.",
+    eq: [
+      -2.0, -1.5, -1.0, 1.0, 2.5, 2.0, 1.5, 1.0, 1.5, 2.5, 3.5, 3.0, 1.5, 0.5, 0.0,
+    ],
+    spatial: {
+      bassWeight: 0.0,
+      punch: 0.7,
+      vocalHD: 0.8,
+      clarity: 0.2,
+      treble: 0.0,
+      reverb: 0.0,
+      wideness: 0.2,
+    },
+  },
+  {
+    id: "classic_rock",
+    icon: Guitar,
+    name: "Classic Rock & Live",
+    desc: "Brings out the guitars, snares, and gritty bass lines for an energetic live performance feel.",
+    eq: [
+      1.0, 2.0, 3.0, 2.5, 1.5, 0.0, 0.5, 1.5, 2.0, 3.0, 2.5, 2.0, 2.5, 2.0, 1.5,
+    ],
+    spatial: {
+      bassWeight: 0.1,
+      punch: 0.5,
+      vocalHD: 0.4,
+      clarity: 0.15,
+      treble: 0.0,
+      reverb: 0.2,
+      wideness: 1.5,
+    },
+  },
+  {
+    id: "workout_hype",
+    icon: Dumbbell,
+    name: "Workout Gym Hype",
+    desc: "Extreme V-shape curve: Massive bass thump and piercing high-end energy to keep you moving.",
+    eq: [
+      6.0, 7.0, 5.0, 3.0, 1.0, -1.0, -1.5, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 5.5, 6.0,
+    ],
+    spatial: {
+      bassWeight: 0.4,
+      punch: 0.8,
+      vocalHD: 0.5,
+      clarity: 0.3,
+      treble: 0.0,
+      reverb: 0.15,
+      wideness: 2.0,
+    },
+  },
+];
+
+const DEFAULT_SPATIAL = {
+  bassWeight: 0.0,
+  punch: 0.0,
+  vocalHD: 0.0,
+  clarity: 0.0,
+  treble: 0.0,
+  reverb: 0.0,
+  wideness: 0.0,
+};
+
+export default function App() {
+  const [currentSong, setCurrentSong] = useState<any>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isAIAnalyzing, setIsAIAnalyzing] = useState(false);
+  
+  const [duration, setDuration] = useState<number | null>(null);
+  const [sampleRate, setSampleRate] = useState<number | null>(null);
+
+  const [eqSettings, setEqSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_eq_settings");
+      return saved ? JSON.parse(saved) : EQ_BANDS_DEFAULT;
+    } catch {
+      return EQ_BANDS_DEFAULT;
+    }
+  });
+
+  const [spatialSettings, setSpatialSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_spatial_settings");
+      return saved ? JSON.parse(saved) : DEFAULT_SPATIAL;
+    } catch {
+      return DEFAULT_SPATIAL;
+    }
+  });
+
+  const [showTuning, setShowTuning] = useState(false);
+
+  const [showVisualizer, setShowVisualizer] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_show_visualizer");
+      return saved === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const [isVisualizerExpanded, setIsVisualizerExpanded] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_is_visualizer_expanded");
+      return saved === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const [activeTab, setActiveTab] = useState<
+    "presets" | "eq" | "spatial" | "viz" | "export"
+  >("presets");
+  const [activeBand, setActiveBand] = useState<number>(0);
+
+  const [visSettings, setVisSettings] = useState(() => {
+    const defaultVis = {
+      barWidthMultiplier: 1.4,
+      barSpacing: 1.0,
+      colorIntensity: 1.0,
+      glowStrength: 1.0,
+      type: "liquid_gold",
+      palette: "ocean",
+    };
+    try {
+      const saved = localStorage.getItem("acoustic_presence_vis_settings");
+      return saved ? JSON.parse(saved) : defaultVis;
+    } catch {
+      return defaultVis;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_eq_settings", JSON.stringify(eqSettings));
+  }, [eqSettings]);
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_spatial_settings", JSON.stringify(spatialSettings));
+  }, [spatialSettings]);
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_show_visualizer", String(showVisualizer));
+  }, [showVisualizer]);
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_is_visualizer_expanded", String(isVisualizerExpanded));
+  }, [isVisualizerExpanded]);
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_vis_settings", JSON.stringify(visSettings));
+  }, [visSettings]);
+
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+
+  const [tiktokUrl, setTiktokUrl] = useState("");
+  const [isFetchingTiktok, setIsFetchingTiktok] = useState(false);
+  const [tiktokError, setTiktokError] = useState("");
+
+  const [recentSongs, setRecentSongs] = useState<any[]>(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_recent_tiktok");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_recent_tiktok", JSON.stringify(recentSongs));
+  }, [recentSongs]);
+
+  const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide">("upnext");
+  const [tiktokAlbums, setTiktokAlbums] = useState<any[]>(() => {
+    const defaultVietnameseAlbums = [
+      { id: "alb_sontung", username: "sontungmtp.official", displayName: "Sơn Tùng M-TP", avatarSub: "ST" },
+      { id: "alb_mytam", username: "mytam.official", displayName: "Mỹ Tâm", avatarSub: "MT" },
+      { id: "alb_hieuthuhai", username: "hieuthuhai.official", displayName: "HIEUTHUHAI", avatarSub: "HT" },
+      { id: "alb_mono", username: "mono.official", displayName: "MONO", avatarSub: "MO" },
+      { id: "alb_amee", username: "ameemee_m", displayName: "AMEE", avatarSub: "AM" },
+      { id: "alb_tlinh", username: "tlinh.original", displayName: "tlinh", avatarSub: "TL" },
+      { id: "alb_hoaminzy", username: "hoaminzy_hoarose", displayName: "Hòa Minzy", avatarSub: "HM" },
+      { id: "alb_wrenevans", username: "wrenevans", displayName: "Wren Evans", avatarSub: "WE" },
+      { id: "alb_phuongly", username: "phuongly.phuongly", displayName: "Phương Ly", avatarSub: "PL" },
+      { id: "alb_greyd", username: "greyd.official", displayName: "GREY D", avatarSub: "GD" },
+    ];
+
+    try {
+      const saved = localStorage.getItem("acoustic_presence_tiktok_albums");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // If the saved list is the old 4 default creators, migrate it to the new Vietnamese top 10
+        const isOldDefault = Array.isArray(parsed) && parsed.length === 4 && parsed.some(alb => alb.username === "bellapoarch");
+        if (isOldDefault) {
+          return defaultVietnameseAlbums;
+        }
+        return parsed;
+      }
+    } catch {}
+    return defaultVietnameseAlbums;
+  });
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_tiktok_albums", JSON.stringify(tiktokAlbums));
+  }, [tiktokAlbums]);
+
+  const [albumsCache, setAlbumsCache] = useState<Record<string, { songs: any[], cursor: string, hasMore: boolean, updatedAt: number }>>(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_albums_cache_v2");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_albums_cache_v2", JSON.stringify(albumsCache));
+  }, [albumsCache]);
+
+  const [activeAlbumCursor, setActiveAlbumCursor] = useState<string>("0");
+  const [activeAlbumHasMore, setActiveAlbumHasMore] = useState<boolean>(false);
+  const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
+  const [activeAlbumUsername, setActiveAlbumUsername] = useState<string | null>(null);
+
+  const [showAddAlbum, setShowAddAlbum] = useState(false);
+  const [newAlbumInput, setNewAlbumInput] = useState("");
+
+  const playRecentSong = (song: any) => {
+    shouldAutoPlayRef.current = true;
+    setCurrentSong(song);
+    setAudioUrl(song.audioUrl);
+    setFileName(song.title || "TikTok Audio");
+    setTiktokUrl(song.originalUrl || "");
+    resumeContext();
+  };
+
+  const deleteRecentSong = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRecentSongs((prev) => prev.filter((s) => s.id !== id));
+  };
+
+  const downloadAudio = async (e: React.MouseEvent, song: any) => {
+    e.stopPropagation();
+    if (!song.audioUrl) return;
+    try {
+      const response = await fetch(song.audioUrl);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `${song.title || "audio"}.mp3`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      const link = document.createElement("a");
+      link.href = song.audioUrl;
+      link.target = "_blank";
+      link.download = `${song.title || "audio"}.mp3`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  };
+
+  const fetchAndPlayUserAlbum = async (username: string, loadMore = false, forceRefresh = false) => {
+    if (isFetchingTiktok || isLoadingMore) return;
+    
+    // Normalize username
+    const normalizedUsername = username.replace("@", "").trim();
+    setActiveAlbumUsername(normalizedUsername);
+
+    // Cache-first optimization for initial loads
+    if (!loadMore && !forceRefresh) {
+      const cached = albumsCache[normalizedUsername];
+      if (cached && cached.songs && cached.songs.length > 0) {
+        setRecentSongs(cached.songs);
+        setActiveAlbumCursor(cached.cursor || "0");
+        setActiveAlbumHasMore(cached.hasMore || false);
+        setTiktokError("");
+        
+        // Find existing album display details and trigger play
+        playRecentSong(cached.songs[0]);
+        return;
+      }
+    }
+
+    if (loadMore) {
+      setIsLoadingMore(true);
+    } else {
+      setIsFetchingTiktok(true);
+      setTiktokError("");
+      setActiveAlbumCursor("0");
+      setActiveAlbumHasMore(false);
+    }
+
+    try {
+      const cursorToUse = loadMore ? activeAlbumCursor : "0";
+      const response = await fetch(`/api/tiktok/user?unique_id=${encodeURIComponent(normalizedUsername)}&cursor=${encodeURIComponent(cursorToUse)}&count=40`);
+      const data = await response.json();
+      
+      if (!response.ok) {
+         if (data.isCloudflareBlock) {
+           setTiktokError("Due to TikTok's anti-bot protection and proxies being blocked, fetching users failed. Try pacing direct video links instead.");
+         } else {
+           setTiktokError(data.error || "Failed to fetch user posts.");
+         }
+         setIsFetchingTiktok(false);
+         setIsLoadingMore(false);
+         return;
+      }
+
+      const videos = data.data?.videos || [];
+      const nextCursor = (data.data?.cursor || "0").toString();
+      const hasMore = !!data.data?.hasMore;
+
+      if (videos.length === 0) {
+        if (!loadMore) {
+          setTiktokError("This user has no posts or account is private.");
+        } else {
+          setActiveAlbumHasMore(false);
+        }
+        setIsFetchingTiktok(false);
+        setIsLoadingMore(false);
+        return;
+      }
+
+      // Try to find the real avatar in the posts and update the local album list
+      const firstVidWithAuthor = videos.find((v: any) => v.author?.unique_id || v.author?.unique_id === "");
+      const authorObj = firstVidWithAuthor?.author;
+      if (authorObj) {
+        const foundAvatar = authorObj.avatar || authorObj.avatar_medium || authorObj.avatar_thumb || authorObj.avatar_larger;
+        const nickname = authorObj.nickname || authorObj.unique_id;
+
+        if (foundAvatar || nickname) {
+          setTiktokAlbums(prev => prev.map(alb => {
+            if (alb.username.toLowerCase() === normalizedUsername.toLowerCase()) {
+              return {
+                ...alb,
+                avatar: foundAvatar || alb.avatar,
+                displayName: nickname || alb.displayName
+              };
+            }
+            return alb;
+          }));
+        }
+      }
+
+      const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info).map((v: any) => {
+        const videoAuthor = v.author?.nickname || authorObj?.nickname || `@${normalizedUsername}`;
+        const musicCover = v.music_info?.cover || v.cover || v.origin_cover;
+        return {
+          id: v.video_id || v.id || Date.now().toString() + Math.random(),
+          title: v.title || v.desc || "TikTok Audio",
+          originalUrl: "https://www.tiktok.com/@" + normalizedUsername + "/video/" + (v.video_id || v.id),
+          audioUrl: v.music || v.play || v.music_info?.play,
+          cover: musicCover,
+          author: videoAuthor,
+          timestamp: Date.now()
+        };
+      });
+
+      if (newSongs.length > 0) {
+        let updatedSongsList = [];
+
+        if (loadMore) {
+          setRecentSongs((prev) => {
+             const existingIds = new Set(prev.map(s => s.id));
+             const toAdd = newSongs.filter((s: any) => !existingIds.has(s.id));
+             updatedSongsList = [...prev, ...toAdd];
+             return updatedSongsList;
+          });
+        } else {
+          updatedSongsList = newSongs;
+          setRecentSongs(newSongs);
+          playRecentSong(newSongs[0]);
+        }
+
+        // Save progress to offline local albums cache
+        setAlbumsCache(prev => ({
+          ...prev,
+          [normalizedUsername]: {
+            songs: updatedSongsList,
+            cursor: nextCursor,
+            hasMore: hasMore,
+            updatedAt: Date.now()
+          }
+        }));
+
+        setActiveAlbumCursor(nextCursor);
+        setActiveAlbumHasMore(hasMore);
+        setTiktokError("");
+      } else {
+        if (!loadMore) {
+          setTiktokError("No extracted audio tracks found in this creator's posts.");
+        }
+      }
+    } catch (err) {
+      setTiktokError("Network error while communicating with our proxy backend.");
+    } finally {
+      setIsFetchingTiktok(false);
+      setIsLoadingMore(false);
+    }
+  };
+
+  const handleAddAlbumSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    let val = newAlbumInput.trim();
+    if (!val) return;
+
+    let username = "";
+    if (val.startsWith("@")) {
+      username = val.substring(1).trim();
+    } else if (val.includes("tiktok.com/")) {
+      const match = val.match(/tiktok\.com\/@([^\/\?]+)/);
+      if (match) {
+        username = match[1];
+      }
+    } else {
+      username = val;
+    }
+
+    if (username) {
+      const finalUsername = username.replace("@", "").trim();
+      const exists = tiktokAlbums.some(alb => alb.username.toLowerCase() === finalUsername.toLowerCase());
+      if (!exists) {
+        const initials = finalUsername.slice(0, 2).toUpperCase();
+        const newAlb = {
+          id: `alb_${Date.now()}`,
+          username: finalUsername,
+          displayName: "@" + finalUsername,
+          avatarSub: initials
+        };
+        setTiktokAlbums(prev => [newAlb, ...prev]);
+      }
+      setNewAlbumInput("");
+      setShowAddAlbum(false);
+      setTiktokError("");
+      
+      setPlaylistTab("albums");
+      await fetchAndPlayUserAlbum(finalUsername);
+    } else {
+      // Direct song link
+      setTiktokUrl(val);
+      setNewAlbumInput("");
+      setShowAddAlbum(false);
+      
+      // Execute the fetch
+      setTimeout(() => {
+        const fakeForm = { preventDefault: () => {} } as React.FormEvent;
+        handleTiktokFetch(fakeForm);
+      }, 50);
+    }
+  };
+
+  const handleTiktokFetch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tiktokUrl) return;
+    setIsFetchingTiktok(true);
+    setTiktokError("");
+    
+    let isUserLink = false;
+    let username = "";
+    
+    if (tiktokUrl.startsWith("@")) {
+      isUserLink = true;
+      username = tiktokUrl.substring(1).trim();
+    } else {
+      const match = tiktokUrl.match(/tiktok\.com\/@([^\/\?]+)(?:\?|$|\/$)/);
+      if (match && !tiktokUrl.includes('/video/') && !tiktokUrl.includes('/photo/')) {
+        isUserLink = true;
+        username = match[1];
+      }
+    }
+
+    if (isUserLink) {
+      try {
+        const response = await fetch(`/api/tiktok/user?unique_id=${encodeURIComponent(username)}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+           if (data.isCloudflareBlock) {
+             setTiktokError("Due to TikTok's anti-bot protection and proxies being blocked, fetching users failed. Try pacing direct video links instead.");
+           } else {
+             setTiktokError(data.error || "Failed to fetch user posts.");
+           }
+           setIsFetchingTiktok(false);
+           return;
+        }
+
+        const videos = data.data?.videos || [];
+        if (videos.length === 0) {
+          setTiktokError("User has no videos or account is private.");
+          setIsFetchingTiktok(false);
+          return;
+        }
+
+        const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info).map((v: any) => ({
+          id: v.video_id || v.id || Date.now().toString() + Math.random(),
+          title: v.title || v.desc || "TikTok Audio",
+          originalUrl: "https://www.tiktok.com/@" + username + "/video/" + (v.video_id || v.id),
+          audioUrl: v.music || v.play || v.music_info?.play,
+          cover: v.cover || v.origin_cover || v.music_info?.cover,
+          author: v.author?.nickname || "@" + username,
+          timestamp: Date.now()
+        }));
+
+        if (newSongs.length > 0) {
+          setRecentSongs((prev) => {
+             const existingIds = new Set(prev.map(s => s.id));
+             const toAdd = newSongs.filter((s: any) => !existingIds.has(s.id));
+             return [...toAdd, ...prev].slice(0, 50);
+          });
+          setTiktokError("");
+          setTiktokUrl("");
+        } else {
+          setTiktokError("No extracted audio found in the user's recent posts.");
+        }
+      } catch (err) {
+        setTiktokError("Network error while communicating with our proxy backend.");
+      } finally {
+        setIsFetchingTiktok(false);
+      }
+      return;
+    }
+
+    try {
+      let oembedData: any = {};
+      try {
+        const oembedRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent("https://www.tiktok.com/oembed?url=" + tiktokUrl)}`);
+        oembedData = await oembedRes.json();
+      } catch (e) {
+        // ignore oembed error
+      }
+
+      const response = await fetch("https://www.tikwm.com/api/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: "url=" + encodeURIComponent(tiktokUrl) + "&hd=1"
+      });
+      const data = await response.json();
+      if (data && data.data && (data.data.music || data.data.play)) {
+        const urlToFetch = data.data.music || data.data.play;
+        
+        // Use a proxy URL if the raw URL requires referer, tikwm usually allows direct audio src
+        shouldAutoPlayRef.current = true;
+        setAudioUrl(urlToFetch);
+        const songTitle = oembedData.title || data.data.title || "TikTok Audio";
+        setFileName(songTitle);
+
+        const newSong = {
+          id: data.data.id || Date.now().toString(),
+          title: songTitle,
+          originalUrl: tiktokUrl,
+          audioUrl: urlToFetch,
+          cover: oembedData.thumbnail_url || data.data.cover || data.data.origin_cover,
+          author: oembedData.author_name || data.data.author?.nickname,
+          timestamp: Date.now()
+        };
+
+        setRecentSongs((prev) => {
+          const filtered = prev.filter((s) => s.originalUrl !== tiktokUrl && s.id !== newSong.id);
+          return [newSong, ...filtered].slice(0, 50); // increased limit
+        });
+        
+        resumeContext();
+        setTiktokUrl(""); // clear input
+      } else {
+        setTiktokError(data?.msg || "Could not extract audio from this link. Make sure it's public.");
+      }
+    } catch (err: any) {
+      setTiktokError("Network error. The API might be blocked by your browser extensions or adblocker.");
+    } finally {
+      setIsFetchingTiktok(false);
+    }
+  };
+
+  const [activePresetId, setActivePresetId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_active_preset_id");
+      return saved || "flat_original";
+    } catch {
+      return "flat_original";
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_active_preset_id", activePresetId);
+  }, [activePresetId]);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const shouldAutoPlayRef = useRef<boolean>(false);
+  const progressBarRef1 = useRef<HTMLDivElement>(null);
+  const progressBarRef2 = useRef<HTMLDivElement>(null);
+  const currentTimeRef = useRef<HTMLSpanElement>(null);
+  const touchStartRef = useRef<{x: number, y: number} | null>(null);
+  const {
+    initAudio,
+    toggleSignatureSound,
+    isSignatureSound,
+    resumeContext,
+    analyser,
+    updateEqNode,
+    updateSpatial,
+    audioError,
+    audioContextRef,
+  } = useAudioProcessor(eqSettings, spatialSettings);
+
+  const isSignatureSoundRef = useRef(isSignatureSound);
+  useEffect(() => {
+    isSignatureSoundRef.current = isSignatureSound;
+  }, [isSignatureSound]);
+
+  const [isCompact, setIsCompact] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_compact_mode");
+      return saved !== null ? saved === "true" : true;
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_compact_mode", String(isCompact));
+  }, [isCompact]);
+
+  const [bgPlayBypass, setBgPlayBypass] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_bg_bypass");
+      return saved === "true";
+    } catch {}
+    return false;
+  });
+
+  const [countdown, setCountdown] = useState<{
+    type: "HD" | "BG";
+    targetValue: boolean;
+    secondsLeft: number;
+    isCompleting?: boolean;
+    visible?: boolean;
+  } | null>(null);
+
+  const countdownTimeoutRef = useRef<any>(null);
+  const countdownIntervalRef = useRef<any>(null);
+  const completionTimeoutRef = useRef<any>(null);
+  const fadeTimeoutRef = useRef<any>(null);
+
+  useEffect(() => {
+    return () => {
+      if (countdownTimeoutRef.current) clearTimeout(countdownTimeoutRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      if (completionTimeoutRef.current) clearTimeout(completionTimeoutRef.current);
+      if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+    };
+  }, []);
+
+  const startDelayedAction = (type: "HD" | "BG", targetValue: boolean) => {
+    if (countdownTimeoutRef.current) clearTimeout(countdownTimeoutRef.current);
+    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+    if (completionTimeoutRef.current) clearTimeout(completionTimeoutRef.current);
+    if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
+
+    setCountdown({
+      type,
+      targetValue,
+      secondsLeft: 3,
+      isCompleting: false,
+      visible: true
+    });
+
+    let currentSeconds = 3;
+    countdownIntervalRef.current = setInterval(() => {
+      currentSeconds -= 1;
+      if (currentSeconds >= 0) {
+        setCountdown({
+          type,
+          targetValue,
+          secondsLeft: currentSeconds,
+          isCompleting: false,
+          visible: true
+        });
+      } else {
+        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      }
+    }, 1000);
+
+    countdownTimeoutRef.current = setTimeout(() => {
+      if (type === "HD") {
+        resumeContext();
+        if (targetValue) {
+          setBgPlayBypass(false);
+          toggleSignatureSound(true);
+        } else {
+          toggleSignatureSound(false);
+        }
+      } else if (type === "BG") {
+        const wasPlaying = isPlaying;
+        const currentTime = audioRef.current ? audioRef.current.currentTime : 0;
+
+        setBgPlayBypass(targetValue);
+        
+        setTimeout(() => {
+          if (audioRef.current && audioUrl) {
+            audioRef.current.currentTime = currentTime;
+            if (wasPlaying) {
+              audioRef.current.play().then(() => {
+                setIsPlaying(true);
+              }).catch((e) => {
+                console.warn("Playback resume blocked:", e);
+                setIsPlaying(false);
+              });
+            }
+          }
+        }, 150);
+
+        if (targetValue) {
+          toggleSignatureSound(false);
+          setShowVisualizer(false);
+        }
+      }
+
+      setCountdown({
+        type,
+        targetValue,
+        secondsLeft: 0,
+        isCompleting: true,
+        visible: true
+      });
+
+      completionTimeoutRef.current = setTimeout(() => {
+        setCountdown(prev => prev ? { ...prev, visible: false } : null);
+
+        fadeTimeoutRef.current = setTimeout(() => {
+          setCountdown(null);
+        }, 1000);
+      }, 1200);
+
+    }, 3000);
+  };
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_bg_bypass", String(bgPlayBypass));
+  }, [bgPlayBypass]);
+
+  // Enforce turning off HD and Visualizer if BG PLAY starts as true
+  useEffect(() => {
+    if (bgPlayBypass) {
+      toggleSignatureSound(false);
+      setShowVisualizer(false);
+    }
+  }, [bgPlayBypass, toggleSignatureSound, setShowVisualizer]);
+
+  const toggleBgBypass = () => {
+    const nextVal = !bgPlayBypass;
+    startDelayedAction("BG", nextVal);
+  };
+
+  const handleToggleHD = () => {
+    resumeContext();
+    const nextVal = !isSignatureSound;
+    startDelayedAction("HD", nextVal);
+  };
+
+  const cycleVisualizer = () => {
+    resumeContext();
+    if (bgPlayBypass) {
+      // Turn off BG PLAY mode if activating Visualizer
+      setBgPlayBypass(false);
+    }
+    const types = ["liquid_gold", "stardust_orbit", "neon_perspective", "audio_ring", "cosmic_mandala", "liquid_terrain", "retro_glass"];
+    if (!showVisualizer) {
+      setShowVisualizer(true);
+      setVisSettings((prev) => ({ ...prev, type: "liquid_gold" }));
+    } else {
+      const currentIndex = types.indexOf(visSettings.type);
+      if (currentIndex === -1 || currentIndex === types.length - 1) {
+        setShowVisualizer(false);
+      } else {
+        setVisSettings((prev) => ({ ...prev, type: types[currentIndex + 1] }));
+      }
+    }
+  };
+
+  const applyPreset = (preset: (typeof PRESETS)[0]) => {
+    setActivePresetId(preset.id);
+    const newEq = eqSettings.map((band, i) => ({
+      ...band,
+      g: preset.eq[i] !== undefined ? preset.eq[i] : band.g,
+    }));
+    setEqSettings(newEq);
+    setSpatialSettings(preset.spatial);
+
+    newEq.forEach((band, i) => {
+      updateEqNode(i, "gain", band.g);
+    });
+    Object.entries(preset.spatial).forEach(([key, val]) => {
+      updateSpatial(key as any, val);
+    });
+  };
+
+  const handleEqChange = (
+    index: number,
+    param: "f" | "q" | "g",
+    value: number,
+  ) => {
+    setActivePresetId("custom");
+    const newSettings = [...eqSettings];
+    newSettings[index] = { ...newSettings[index], [param]: value };
+    setEqSettings(newSettings);
+    updateEqNode(
+      index,
+      param === "f" ? "frequency" : param === "q" ? "Q" : "gain",
+      value,
+    );
+  };
+
+  const handleSpatialChange = (
+    param:
+      | "reverb"
+      | "wideness"
+      | "clarity"
+      | "treble"
+      | "punch"
+      | "bassWeight"
+      | "vocalHD",
+    value: number,
+  ) => {
+    setActivePresetId("custom");
+    setSpatialSettings((prev) => ({ ...prev, [param]: value }));
+    updateSpatial(param, value);
+  };
+
+  // Removed old youtube loading code
+
+  const handleFileUpload = (e: any) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      const url = URL.createObjectURL(file);
+      const newSong = {
+        id: "local_" + Date.now().toString(),
+        title: file.name,
+        originalUrl: "Local File",
+        audioUrl: url,
+        timestamp: Date.now(),
+        cover: null,
+        author: "Local Upload"
+      };
+      setRecentSongs((prev) => [newSong, ...prev]);
+      playRecentSong(newSong);
+      
+      setIsPlaying(false);
+    }
+  };
+
+  const togglePlay = () => {
+    if (!audioRef.current || !audioUrl) return;
+
+    resumeContext(); // Do not await to preserve synchronous user gesture context
+
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play().catch(e => {
+        console.warn("Autoplay/Play blocked:", e);
+      });
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  useEffect(() => {
+    if (audioRef.current && audioUrl) {
+      audioRef.current.load();
+      if (!bgPlayBypass) {
+        initAudio(audioRef.current);
+
+        // Force re-routing of audio graph for new file depending on current toggle state
+        // Using setTimeout ensures the DOM audio element has fully registered the source
+        setTimeout(() => {
+          toggleSignatureSound(isSignatureSoundRef.current);
+        }, 100);
+      }
+
+      if (shouldAutoPlayRef.current || isPlaying) {
+        audioRef.current.play()
+          .then(() => {
+            setIsPlaying(true);
+          })
+          .catch((e) => {
+            console.warn("Autoplay was blocked or interrupted:", e);
+            setIsPlaying(false);
+          });
+        shouldAutoPlayRef.current = false;
+      } else {
+        setIsPlaying(false);
+      }
+    }
+  }, [audioUrl, bgPlayBypass]);
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current && !isNaN(audioRef.current.duration)) {
+      const currentTime = audioRef.current.currentTime;
+      const duration = audioRef.current.duration;
+      
+      // Calculate smooth volume transition over 2 seconds
+      let targetVolume = 1.0;
+      if (duration > 4) { // only apply if track is reasonably long
+        if (currentTime < 2) {
+          // Fade in over 2s
+          targetVolume = currentTime / 2;
+        } else if (duration - currentTime < 2) {
+          // Fade out over 2s before transition
+          targetVolume = (duration - currentTime) / 2;
+        }
+      }
+      
+      // Safety bounds check
+      audioRef.current.volume = Math.max(0, Math.min(1, targetVolume));
+
+      const p = (currentTime / duration) * 100;
+      const progressPercent = isNaN(p) ? 0 : p;
+      if (progressBarRef1.current) progressBarRef1.current.style.width = `${progressPercent}%`;
+      if (progressBarRef2.current) progressBarRef2.current.style.width = `${progressPercent}%`;
+      if (currentTimeRef.current) currentTimeRef.current.innerText = formatDurationDisplay(currentTime);
+    }
+  };
+
+  const handleEnded = () => {
+    setIsPlaying(false);
+    
+  };
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      setDuration(audioRef.current.duration);
+      if (!sampleRate) {
+        if (audioContextRef.current) {
+          setSampleRate(audioContextRef.current.sampleRate);
+        } else {
+          setSampleRate(44100);
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!audioUrl) {
+      setDuration(null);
+      setSampleRate(null);
+      return;
+    }
+
+    let active = true;
+
+    const fetchAndDecodeMetadata = async () => {
+      try {
+        const response = await fetch(audioUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        
+        if (!active) return;
+
+        const CtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!CtxClass) return;
+        
+        const tempCtx = new CtxClass();
+        const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+        
+        if (!active) {
+          tempCtx.close();
+          return;
+        }
+
+        setDuration(audioBuffer.duration);
+        setSampleRate(audioBuffer.sampleRate);
+        tempCtx.close();
+      } catch (err) {
+        console.warn("Could not decode audio header metadata natively:", err);
+        if (audioRef.current && active) {
+          if (!isNaN(audioRef.current.duration) && audioRef.current.duration > 0) {
+            setDuration(audioRef.current.duration);
+          }
+          if (audioContextRef.current) {
+            setSampleRate(audioContextRef.current.sampleRate);
+          } else {
+            setSampleRate(44100);
+          }
+        }
+      }
+    };
+
+    fetchAndDecodeMetadata();
+
+    return () => {
+      active = false;
+    };
+  }, [audioUrl]);
+
+  const formatDurationDisplay = (sec: number | null) => {
+    if (sec === null || isNaN(sec)) return "--:--";
+    const minutes = Math.floor(sec / 60);
+    const seconds = Math.floor(sec % 60);
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  const formatSampleRateDisplay = (rate: number | null) => {
+    if (rate === null || isNaN(rate)) return "--- kHz";
+    if (rate >= 1000) {
+      return `${(rate / 1000).toFixed(1)} kHz`;
+    }
+    return `${rate} Hz`;
+  };
+
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  const handleExport = async () => {
+    if (!audioUrl) return;
+    setIsExporting(true);
+    setExportProgress(0);
+    try {
+      const resultUrl = await exportOfflineHD(
+        audioUrl,
+        eqSettings,
+        spatialSettings,
+        (prog) => {
+          setExportProgress(prog);
+        },
+      );
+
+      const a = document.createElement("a");
+      a.href = resultUrl;
+      a.download = `HD_Enhanced_${fileName?.replace(/\.[^/.]+$/, "") || "audio"}.wav`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(resultUrl);
+    } catch (err: any) {
+      console.error("Export failed:", err);
+      alert("Export failed: " + err.message);
+    } finally {
+      setIsExporting(false);
+      setExportProgress(0);
+    }
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartRef.current = {
+      x: e.targetTouches[0].clientX,
+      y: e.targetTouches[0].clientY
+    };
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartRef.current === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const touchEndY = e.changedTouches[0].clientY;
+    
+    const deltaX = touchStartRef.current.x - touchEndX;
+    const deltaY = touchStartRef.current.y - touchEndY;
+    
+    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+      // Horizontal swipe
+      if (deltaX > 50) {
+        handleNextSong();
+      } else if (deltaX < -50) {
+        handlePrevSong();
+      }
+    }
+    touchStartRef.current = null;
+  };
+
+  const handleNextSong = () => {
+    if (!currentSong || recentSongs.length <= 1) return;
+    const currentIndex = recentSongs.findIndex(s => s.id === currentSong.id);
+    const nextIndex = (currentIndex + 1) % recentSongs.length;
+    playRecentSong(recentSongs[nextIndex]);
+  };
+
+  const handlePrevSong = () => {
+    if (!currentSong || recentSongs.length <= 1) return;
+    const currentIndex = recentSongs.findIndex(s => s.id === currentSong.id);
+    const prevIndex = (currentIndex - 1 + recentSongs.length) % recentSongs.length;
+    playRecentSong(recentSongs[prevIndex]);
+  };
+
+  // Media Session API for Bluetooth, lockscreen, and hardware media key control
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+
+    if (currentSong) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: currentSong.title || "TikTok Audio",
+        artist: currentSong.author || "Unknown Artist",
+        album: currentSong.album || "TikTok Music Box",
+        artwork: currentSong.cover ? [
+          { src: currentSong.cover, sizes: '96x96', type: 'image/jpeg' },
+          { src: currentSong.cover, sizes: '128x128', type: 'image/jpeg' },
+          { src: currentSong.cover, sizes: '192x192', type: 'image/jpeg' },
+          { src: currentSong.cover, sizes: '256x256', type: 'image/jpeg' },
+          { src: currentSong.cover, sizes: '384x384', type: 'image/jpeg' },
+          { src: currentSong.cover, sizes: '512x512', type: 'image/jpeg' },
+        ] : [],
+      });
+    }
+
+    try {
+      navigator.mediaSession.setActionHandler('play', () => {
+        if (audioRef.current && audioUrl) {
+          audioRef.current.play()
+            .then(() => setIsPlaying(true))
+            .catch((e) => console.warn("Bluetooth play blocked:", e));
+        }
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        if (audioRef.current) {
+          audioRef.current.pause();
+          setIsPlaying(false);
+        }
+      });
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        handlePrevSong();
+      });
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        handleNextSong();
+      });
+    } catch (e) {
+      console.warn("MediaSession action handler registration failed:", e);
+    }
+
+    return () => {
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.setActionHandler('play', null);
+          navigator.mediaSession.setActionHandler('pause', null);
+          navigator.mediaSession.setActionHandler('previoustrack', null);
+          navigator.mediaSession.setActionHandler('nexttrack', null);
+        } catch (_) {}
+      }
+    };
+  }, [currentSong, audioUrl, recentSongs]);
+
+  // Update media session playback state
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.playbackState = isPlaying ? "playing" : "paused";
+      } catch (_) {}
+    }
+  }, [isPlaying]);
+
+  return (
+    <div className={`text-[#E0E2E8] font-sans flex flex-col relative overflow-hidden ${
+      isCompact ? "h-[100dvh] max-h-[100dvh] bg-[#0A0B10]" : "min-h-[100dvh] bg-[#0A0B10]"
+    }`} style={{ fontFamily: "'Inter', sans-serif" }}>
+      {currentSong?.cover && (
+        <>
+          <div 
+            className="absolute inset-0 z-0 opacity-40 transition-opacity duration-1000 scale-110 pointer-events-none"
+            style={{
+              backgroundImage: `url(${currentSong.cover})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              filter: 'blur(80px) saturate(150%)',
+            }}
+          />
+          <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/0 via-[#0A0B10]/60 to-[#0A0B10] pointer-events-none" />
+        </>
+      )}
+
+      {audioError && (
+        <div className="bg-red-500/90 text-white p-3 z-[60] text-sm text-center shadow-md">
+           <Info className="w-4 h-4 inline mr-1" /> {audioError}
+        </div>
+      )}
+
+       {countdown && (
+        <div 
+          className={`fixed top-6 left-1/2 -translate-x-1/2 bg-amber-500/95 backdrop-blur-md text-black px-6 py-3 rounded-full z-[100] text-xs font-black uppercase tracking-widest flex items-center gap-3 shadow-[0_12px_40px_rgba(245,158,11,0.5)] border border-amber-400 transition-all duration-[1000ms] ease-out ${
+            countdown.visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 -translate-y-2 pointer-events-none"
+          }`}
+        >
+          {countdown.isCompleting ? (
+            <>
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75 animate-ping"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600"></span>
+              </span>
+              <span className="font-sans font-bold">
+                {countdown.type === "HD"
+                  ? `Lossless HD ${countdown.targetValue ? "Activated" : "Deactivated"}!`
+                  : `iOS BG Mode ${countdown.targetValue ? "Enabled" : "Disabled"}!`}
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-black opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-black"></span>
+              </span>
+              <span className="font-mono">
+                {countdown.type === "HD" 
+                  ? `${countdown.targetValue ? "Activating" : "Deactivating"} Lossless HD in ${countdown.secondsLeft}s`
+                  : `${countdown.targetValue ? "Enabling" : "Disabling"} iOS BG Mode in ${countdown.secondsLeft}s`}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Main Single Page Layout */}
+      <div 
+        className={`w-full max-w-screen-md mx-auto flex flex-col relative z-20 px-1 lg:px-4 ${
+          isCompact 
+            ? "h-full max-h-[100dvh] overflow-hidden pt-1 pb-1 flex-1" 
+            : "flex-1 overflow-y-auto h-full pb-10 custom-scrollbar pt-2"
+        }`}
+      >
+        {/* Player Section */}
+        <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate sticky top-[0.5rem] z-[60] border border-white/10 overflow-hidden ${
+          isCompact 
+            ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)]" 
+            : "pt-4 pb-2 mb-4 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
+        }`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            
+            {/* Dynamic Artwork Background */}
+            {currentSong?.cover && (
+               <div 
+                  className="absolute inset-0 -z-20 bg-center bg-cover blur-[50px] opacity-50 scale-[1.2] transition-all duration-1000 saturate-[1.5]"
+                  style={{ backgroundImage: `url(${currentSong.cover})` }}
+               />
+            )}
+            <div className="absolute inset-0 -z-10 bg-[#0A0B10]/50 backdrop-blur-[40px]" />
+            
+            {/* Cover Art / Visualizer */}
+            <div 
+               onClick={!showVisualizer ? cycleVisualizer : undefined}
+               className={`transition-all duration-500 ease-out bg-black/40 overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border shrink-0 relative ${
+                 isCompact
+                   ? (showVisualizer && isVisualizerExpanded 
+                       ? 'w-[calc(100%-2.5rem)] h-[110px] md:h-[130px] rounded-[1rem] border-white/10 select-none mb-3' 
+                       : `w-[110px] h-[110px] md:w-[130px] md:h-[130px] rounded-[1.25rem] mb-3 ${showVisualizer ? 'border-white/10 select-none' : 'border-white/5 cursor-pointer hover:border-white/20'}`)
+                   : (showVisualizer && isVisualizerExpanded 
+                       ? 'w-[calc(100%-2.5rem)] h-[240px] md:h-[320px] rounded-[1.5rem] border-white/10 select-none mb-6' 
+                       : `w-[220px] h-[220px] md:w-[280px] md:h-[280px] rounded-[2rem] mb-6 ${showVisualizer ? 'border-white/10 select-none' : 'border-white/5 cursor-pointer hover:border-white/20'}`)
+               } ${isPlaying && !showVisualizer ? 'scale-100' : 'scale-[0.98]'}`}
+            >
+               {showVisualizer ? (
+                  <Visualizer 
+                     analyser={bgPlayBypass ? null : analyser} 
+                     isPlaying={isPlaying} 
+                     settings={{ 
+                       type: visSettings.type, 
+                       palette: visSettings.palette, 
+                       barWidthMultiplier: visSettings.barWidthMultiplier, 
+                       barSpacing: visSettings.barSpacing, 
+                       colorIntensity: visSettings.colorIntensity, 
+                       glowStrength: visSettings.glowStrength 
+                     }} 
+                     coverUrl={currentSong?.cover}
+                     onContainerClick={cycleVisualizer}
+                     isExpanded={isVisualizerExpanded}
+                     onToggleExpand={() => setIsVisualizerExpanded(!isVisualizerExpanded)}
+                     isSignatureSound={isSignatureSound}
+                     className="w-full h-full flex justify-center items-center relative overflow-hidden bg-black/95" 
+                  />
+               ) : currentSong?.cover ? (
+                  <img src={currentSong.cover} alt="Cover" className="w-full h-full object-cover transition-opacity" />
+               ) : (
+                  <div className="w-full h-full flex items-center justify-center"><Music className={`text-white/20 ${isCompact ? "w-10 h-10" : "w-20 h-20"}`} /></div>
+               )}
+            </div>
+
+            {/* Info */}
+            <div className={`w-full px-6 flex flex-col ${isCompact ? 'mb-2.5 text-center' : 'mb-6 text-left'}`}>
+                 <h2 className={`font-bold text-white tracking-tight truncate leading-tight w-full drop-shadow-sm transition-all ${isCompact ? 'text-[15px]' : 'text-[20px] md:text-[24px]'}`}>{fileName || "Unknown Track"}</h2>
+                 <p className={`font-medium tracking-wide truncate break-all w-full transition-all ${isCompact ? 'text-[11px] text-white/50 mt-0.5' : 'text-[14px] text-white/70 mt-1'}`}>{currentSong?.author || "Unknown Artist"}</p>
+            </div>
+
+            {/* Time / Progress */}
+            <div className={`w-full px-6 ${isCompact ? 'mb-2.5' : 'mb-6'}`}>
+                 <div 
+                     className="h-1.5 w-full bg-black/30 backdrop-blur-md border border-white/10 rounded-full cursor-pointer relative group transition-all shadow-inner"
+                     onClick={(e) => {
+                       if (audioRef.current && duration) {
+                         const rect = e.currentTarget.getBoundingClientRect();
+                         const pos = (e.clientX - rect.left) / rect.width;
+                         audioRef.current.currentTime = pos * audioRef.current.duration;
+                       }
+                     }}
+                 >
+                    <div ref={progressBarRef1} className="h-full bg-white/90 rounded-full pointer-events-none transition-none shadow-[0_0_12px_rgba(255,255,255,0.6)] relative">
+                       <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-[0_2px_10px_rgba(0,0,0,0.5)] opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100" />
+                    </div>
+                 </div>
+                 <div className="flex justify-between text-[10px] font-bold text-white/50 tracking-widest mt-1.5 px-0.5">
+                    <span ref={currentTimeRef}>0:00</span>
+                    <span>{formatDurationDisplay(duration)}</span>
+                 </div>
+            </div>
+
+            {/* Controls */}
+            <div className="flex flex-col items-center justify-center w-full px-6 mb-1">
+                {/* Main Playback Controls */}
+                <div className={`flex items-center justify-center w-full relative ${isCompact ? 'gap-4 mb-3' : 'gap-6 md:gap-10 mb-6'}`}>
+                  <button onClick={handlePrevSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
+                      <SkipBack className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
+                  </button>
+
+                  <button 
+                      onClick={togglePlay}
+                      className={`rounded-full bg-white/20 backdrop-blur-xl text-white flex items-center justify-center hover:bg-white/30 active:scale-95 transition-all shadow-[0_4px_24px_rgba(0,0,0,0.4)] border border-white/20 ${
+                        isCompact ? 'w-[52px] h-[52px]' : 'w-[72px] h-[72px] md:w-[88px] md:h-[88px]'
+                      }`}
+                  >
+                      {isPlaying 
+                        ? <Pause className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8 md:w-10 md:h-10'} fill-current`} /> 
+                        : <Play className={`${isCompact ? 'w-5 h-5 ml-0.5' : 'w-8 h-8 md:w-10 md:h-10 ml-1'} fill-current`} />
+                      }
+                  </button>
+
+                  <button onClick={handleNextSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
+                      <SkipForward className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
+                  </button>
+                </div>
+
+                {/* Utility Controls */}
+                <div className="flex items-center gap-5 justify-center w-full">
+                  <button 
+                    onClick={handleToggleHD} 
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${isSignatureSound ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Toggle Lossless HD Audio"
+                  >
+                      <span className="font-black text-[13px] tracking-widest uppercase">HD</span>
+                  </button>
+
+                  <button 
+                    onClick={toggleBgBypass} 
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${bgPlayBypass ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Toggle Background / iOS Lockscreen Playback"
+                  >
+                      <span className="font-black text-[11px] tracking-widest uppercase">BG PLAY</span>
+                  </button>
+
+                  <button 
+                    onClick={cycleVisualizer}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showVisualizer ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Visualizer Mode"
+                  >
+                      <AudioWaveform className="w-5 h-5" />
+                  </button>
+
+                  <button 
+                    onClick={() => setShowTuning(!showTuning)}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showTuning ? 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="EQ & Settings"
+                  >
+                      <SlidersHorizontal className="w-5 h-5" />
+                  </button>
+
+                  <button 
+                    onClick={() => setIsCompact(!isCompact)}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${isCompact ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    title={isCompact ? "Enlarge Interface" : "Compact Interface"}
+                  >
+                      {isCompact ? <Maximize2 className="w-5 h-5" /> : <Minimize2 className="w-5 h-5" />}
+                  </button>
+                </div>
+            </div>
+
+            {/* EQ Panel (Inline) */}
+            {showTuning && (
+               <div className="w-full mt-2 flex flex-col gap-4 bg-black/20 backdrop-blur-md rounded-[24px] border border-white/5 p-5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative overflow-hidden transition-all duration-500 animate-in slide-in-from-top-2 fade-in z-50">
+                   
+                   {/* HD Master & iOS BG Mode Toggles Grid */}
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
+                      
+                      {/* HD Master Toggle */}
+                      <div 
+                         className={`p-3.5 rounded-[18px] border transition-all duration-500 flex justify-between items-center relative overflow-hidden ${isSignatureSound ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/5 border-amber-500/40 shadow-[inset_0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/40 border-white/5'}`}
+                      >
+                         <div className="relative z-10 flex flex-col pr-2">
+                            <h3 className={`font-black text-[13px] tracking-widest uppercase flex items-center gap-2 transition-colors ${isSignatureSound ? 'text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'text-white'}`}>
+                                HD
+                            </h3>
+                            <p className={`text-[10px] mt-0.5 font-medium transition-colors ${isSignatureSound ? 'text-amber-300/80' : 'text-white/40'}`}>Lossless Upscaling</p>
+                         </div>
+                         <button 
+                               onClick={handleToggleHD} 
+                               className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-all duration-300 shadow-inner z-10 border border-black/30 ${isSignatureSound ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.6)]' : 'bg-white/10'}`}
+                            >
+                               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-300 shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${isSignatureSound ? 'translate-x-6' : 'translate-x-1'}`} />
+                         </button>
+                      </div>
+
+                      {/* iOS Background Play Fix Toggle */}
+                      <div 
+                         className={`p-3.5 rounded-[18px] border transition-all duration-500 flex justify-between items-center relative overflow-hidden ${bgPlayBypass ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/5 border-amber-500/40 shadow-[inset_0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/40 border-white/5'}`}
+                      >
+                         <div className="relative z-10 flex flex-col pr-2">
+                            <h3 className={`font-black text-[13px] tracking-widest uppercase flex items-center gap-2 transition-colors ${bgPlayBypass ? 'text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'text-white'}`}>
+                                iOS BG Mode
+                            </h3>
+                            <p className={`text-[10px] mt-0.5 font-medium transition-colors ${bgPlayBypass ? 'text-amber-300/80' : 'text-white/40'}`}>Background & lockscreen</p>
+                         </div>
+                         <button 
+                               onClick={toggleBgBypass} 
+                               className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-all duration-300 shadow-inner z-10 border border-black/30 ${bgPlayBypass ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.6)]' : 'bg-white/10'}`}
+                            >
+                               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-300 shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${bgPlayBypass ? 'translate-x-6' : 'translate-x-1'}`} />
+                         </button>
+                      </div>
+
+                   </div>
+
+                   {bgPlayBypass && (
+                     <div className="p-3 bg-amber-500/10 border border-amber-500/10 rounded-[14px] text-amber-300 text-[10.5px] leading-relaxed relative overflow-hidden backdrop-blur-sm shadow-[inset_0_0_12px_rgba(251,191,36,0.03)] select-none animate-in fade-in slide-in-from-top-1 duration-300">
+                        <div className="font-extrabold uppercase tracking-widest text-[9.5px] text-amber-400 mb-0.5 flex items-center gap-1.5">
+                          <span>💡 iOS BG MODE ACTIVE</span>
+                        </div>
+                        <p className="opacity-80">
+                          Web Audio is bypassed to support true lockscreen background play. <strong>Waveforms and HD Lossless upscaling are dynamically simulated in this compatibility mode.</strong>
+                        </p>
+                     </div>
+                   )}
+
+                   {/* Equalizer */}
+                   <div className="flex-1 flex flex-col min-h-0 relative z-10 w-full px-1">
+                      <div className="flex justify-between items-end mb-4 shrink-0">
+                        <h3 className="font-bold text-[12px] uppercase tracking-widest text-white/70">Equalizer</h3>
+                        <button 
+                          onClick={() => {
+                              const newEq = eqSettings.map((b) => ({ ...b, g: 0 }));
+                              setEqSettings(newEq);
+                              newEq.forEach((band, i) => updateEqNode?.(i, "gain", 0));
+                          }}
+                          className="text-[10px] font-bold text-white/40 uppercase tracking-widest hover:text-white transition-colors"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-5 gap-y-2 gap-x-2 relative z-10 w-full pb-2">
+                           {eqSettings.map((band, i) => (
+                              <div key={i} className="flex flex-col items-center justify-between h-[120px] w-full relative group">
+                                <div className={`text-[10px] font-bold tracking-widest px-1 rounded flex items-center justify-center text-center -mb-2 z-10 transition-colors ${band.g !== 0 ? 'text-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.8)]' : 'text-white/30'}`}>
+                                   {band.g > 0 ? '+' : ''}{band.g.toFixed(1)}
+                                </div>
+                                
+                                <div className="flex-1 w-full flex justify-center relative my-3">
+                                    <div className="absolute w-[4px] h-[80px] top-1/2 -translate-y-1/2 bg-black/60 rounded-full drop-shadow-sm border border-white/5" />
+                                    <div className="absolute top-1/2 left-1/2 w-6 h-[2px] bg-white/10 -translate-y-1/2 -translate-x-1/2 rounded" />
+                                    <div 
+                                      className="absolute left-1/2 -translate-x-1/2 bottom-[10px] w-[4px] rounded-full bg-amber-500/50 pointer-events-none transition-all duration-200" 
+                                      style={{ 
+                                        height: `${band.g > 0 ? (band.g / 12) * 50 : 0}%`, 
+                                        bottom: '50%',
+                                        boxShadow: '0 0 10px rgba(245, 158, 11, 0.5)'
+                                      }} 
+                                    />
+                                    <div 
+                                      className="absolute left-1/2 -translate-x-1/2 top-[10px] w-[4px] rounded-full bg-white/20 pointer-events-none transition-all duration-200" 
+                                      style={{ 
+                                        height: `${band.g < 0 ? Math.abs(band.g / 12) * 50 : 0}%`, 
+                                        top: '50%'
+                                      }} 
+                                    />
+                                    
+                                    <input
+                                       type="range"
+                                       min="-12"
+                                       max="12"
+                                       step="0.1"
+                                       value={band.g || 0}
+                                       onChange={(e) => {
+                                         const val = parseFloat(e.target.value);
+                                         const newEq = [...eqSettings];
+                                         newEq[i].g = val;
+                                         setEqSettings(newEq);
+                                         updateEqNode?.(i, "gain", val);
+                                       }}
+                                       className="w-full h-full bg-transparent appearance-none cursor-grab active:cursor-grabbing absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 !origin-center -rotate-90 slider-vertical-glass"
+                                       style={{ width: '80px', height: '32px' }}
+                                    />
+                                </div>
+
+                                <div className={`text-[10px] font-bold tracking-widest h-4 flex items-center justify-center text-center leading-tight transition-colors ${band.g !== 0 ? 'text-amber-400/80' : 'text-white/40'}`}>
+                                   {band.name.replace('Hz','').replace('kHz','k')}
+                                </div>
+                              </div>
+                           ))}
+                         </div>
+                   </div>
+               </div>
+            )}
+          </div>
+
+        {/* Modern Tab Bar - UP NEXT & ALBUMS */}
+        <div className={`w-full max-w-lg mx-auto flex flex-col min-h-0 px-2 ${
+          isCompact 
+            ? "flex-1 overflow-hidden mt-3 pb-3" 
+            : "flex-1 shrink-0 mt-6 pb-6"
+        }`}>
+          
+          {/* Header tabs row */}
+          <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 px-3">
+            <div className="flex gap-5 sm:gap-6">
+              <button
+                onClick={() => setPlaylistTab("upnext")}
+                className={`text-[13px] font-bold tracking-widest uppercase transition-all pb-1 relative ${
+                  playlistTab === "upnext" 
+                    ? "text-white" 
+                    : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                Up Next {recentSongs.length > 0 && `(${recentSongs.length})`}
+                {playlistTab === "upnext" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
+                )}
+              </button>
+              
+              <button
+                onClick={() => setPlaylistTab("albums")}
+                className={`text-[13px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 ${
+                  playlistTab === "albums" 
+                    ? "text-white" 
+                    : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                Albums
+                {playlistTab === "albums" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setPlaylistTab("guide")}
+                className={`text-[13px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 ${
+                  playlistTab === "guide" 
+                    ? "text-white" 
+                    : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                Guide
+                {playlistTab === "guide" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
+                )}
+              </button>
+            </div>
+
+            {/* Quick header action inside Album/UpNext */}
+            <div className="flex items-center gap-2">
+              {playlistTab === "albums" ? (
+                <>
+                  <button
+                    onClick={() => setShowAddAlbum(!showAddAlbum)}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                      showAddAlbum 
+                        ? "bg-amber-400 text-black rotate-45" 
+                        : "bg-white/10 text-white hover:bg-white/20"
+                    }`}
+                    title="Add TikTok link or profile"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setPlaylistTab("guide")}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                      playlistTab === "guide"
+                        ? "bg-amber-400 text-black shadow-lg shadow-amber-400/20"
+                        : "bg-white/10 text-white hover:bg-white/20 hover:text-amber-400"
+                    }`}
+                    title="App Introduction & Setup Guide"
+                  >
+                    <Info className="w-4 h-4" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  {recentSongs.length > 0 && playlistTab === "upnext" && (
+                    <button
+                      onClick={() => {
+                        setRecentSongs([]);
+                        setCurrentSong(null);
+                        setAudioUrl(null);
+                        setFileName(null);
+                      }}
+                      className="text-[10px] font-extrabold tracking-widest text-white/30 hover:text-red-400 uppercase transition-all mr-1.5"
+                      title="Clear all songs"
+                    >
+                      Clear All
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setPlaylistTab("guide")}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                      playlistTab === "guide"
+                        ? "bg-amber-400 text-black shadow-lg shadow-amber-400/20"
+                        : "bg-white/10 text-white hover:bg-white/20 hover:text-amber-400"
+                    }`}
+                    title="App Introduction & Setup Guide"
+                  >
+                    <Info className="w-4 h-4" />
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Tab contents */}
+          
+          {/* 1. Add Album Form (Always shows when showAddAlbum is true in albums tab) */}
+          {playlistTab === "albums" && showAddAlbum && (
+            <form 
+              onSubmit={handleAddAlbumSubmit} 
+              className="mb-5 bg-white/5 border border-white/10 rounded-2xl p-4 animate-in slide-in-from-top-1 fade-in duration-300"
+            >
+              <div className="text-[11px] font-bold tracking-wider text-amber-400 uppercase mb-2.5">
+                Add Creator or Track
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. @bellapoarch or TikTok link..."
+                  value={newAlbumInput}
+                  onChange={(e) => setNewAlbumInput(e.target.value)}
+                  className="flex-1 bg-black/40 border border-white/5 rounded-xl px-3.5 py-2.5 text-[16px] md:text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/20"
+                  disabled={isFetchingTiktok}
+                  autoFocus
+                />
+                <button
+                  type="submit"
+                  disabled={isFetchingTiktok || !newAlbumInput.trim()}
+                  className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black font-extrabold text-xs px-4 rounded-xl transition-all"
+                >
+                  Add
+                </button>
+              </div>
+              <p className="text-[10px] text-white/40 mt-1.5 px-1 leading-normal">
+                Type any creator username like `@khaby.lame` to load posts as dynamic albums, or paste video URLs to pull songs.
+              </p>
+            </form>
+          )}
+
+          {/* Error messages/Loading Indicators */}
+          {isFetchingTiktok && (
+            <div className="mb-4 bg-white/5 rounded-2xl p-4 flex flex-col items-center justify-center border border-white/5 animate-pulse">
+              <div className="w-5 h-5 border-2 border-amber-400 rounded-full border-t-transparent animate-spin mb-2" />
+              <div className="text-[11px] font-bold tracking-widest text-[#E0E2E8]/70 uppercase">Extracting TikTok Audio...</div>
+            </div>
+          )}
+
+          {tiktokError && (
+            <div className="mb-4 bg-red-500/10 border border-red-500/20 rounded-2xl p-3 text-center animate-in zoom-in-95 duration-250">
+              <p className="text-red-400 text-xs font-medium leading-relaxed break-words">{tiktokError}</p>
+              <button 
+                onClick={() => setTiktokError("")} 
+                className="text-[10px] font-extrabold tracking-widest text-white/40 uppercase mt-2 hover:text-white"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {/* Tab 1: Up Next */}
+          {playlistTab === "upnext" && (
+            <div className={`z-10 relative flex flex-col min-h-0 ${isCompact ? "flex-1 overflow-hidden" : ""}`}>
+              {recentSongs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 px-4 bg-white/[0.02] border border-white/[0.04] rounded-3xl text-center">
+                  <Music className="w-8 h-8 text-white/10 mb-3" />
+                  <div className="text-xs font-bold text-white/50 tracking-wider">Queue is currently empty</div>
+                  <button 
+                    onClick={() => setPlaylistTab("albums")}
+                    className="text-[11px] font-extrabold text-amber-400 hover:text-amber-300 uppercase tracking-widest mt-2.5 bg-amber-400/10 border border-amber-400/20 px-3.5 py-1.5 rounded-full"
+                  >
+                    Browse Albums
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-col min-h-0 flex-1">
+                  <div className={`flex flex-col gap-1 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent ${
+                    isCompact ? "flex-1 overflow-y-auto" : "max-h-[350px] overflow-y-auto"
+                  }`}>
+                    {recentSongs.map((song) => {
+                      const isActive = currentSong?.id === song.id;
+                      return (
+                        <div 
+                          key={song.id} 
+                          onClick={() => playRecentSong(song)}
+                          className={`group flex items-center gap-4 p-3 rounded-2xl cursor-pointer transition-all active:scale-[0.98] ${
+                            isActive 
+                              ? 'bg-white/10 backdrop-blur-md shadow-lg border border-white/5' 
+                              : 'hover:bg-white/5 border border-transparent'
+                          }`}
+                        >
+                          <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0 bg-black/40 flex items-center justify-center shadow-md relative group-hover:scale-105 transition-transform duration-300">
+                            {song.cover ? (
+                              <img src={song.cover} className="w-full h-full object-cover" alt="cov" referrerPolicy="no-referrer" />
+                            ) : (
+                              <Music className="w-4 h-4 text-white/40" />
+                            )}
+                            {isActive && (
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                {isPlaying ? (
+                                  <span className="flex gap-0.5 items-end h-3">
+                                    <span className="w-0.5 bg-amber-400 animate-[bounce_1s_infinite_100ms] h-full" />
+                                    <span className="w-0.5 bg-amber-400 animate-[bounce_1s_infinite_300ms] h-3/4" />
+                                    <span className="w-0.5 bg-amber-400 animate-[bounce_1s_infinite_500ms] h-1/2" />
+                                  </span>
+                                ) : (
+                                  <Play className="w-3" />
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          
+                          <div className="flex-1 min-w-0">
+                            <div className={`text-xs font-bold tracking-tight truncate ${isActive ? 'text-amber-400' : 'text-white'}`}>
+                              {song.title}
+                            </div>
+                            <div className="text-[11px] text-white/50 font-medium tracking-wide truncate mt-0.5">
+                              {song.author}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            {/* Download song option */}
+                            <button 
+                              onClick={(e) => downloadAudio(e, song)}
+                              className="opacity-70 md:opacity-0 group-hover:opacity-100 p-2 text-white/40 hover:text-amber-400 rounded-full transition-all active:scale-90 hover:bg-white/5"
+                              title="Download audio"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Delete song option */}
+                            <button 
+                              onClick={(e) => deleteRecentSong(song.id, e)}
+                              className="opacity-70 md:opacity-0 group-hover:opacity-100 p-2 text-white/40 hover:text-red-400 rounded-full transition-all active:scale-90 hover:bg-white/5"
+                              title="Remove from queue"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Dynamic user album pagination indicator & click actions */}
+                  {activeAlbumUsername && activeAlbumHasMore && (
+                    <div className="mt-3 pt-2 border-t border-white/5">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          fetchAndPlayUserAlbum(activeAlbumUsername, true);
+                        }}
+                        disabled={isLoadingMore || isFetchingTiktok}
+                        className="w-full py-3 px-4 bg-amber-400/10 hover:bg-amber-400/15 border border-amber-400/20 active:scale-98 transition-all text-amber-300 font-extrabold text-[10px] tracking-widest uppercase rounded-2xl flex items-center justify-center gap-2 shadow-inner"
+                      >
+                        {isLoadingMore ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-amber-400 rounded-full border-t-transparent animate-spin" />
+                            LOADING MORE TRACKS FROM TIKTOK...
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-3.5 h-3.5" />
+                            LOAD NEXT SONGS FOR @{activeAlbumUsername}
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tab 2: Albums */}
+          {playlistTab === "albums" && (
+            <div className={`grid grid-cols-2 gap-3 pb-4 items-start content-start ${
+              isCompact 
+                ? "flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10" 
+                : ""
+            }`}>
+              {tiktokAlbums.map((alb) => {
+                const normalizedUser = alb.username.toLowerCase();
+                const isActive = activeAlbumUsername === normalizedUser;
+                const cacheData = albumsCache[normalizedUser];
+                const isCached = !!cacheData && cacheData.songs?.length > 0;
+                
+                return (
+                  <div
+                    key={alb.id}
+                    onClick={() => {
+                      fetchAndPlayUserAlbum(alb.username);
+                    }}
+                    className={`group flex flex-col justify-between p-3.5 rounded-[22px] cursor-pointer border transition-all duration-300 relative overflow-hidden h-[105px] ${
+                      isActive
+                        ? "bg-amber-400/10 border-amber-400/30 shadow-lg shadow-amber-400/5"
+                        : "bg-white/[0.03] border-white/5 hover:bg-white/[0.07] hover:border-white/10"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full mb-2">
+                      {/* Premium Circle Avatar Layout with Layered Zero-State Fallback */}
+                      <div className="relative w-8.5 h-8.5 rounded-full overflow-hidden shrink-0 shadow-lg border border-white/5">
+                        <div className={`absolute inset-0 flex items-center justify-center font-black text-[10px] select-none uppercase transition-all duration-300 ${
+                          isActive 
+                            ? "bg-amber-400 text-black shadow-[0_0_12px_rgba(245,158,11,0.4)]" 
+                            : "bg-white/10 text-white/70 group-hover:bg-white/20 group-hover:text-white"
+                        }`}>
+                          {alb.avatarSub || alb.username.slice(0, 2).toUpperCase()}
+                        </div>
+                        {alb.avatar && (
+                          <img 
+                            src={alb.avatar} 
+                            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300 rounded-full" 
+                            alt="" 
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              // tiktok hotlink block causes opacity fallback
+                              e.currentTarget.style.opacity = "0";
+                            }}
+                          />
+                        )}
+                        {/* active animated gold pulsing border */}
+                        {isActive && (
+                          <div className="absolute inset-0 border border-amber-400 rounded-full animate-pulse pointer-events-none" />
+                        )}
+                      </div>
+                      
+                      {/* Control Tray Inside Album Block (Refresh cached / Delete album) */}
+                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                        {isCached && (
+                          <button
+                            onClick={() => {
+                              fetchAndPlayUserAlbum(alb.username, false, true);
+                            }}
+                            className={`p-1 hover:bg-white/10 rounded-full transition-all text-white/40 hover:text-amber-400 ${
+                              isFetchingTiktok && isActive ? "animate-spin text-amber-400" : ""
+                            }`}
+                            title="Force refresh database & recreate live audio proxy links"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        
+                        {alb.id.startsWith("alb_") && (
+                          <button
+                            onClick={() => {
+                              setTiktokAlbums(prev => prev.filter(a => a.id !== alb.id));
+                              // Also wipe caches for clean state
+                              if (albumsCache[normalizedUser]) {
+                                setAlbumsCache(prev => {
+                                  const updated = { ...prev };
+                                  delete updated[normalizedUser];
+                                  return updated;
+                                });
+                              }
+                            }}
+                            className="p-1 hover:bg-white/10 text-white/40 hover:text-red-400 rounded-full transition-all"
+                            title="Delete custom album & wipe links"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="flex flex-col min-w-0 mb-1">
+                      <h4 className={`text-[12px] font-extrabold tracking-tight truncate leading-snug ${
+                        isActive ? "text-amber-400" : "text-white/90 group-hover:text-white"
+                      }`}>
+                        {alb.displayName || `@${alb.username}`}
+                      </h4>
+                      
+                      {/* Dynamic Offline / Cached Indicator */}
+                      {isCached ? (
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0" />
+                          <p className="text-[9.5px] text-emerald-400/80 font-bold tracking-tight uppercase select-none truncate">
+                            Saved ({cacheData.songs.length} Tracks)
+                          </p>
+                        </div>
+                      ) : (
+                        <p className="text-[9.5px] text-white/40 mt-0.5 font-medium tracking-tight uppercase select-none">
+                          TikTok Creator
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Silky glowing decoration */}
+                    {isActive && (
+                      <div className="absolute right-0 bottom-0 w-8 h-8 rounded-full bg-amber-400/10 blur-xl translate-x-2 translate-y-2 pointer-events-none" />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Tab 3: Help Guide & PWA installation */}
+          {playlistTab === "guide" && (
+            <div className={`flex flex-col gap-5 text-white/90 pb-8 ${
+              isCompact 
+                ? "flex-1 overflow-y-auto pr-1 min-h-0 scrollbar-thin scrollbar-thumb-white/10" 
+                : "h-auto w-full"
+            }`}>
+              
+              {/* Introduction Card */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-5 sm:p-6 relative backdrop-blur-sm">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-amber-400/10 to-transparent blur-xl pointer-events-none" />
+                <h3 className="text-xs font-black tracking-widest text-amber-400 uppercase mb-2.5 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                  About Acoustic Presence
+                </h3>
+                <p className="text-[11px] sm:text-xs leading-relaxed text-white/70">
+                  Welcome to the ultimate high-fidelity streaming companion! <strong>Acoustic Presence</strong> extracts audio tracks directly from public TikTok creators, hashtag videos, or direct URL links to stream them back-to-back in real time.
+                </p>
+                <div className="grid grid-cols-2 gap-2.5 mt-4 pt-4 border-t border-white/5">
+                  <div className="bg-black/20 p-3 rounded-xl border border-white/[0.02]">
+                    <div className="text-[10px] font-black text-amber-300">HD UPSCALING</div>
+                    <div className="text-[9px] text-white/50 mt-1 leading-normal">16-band EQ, premium sound profiles, and true bass weights.</div>
+                  </div>
+                  <div className="bg-black/20 p-3 rounded-xl border border-white/[0.02]">
+                    <div className="text-[10px] font-black text-emerald-400">CACHED ALBUMS</div>
+                    <div className="text-[9px] text-white/50 mt-1 leading-normal">Your play history is auto-saved for offline-capable loads.</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Install guide */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-5 sm:p-6 relative backdrop-blur-sm">
+                <div className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-emerald-400/5 to-transparent blur-xl pointer-events-none" />
+                <h3 className="text-xs font-black tracking-widest text-[#E0E2E8] uppercase mb-3 flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5 text-amber-400" />
+                  Install App on Mobile
+                </h3>
+                <p className="text-[11px] sm:text-xs leading-relaxed text-white/70 mb-4">
+                  Save our app directly on your smart device to unlock native <strong>fullscreen standalone display</strong>, isolated memory pools, and highly reliable background playback.
+                </p>
+
+                {/* Steps Accordion / Grid */}
+                <div className="flex flex-col gap-3">
+                  {/* iOS Safari */}
+                  <div className="bg-black/30 p-3.5 rounded-2xl border border-white/5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-5 h-5 rounded-full bg-zinc-850 text-white flex items-center justify-center font-bold text-[9px] border border-white/10">iOS</span>
+                      <span className="text-[10px] font-bold text-amber-300">Apple Safari browser</span>
+                    </div>
+                    <ol className="text-[10px] text-white/60 space-y-2 pl-1">
+                      <li className="flex items-start gap-1.5">
+                        <span className="text-amber-400 font-bold shrink-0">1.</span>
+                        <span>Tap the <span className="inline-flex bg-white/10 text-white rounded p-1 mx-0.5 text-[8px] font-bold"><Share2 className="w-2.5 h-2.5 inline" /></span> <strong>Share</strong> icon on bottom Safari toolbar.</span>
+                      </li>
+                      <li className="flex items-start gap-1.5">
+                        <span className="text-amber-400 font-bold shrink-0">2.</span>
+                        <span>Scroll down and tap <strong>"Add to Home Screen"</strong> option.</span>
+                      </li>
+                      <li className="flex items-start gap-1.5">
+                        <span className="text-amber-400 font-bold shrink-0">3.</span>
+                        <span>Specify a custom name if desired, then tap <strong>"Add"</strong> in top-right.</span>
+                      </li>
+                    </ol>
+                  </div>
+
+                  {/* Android Chrome */}
+                  <div className="bg-black/30 p-3.5 rounded-2xl border border-white/5">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-5 h-5 rounded-full bg-zinc-850 text-white flex items-center justify-center font-bold text-[9px] border border-white/10">G</span>
+                      <span className="text-[10px] font-bold text-emerald-400">Google Chrome / Android</span>
+                    </div>
+                    <ol className="text-[10px] text-white/60 space-y-2 pl-1">
+                      <li className="flex items-start gap-1.5">
+                        <span className="text-emerald-400 font-bold shrink-0">1.</span>
+                        <span>Tap the <strong>three vertical dots</strong> (Menu) in top-right Chrome corner.</span>
+                      </li>
+                      <li className="flex items-start gap-1.5">
+                        <span className="text-emerald-400 font-bold shrink-0">2.</span>
+                        <span>Select <strong>"Install App"</strong> or <strong>"Add to Home Screen"</strong>.</span>
+                      </li>
+                      <li className="flex items-start gap-1.5">
+                        <span className="text-emerald-400 font-bold shrink-0">3.</span>
+                        <span>Confirm and approve the system installation prompt immediately.</span>
+                      </li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+
+              {/* iOS Background Play tip */}
+              <div className="bg-amber-400/5 border border-amber-400/10 rounded-2xl p-4 text-[10px] sm:text-[11px] leading-relaxed relative select-none">
+                <div className="font-extrabold uppercase tracking-widest text-[9px] text-amber-400 mb-1 flex items-center gap-1.5">
+                  <span>💡 PRO-TIP FOR CONTINUOUS BACKGROUND PLAYBACK</span>
+                </div>
+                <p className="opacity-80">
+                  Toggle on <strong>"BG PLAY"</strong> (or <strong>"iOS BG Mode"</strong> in EQ panels) to prevent Apple iOS from pausing media when your screen lock automatically engages.
+                </p>
+              </div>
+
+            </div>
+          )}
+
+        </div>
+
+
+
+
+         <audio
+          key={bgPlayBypass ? "audio-bypass" : "audio-processed"}
+          ref={audioRef}
+          src={audioUrl || undefined}
+          autoPlay
+          playsInline
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onTimeUpdate={handleTimeUpdate}
+          onEnded={() => {
+            handleEnded();
+            if (currentSong && recentSongs.length > 1) {
+              handleNextSong();
+            }
+          }}
+          onLoadedMetadata={handleLoadedMetadata}
+          crossOrigin="anonymous"
+          className="hidden"
+        />
+      </div>
+    </div>
+  );
+}
