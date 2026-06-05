@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock
+  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff
 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
 
@@ -37,6 +37,7 @@ const Visualizer = ({
   isExpanded = false,
   onToggleExpand,
   isSignatureSound = false,
+  isCompact = false,
 }: {
   analyser: AnalyserNode | null;
   isPlaying: boolean;
@@ -54,6 +55,7 @@ const Visualizer = ({
   isExpanded?: boolean;
   onToggleExpand?: () => void;
   isSignatureSound?: boolean;
+  isCompact?: boolean;
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number>(0);
@@ -972,7 +974,7 @@ const Visualizer = ({
         }
         ctx.shadowBlur = 0;
 
-      } else {
+      } else if (settings.type === "retro_glass") {
         // --- 5. RETRO GLASS BENTO COLUMNS ("retro_glass" default fallback) ---
         // Exquisite floating glass equalizer bento bars with physics-driven gravity peak particles
         const totalPills = 14;
@@ -1059,6 +1061,210 @@ const Visualizer = ({
         }
         ctx.translate(-10, 0);
         ctx.shadowBlur = 0;
+
+      } else if (settings.type === "spectre_core") {
+        // --- 7. SPECTRE POLYGON CORE (Trap Nation style) ---
+        ctx.fillStyle = "#06070a";
+        ctx.fillRect(0, 0, width, height);
+
+        ctx.translate(centerX, centerY);
+
+        const polygonSides = 6;
+        const baseRadius = Math.min(width, height) * 0.22;
+        const bassImpact = smoothedBass * 35 * settings.colorIntensity;
+        const currentRadius = baseRadius + bassImpact;
+
+        // Draw inner glowing core
+        ctx.shadowBlur = 30 * settings.glowStrength;
+        ctx.shadowColor = `rgba(168, 85, 247, 0.4)`;
+        ctx.fillStyle = `rgba(10, 10, 15, 0.95)`;
+        ctx.beginPath();
+        for (let i = 0; i <= polygonSides; i++) {
+          const angle = (i * Math.PI * 2) / polygonSides - Math.PI / 2;
+          const px = Math.cos(angle) * currentRadius;
+          const py = Math.sin(angle) * currentRadius;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+
+        // Draw Album Cover in center
+        ctx.save();
+        ctx.beginPath();
+        for (let i = 0; i <= polygonSides; i++) {
+          const angle = (i * Math.PI * 2) / polygonSides - Math.PI / 2;
+          const px = Math.cos(angle) * currentRadius;
+          const py = Math.sin(angle) * currentRadius;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.clip();
+        
+        if (loadedImage) {
+           ctx.drawImage(
+              loadedImage,
+              -currentRadius,
+              -currentRadius,
+              currentRadius * 2,
+              currentRadius * 2
+           );
+           ctx.fillStyle = "rgba(0,0,0,0.3)";
+           ctx.fill();
+        }
+        ctx.restore();
+
+        // Draw audio wave along the edges
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)"; 
+        ctx.shadowBlur = 15 * settings.glowStrength;
+        ctx.shadowColor = "rgba(255, 255, 255, 0.8)";
+        ctx.lineWidth = 3 * settings.barWidthMultiplier;
+        
+        ctx.beginPath();
+        for (let i = 0; i < polygonSides; i++) {
+          const angleStart = (i * Math.PI * 2) / polygonSides - Math.PI / 2;
+          const angleEnd = ((i + 1) * Math.PI * 2) / polygonSides - Math.PI / 2;
+          
+          const ptsOnEdge = 24;
+          for (let j = 0; j <= ptsOnEdge; j++) {
+             const t = j / ptsOnEdge;
+             const ex = Math.cos(angleStart) * currentRadius * (1 - t) + Math.cos(angleEnd) * currentRadius * t;
+             const ey = Math.sin(angleStart) * currentRadius * (1 - t) + Math.sin(angleEnd) * currentRadius * t;
+             
+             const dx = Math.cos(angleEnd) - Math.cos(angleStart);
+             const dy = Math.sin(angleEnd) - Math.sin(angleStart);
+             const len = Math.sqrt(dx*dx + dy*dy);
+             const nx = dy / len;
+             const ny = -dx / len;
+
+             const freqIdx = Math.floor((1 - Math.abs(t - 0.5) * 2) * bufferLength * 0.4); 
+             const val = (dataArray[freqIdx] / 255);
+             const amp = Math.pow(val, 1.8) * 35 * settings.colorIntensity;
+
+             // Spike outwards
+             const sx = ex + nx * amp;
+             const sy = ey + ny * amp;
+
+             if (i === 0 && j === 0) ctx.moveTo(sx, sy);
+             else ctx.lineTo(sx, sy);
+          }
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        // Draw outer particles
+        if (particlesRef.current.length < 50 || particlesRef.current[0]?.vx === undefined) {
+           particlesRef.current = [];
+           for(let i=0; i<50; i++) {
+             particlesRef.current.push({
+               x: (Math.random() - 0.5) * currentRadius,
+               y: (Math.random() - 0.5) * currentRadius,
+               vx: (Math.random() - 0.5) * 5,
+               vy: (Math.random() - 0.5) * 5,
+               size: Math.random() * 2 + 1,
+               alpha: 1,
+             });
+           }
+        }
+        
+        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = "white";
+        particlesRef.current.forEach((p) => {
+           p.x += p.vx * (1 + smoothedBass * 2);
+           p.y += p.vy * (1 + smoothedBass * 2);
+           p.alpha -= 0.015;
+           if (p.alpha <= 0) {
+              const angle = Math.random() * Math.PI * 2;
+              p.x = Math.cos(angle) * currentRadius;
+              p.y = Math.sin(angle) * currentRadius;
+              p.vx = Math.cos(angle) * (Math.random() * 2 + 1);
+              p.vy = Math.sin(angle) * (Math.random() * 2 + 1);
+              p.alpha = 1;
+           }
+           ctx.beginPath();
+           ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+           ctx.fillStyle = `rgba(255,255,255,${p.alpha})`;
+           ctx.fill();
+        });
+
+        ctx.translate(-centerX, -centerY);
+
+      } else if (settings.type === "lux_pulse_line") {
+        // --- 8. LUX PULSE LINE (Specterr pulse line style) ---
+        ctx.fillStyle = "#0c0d12";
+        ctx.fillRect(0, 0, width, height);
+
+        const centerYPos = height * 0.75;
+        
+        ctx.beginPath();
+        const ptCount = 120;
+        const widthStep = width / (ptCount - 1);
+        
+        ctx.shadowBlur = 25 * settings.glowStrength;
+        ctx.shadowColor = "rgba(236, 72, 153, 0.6)";
+        
+        const grad = ctx.createLinearGradient(0, centerYPos, width, centerYPos);
+        grad.addColorStop(0, "rgba(6, 182, 212, 1)"); // Cyan
+        grad.addColorStop(0.5, "rgba(168, 85, 247, 1)"); // Purple
+        grad.addColorStop(1, "rgba(236, 72, 153, 1)"); // Pink
+        
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 4.5 * settings.barWidthMultiplier;
+        
+        for (let i = 0; i < ptCount; i++) {
+            const distFromCenter = Math.abs((i / (ptCount - 1)) - 0.5) * 2;
+            const freqIdx = Math.floor((1 - distFromCenter) * bufferLength * 0.5);
+            const val = dataArray[freqIdx] / 255;
+            const amp = Math.pow(val, 1.8) * height * 0.35 * settings.colorIntensity;
+            
+            const px = i * widthStep;
+            const py = centerYPos - amp - (smoothedBass * 10);
+            
+            if (i === 0) {
+               ctx.moveTo(px, py);
+            } else {
+               ctx.lineTo(px, py);
+            }
+        }
+        ctx.stroke();
+
+        ctx.lineTo(width, height);
+        ctx.lineTo(0, height);
+        ctx.closePath();
+        
+        const gradFill = ctx.createLinearGradient(0, centerYPos-150, 0, height);
+        gradFill.addColorStop(0, "rgba(168, 85, 247, 0.3)");
+        gradFill.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = gradFill;
+        ctx.fill();
+
+        // Draw album cover floating in center above the line
+        if (loadedImage) {
+           const coverSize = Math.max(120, Math.min(width, height) * 0.35);
+           const coverX = centerX - coverSize / 2;
+           const coverY = centerYPos - coverSize - 40 - (smoothedBass * 20);
+           
+           ctx.shadowBlur = 30 * settings.glowStrength;
+           ctx.shadowColor = "rgba(168, 85, 247, 0.4)";
+           
+           ctx.beginPath();
+           ctx.roundRect(coverX, coverY, coverSize, coverSize, 20);
+           ctx.save();
+           ctx.clip();
+           ctx.drawImage(loadedImage, coverX, coverY, coverSize, coverSize);
+           ctx.restore();
+           
+           ctx.strokeStyle = "rgba(255,255,255,0.15)";
+           ctx.lineWidth = 2;
+           ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+      } else {
+         // fallback
+         ctx.fillStyle = "#000";
+         ctx.fillRect(0, 0, width, height);
       }
       ctx.restore();
     };
@@ -1086,6 +1292,10 @@ const Visualizer = ({
         return "Flowing Liquid Terrain";
       case "retro_glass":
         return "Glass Bento equalizers";
+      case "spectre_core":
+        return "Spectre Polygon Core";
+      case "lux_pulse_line":
+        return "Luxury Pulse Line";
       default:
         return "Luxury Visualizer";
     }
@@ -1129,7 +1339,7 @@ const Visualizer = ({
       </div>
 
       {/* Deluxe Glass Tool-Bar Controllers Overlay (Z-30, pointer-events-auto) */}
-      <div className={`absolute right-3 top-3 bottom-3 flex flex-col justify-between items-center z-30 pointer-events-none select-none transition-all duration-500 ease-out ${showHUD ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 translate-x-3 scale-95 pointer-events-none'}`}>
+      <div className={`absolute right-2 sm:right-3 z-30 pointer-events-none select-none transition-all duration-500 ease-out flex justify-between items-center ${isCompact ? "bottom-2 flex-row-reverse gap-2" : "top-3 bottom-3 flex-col"} ${showHUD ? 'opacity-100 translate-x-0 scale-100' : 'opacity-0 translate-x-3 scale-95 pointer-events-none'}`}>
         
         {/* Toggle Expand Wide-screen icon */}
         {onToggleExpand && (
@@ -1139,7 +1349,7 @@ const Visualizer = ({
               resetHUDTimer();
               onToggleExpand();
             }}
-            className="pointer-events-auto w-8 h-8 rounded-full bg-black/55 hover:bg-black/85 backdrop-blur-md border border-white/10 flex items-center justify-center text-[#E0E2E8] hover:text-white transition-all active:scale-90 shadow-lg"
+            className={`pointer-events-auto w-8 h-8 rounded-full bg-black/55 hover:bg-black/85 backdrop-blur-md border border-white/10 flex items-center justify-center text-[#E0E2E8] hover:text-white transition-all active:scale-90 shadow-lg ${isCompact ? "scale-75 opacity-50 hover:opacity-100 origin-bottom-right" : ""}`}
             title={isExpanded ? "Collapse View" : "Expand Full Width"}
           >
             {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
@@ -1147,7 +1357,7 @@ const Visualizer = ({
         )}
 
         {/* Zoom controller panel */}
-        <div className="flex flex-col gap-1.5 pointer-events-auto bg-black/40 backdrop-blur-md p-1 rounded-full border border-white/5 shadow-xl">
+        <div className={`flex pointer-events-auto bg-black/40 backdrop-blur-md p-1 rounded-full border border-white/5 shadow-xl transition-all origin-bottom-right ${isCompact ? "flex-row gap-1 scale-[0.60] opacity-40 hover:opacity-100 hover:scale-[0.70]" : "flex-col gap-1.5 md:scale-100 scale-75 md:opacity-100 opacity-70 hover:opacity-100 hover:scale-90 md:hover:scale-100"}`}>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -1775,6 +1985,12 @@ export default function App() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("all");
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
+  const [lastMutedVolume, setLastMutedVolume] = useState(1);
+  const volStartYRef = useRef(0);
+  const volStartValRef = useRef(0);
+  const isMutingClickRef = useRef(true);
   const [isAIAnalyzing, setIsAIAnalyzing] = useState(false);
   
   const [duration, setDuration] = useState<number | null>(null);
@@ -1812,9 +2028,9 @@ export default function App() {
   const [isVisualizerExpanded, setIsVisualizerExpanded] = useState(() => {
     try {
       const saved = localStorage.getItem("acoustic_presence_is_visualizer_expanded");
-      return saved === "true";
+      return saved !== null ? saved === "true" : true;
     } catch {
-      return false;
+      return true;
     }
   });
 
@@ -2172,7 +2388,8 @@ export default function App() {
 
     try {
       const cursorToUse = loadMore ? activeAlbumCursor : "0";
-      const response = await fetch(`/api/tiktok/user?unique_id=${encodeURIComponent(normalizedUsername)}&cursor=${encodeURIComponent(cursorToUse)}&count=40`);
+      const refreshParam = forceRefresh ? "&refresh=true" : "";
+      const response = await fetch(`/api/tiktok/user?unique_id=${encodeURIComponent(normalizedUsername)}&cursor=${encodeURIComponent(cursorToUse)}&count=40${refreshParam}`);
       const data = await response.json();
       
       if (!response.ok) {
@@ -2341,7 +2558,7 @@ export default function App() {
     }
   };
 
-  const handleTiktokFetch = async (e: React.FormEvent, urlOverride?: string) => {
+  const handleTiktokFetch = async (e: React.FormEvent, urlOverride?: string, forceRefresh = false) => {
     if (e && e.preventDefault) e.preventDefault();
     const urlToUse = urlOverride || tiktokUrl;
     if (!urlToUse) return;
@@ -2423,7 +2640,8 @@ export default function App() {
           });
         } else {
           // Standard NhacCuaTui link
-          res = await fetch(`/api/nhaccuatui/playlist?url=${encodeURIComponent(urlToUse)}`);
+          const refreshParam = forceRefresh ? "&refresh=true" : "";
+          res = await fetch(`/api/nhaccuatui/playlist?url=${encodeURIComponent(urlToUse)}${refreshParam}`);
         }
         
         let json;
@@ -2618,18 +2836,22 @@ export default function App() {
     isSignatureSoundRef.current = isSignatureSound;
   }, [isSignatureSound]);
 
-  const [isCompact, setIsCompact] = useState(() => {
+  const [uiLayoutMode, setUiLayoutMode] = useState<"full" | "compact" | "hidden">(() => {
     try {
-      const saved = localStorage.getItem("acoustic_presence_compact_mode");
-      return saved !== null ? saved === "true" : true;
+      const saved = localStorage.getItem("acoustic_presence_ui_mode");
+      if (saved === "full" || saved === "compact" || saved === "hidden") return saved;
+      const legacy = localStorage.getItem("acoustic_presence_compact_mode");
+      return legacy === "false" ? "full" : "compact";
     } catch {
-      return true;
+      return "compact";
     }
   });
 
   useEffect(() => {
-    localStorage.setItem("acoustic_presence_compact_mode", String(isCompact));
-  }, [isCompact]);
+    localStorage.setItem("acoustic_presence_ui_mode", uiLayoutMode);
+  }, [uiLayoutMode]);
+
+  const isCompact = uiLayoutMode === "compact" || uiLayoutMode === "hidden";
 
   const [bgPlayBypass, setBgPlayBypass] = useState(() => {
     try {
@@ -2638,6 +2860,22 @@ export default function App() {
     } catch {}
     return false;
   });
+
+  const [masterVolume, setMasterVolume] = useState(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_volume");
+      return saved ? parseFloat(saved) : 1.0;
+    } catch {
+      return 1.0;
+    }
+  });
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_volume", String(masterVolume));
+    if (audioRef.current) {
+       audioRef.current.volume = masterVolume;
+    }
+  }, [masterVolume]);
 
   const [countdown, setCountdown] = useState<{
     type: "HD" | "BG";
@@ -2678,6 +2916,23 @@ export default function App() {
     let currentSeconds = 3;
     countdownIntervalRef.current = setInterval(() => {
       currentSeconds -= 1;
+      
+      if (currentSeconds === 1 && audioRef.current) {
+        // Start a smooth fade out 1s before the trigger
+        let currentVol = audioRef.current.volume;
+        const volumeStep = currentVol / 20; // 20 steps over 1 second (50ms interval)
+        
+        fadeTimeoutRef.current = setInterval(() => {
+          if (audioRef.current) {
+            currentVol = Math.max(0, currentVol - volumeStep);
+            audioRef.current.volume = currentVol;
+          }
+          if (currentVol <= 0 && fadeTimeoutRef.current) {
+            clearInterval(fadeTimeoutRef.current);
+          }
+        }, 50);
+      }
+
       if (currentSeconds >= 0) {
         setCountdown({
           type,
@@ -2774,7 +3029,7 @@ export default function App() {
       // Turn off BG PLAY mode if activating Visualizer
       setBgPlayBypass(false);
     }
-    const types = ["liquid_gold", "stardust_orbit", "neon_perspective", "audio_ring", "cosmic_mandala", "liquid_terrain", "retro_glass"];
+    const types = ["liquid_gold", "stardust_orbit", "neon_perspective", "audio_ring", "cosmic_mandala", "liquid_terrain", "retro_glass", "spectre_core", "lux_pulse_line"];
     if (!showVisualizer) {
       setShowVisualizer(true);
       setVisSettings((prev) => ({ ...prev, type: "liquid_gold" }));
@@ -2909,20 +3164,23 @@ export default function App() {
       const currentTime = audioRef.current.currentTime;
       const duration = audioRef.current.duration;
       
-      // Calculate smooth volume transition over 2 seconds
+      // Calculate smooth volume
       let targetVolume = 1.0;
-      if (duration > 4) { // only apply if track is reasonably long
+      if (countdown && !countdown.isCompleting) {
+          // If countdown is active, let the direct fadeTimeoutRef handle the volume drop near the end
+          targetVolume = 1.0;
+      } else if (duration > 4) {
         if (currentTime < 2) {
-          // Fade in over 2s
           targetVolume = currentTime / 2;
         } else if (duration - currentTime < 2) {
-          // Fade out over 2s before transition
           targetVolume = (duration - currentTime) / 2;
         }
       }
       
-      // Safety bounds check
-      audioRef.current.volume = Math.max(0, Math.min(1, targetVolume));
+      // Combine with masterVolume if not in the middle of a countdown fade!
+      if (!countdown || countdown.isCompleting) {
+          audioRef.current.volume = Math.max(0, Math.min(1, targetVolume * masterVolume));
+      }
 
       const p = (currentTime / duration) * 100;
       const progressPercent = isNaN(p) ? 0 : p;
@@ -3181,17 +3439,17 @@ export default function App() {
 
        {countdown && (
         <div 
-          className={`fixed top-6 left-1/2 -translate-x-1/2 bg-amber-500/95 backdrop-blur-md text-black px-6 py-3 rounded-full z-[100] text-xs font-black uppercase tracking-widest flex items-center gap-3 shadow-[0_12px_40px_rgba(245,158,11,0.5)] border border-amber-400 transition-all duration-[1000ms] ease-out ${
+          className={`fixed top-6 left-1/2 -translate-x-1/2 bg-amber-500/95 backdrop-blur-md text-black px-6 py-3 rounded-full z-[100] text-xs font-black uppercase tracking-widest flex items-center justify-center shadow-[0_12px_40px_rgba(245,158,11,0.5)] border border-amber-400 transition-all duration-[1000ms] ease-out min-w-[200px] ${
             countdown.visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 -translate-y-2 pointer-events-none"
           }`}
         >
           {countdown.isCompleting ? (
             <>
-              <span className="relative flex h-2 w-2">
+              <span className="absolute left-4 flex h-2 w-2">
                 <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75 animate-ping"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600"></span>
               </span>
-              <span className="font-sans font-bold text-[9px]">
+              <span className="font-sans font-bold text-[10px] text-center w-full">
                 {countdown.type === "HD"
                   ? `Lossless HD ${countdown.targetValue ? "Activated" : "Deactivated"}!`
                   : `iOS BG Mode ${countdown.targetValue ? "Enabled" : "Disabled"}!`}
@@ -3199,11 +3457,11 @@ export default function App() {
             </>
           ) : (
             <>
-              <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute left-4 flex h-2.5 w-2.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-black opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-black"></span>
               </span>
-              <span className="font-mono text-[9px]">
+              <span className="font-mono text-[10px] text-center w-full">
                 {countdown.type === "HD" 
                   ? `${countdown.targetValue ? "Activating" : "Deactivating"} Lossless HD in ${countdown.secondsLeft}s`
                   : `${countdown.targetValue ? "Enabling" : "Disabling"} iOS BG Mode in ${countdown.secondsLeft}s`}
@@ -3238,6 +3496,7 @@ export default function App() {
             <div className="absolute inset-0 -z-10 bg-[#0A0B10]/50 backdrop-blur-[40px]" />
             
             {/* Cover Art / Visualizer */}
+            {uiLayoutMode !== "hidden" && (
             <div 
                onClick={!showVisualizer ? cycleVisualizer : undefined}
                className={`transition-all duration-500 ease-out bg-black/40 overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border shrink-0 relative ${
@@ -3267,6 +3526,7 @@ export default function App() {
                      isExpanded={isVisualizerExpanded}
                      onToggleExpand={() => setIsVisualizerExpanded(!isVisualizerExpanded)}
                      isSignatureSound={isSignatureSound}
+                     isCompact={isCompact}
                      className="w-full h-full flex justify-center items-center relative overflow-hidden bg-black/95" 
                   />
                ) : currentSong?.cover ? (
@@ -3275,6 +3535,7 @@ export default function App() {
                   <div className="w-full h-full flex items-center justify-center"><Music className={`text-white/20 ${isCompact ? "w-10 h-10" : "w-20 h-20"}`} /></div>
                )}
             </div>
+            )}
 
             {/* Info */}
             <div className={`w-full px-6 flex flex-col ${isCompact ? 'mb-2.5 text-center' : 'mb-6 text-left'}`}>
@@ -3307,26 +3568,97 @@ export default function App() {
             {/* Controls */}
             <div className="flex flex-col items-center justify-center w-full px-6 mb-1">
                 {/* Main Playback Controls */}
-                <div className={`flex items-center justify-center w-full relative ${isCompact ? 'gap-4 mb-3' : 'gap-6 md:gap-10 mb-6'}`}>
-                  <button onClick={handlePrevSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
-                      <SkipBack className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
-                  </button>
+                <div className={`flex items-center justify-between w-full relative ${isCompact ? 'px-0 mb-3' : 'px-4 mb-6'}`}>
+                  {/* Left: Repeat Button */}
+                  <div className="flex justify-center w-12 border-none">
+                    <button 
+                      onClick={() => {
+                        setRepeatMode(prev => prev === "all" ? "one" : prev === "one" ? "off" : "all");
+                      }} 
+                      className={`active:scale-90 transition-all rounded-full p-2 relative ${repeatMode !== "off" ? 'text-amber-400' : 'text-white/40 hover:text-white/80'}`}
+                      title={repeatMode === "all" ? "Repeat All" : repeatMode === "one" ? "Repeat One" : "Repeat Off"}
+                    >
+                      <Repeat className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
+                      {repeatMode === "one" && <span className="absolute top-0 right-0 text-[8px] font-bold bg-amber-500 text-black w-3.5 h-3.5 rounded-full flex items-center justify-center border border-black">1</span>}
+                    </button>
+                  </div>
 
-                  <button 
-                      onClick={togglePlay}
-                      className={`rounded-full bg-white/20 backdrop-blur-xl text-white flex items-center justify-center hover:bg-white/30 active:scale-95 transition-all shadow-[0_4px_24px_rgba(0,0,0,0.4)] border border-white/20 ${
-                        isCompact ? 'w-[52px] h-[52px]' : 'w-[72px] h-[72px] md:w-[88px] md:h-[88px]'
-                      }`}
-                  >
-                      {isPlaying 
-                        ? <Pause className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8 md:w-10 md:h-10'} fill-current`} /> 
-                        : <Play className={`${isCompact ? 'w-5 h-5 ml-0.5' : 'w-8 h-8 md:w-10 md:h-10 ml-1'} fill-current`} />
-                      }
-                  </button>
+                  {/* Center: Prev, Play, Next */}
+                  <div className={`flex items-center justify-center flex-1 ${isCompact ? 'gap-4' : 'gap-6 md:gap-10'}`}>
+                    <button onClick={handlePrevSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
+                        <SkipBack className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
+                    </button>
 
-                  <button onClick={handleNextSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
-                      <SkipForward className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
-                  </button>
+                    <button 
+                        onClick={togglePlay}
+                        className={`rounded-full bg-white/20 backdrop-blur-xl text-white flex items-center justify-center hover:bg-white/30 active:scale-95 transition-all shadow-[0_4px_24px_rgba(0,0,0,0.4)] border border-white/20 ${
+                          isCompact ? 'w-[52px] h-[52px]' : 'w-[72px] h-[72px] md:w-[88px] md:h-[88px]'
+                        }`}
+                    >
+                        {isPlaying 
+                          ? <Pause className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8 md:w-10 md:h-10'} fill-current`} /> 
+                          : <Play className={`${isCompact ? 'w-5 h-5 ml-0.5' : 'w-8 h-8 md:w-10 md:h-10 ml-1'} fill-current`} />
+                        }
+                    </button>
+
+                    <button onClick={handleNextSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
+                        <SkipForward className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
+                    </button>
+                  </div>
+
+                  {/* Right: Volume Button with Dropdown slider */}
+                  <div className="relative flex justify-center w-12 border-none">
+                     <button
+                       className={`transition-all rounded-full p-2 flex items-center justify-center select-none touch-none ${showVolumeSlider ? 'text-amber-400 bg-white/10 scale-90' : 'text-white/40 hover:text-white/80 active:scale-90'}`}
+                       onPointerDown={(e) => {
+                          isMutingClickRef.current = true;
+                          volStartYRef.current = e.clientY;
+                          volStartValRef.current = masterVolume;
+                          setShowVolumeSlider(true);
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                       }}
+                       onPointerMove={(e) => {
+                          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                          const deltaY = volStartYRef.current - e.clientY;
+                          if (Math.abs(deltaY) > 5) {
+                             isMutingClickRef.current = false;
+                          }
+                          const range = 70; // 70px for full volume range
+                          let newVal = volStartValRef.current + deltaY / range;
+                          newVal = Math.max(0, Math.min(1, newVal));
+                          setMasterVolume(newVal);
+                       }}
+                       onPointerUp={(e) => {
+                          e.currentTarget.releasePointerCapture(e.pointerId);
+                          if (isMutingClickRef.current) {
+                             if (masterVolume > 0) {
+                                setLastMutedVolume(masterVolume);
+                                setMasterVolume(0);
+                             } else {
+                                setMasterVolume(lastMutedVolume === 0 ? 0.5 : lastMutedVolume);
+                             }
+                          }
+                          setTimeout(() => setShowVolumeSlider(false), 800);
+                       }}
+                       onPointerCancel={(e) => {
+                           e.currentTarget.releasePointerCapture(e.pointerId);
+                           setShowVolumeSlider(false);
+                       }}
+                     >
+                       {masterVolume === 0 ? (
+                          <VolumeX className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
+                       ) : (
+                          <Speaker className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
+                       )}
+                     </button>
+                     {/* Custom Slider overlay */}
+                     <div className={`absolute pointer-events-none bottom-[110%] flex items-center justify-center transition-all duration-300 origin-bottom z-50 ${showVolumeSlider ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-75 translate-y-4'}`} style={{ width: '40px', height: '70px' }}>
+                           <div className="relative w-1.5 h-full bg-white/10 rounded-full flex flex-col justify-end items-center overflow-visible shadow-[inset_0_0_5px_rgba(0,0,0,0.5)]">
+                              <div className="absolute bottom-0 w-full bg-amber-500 rounded-full" style={{ height: `${masterVolume * 100}%` }} />
+                              <div className="absolute w-3 h-3 bg-white rounded-full shadow-[0_0_12px_rgba(245,158,11,0.9)]" style={{ bottom: `${masterVolume * 100}%`, transform: 'translateY(50%)' }} />
+                           </div>
+                     </div>
+                  </div>
                 </div>
 
                 {/* Utility Controls */}
@@ -3364,18 +3696,18 @@ export default function App() {
                   </button>
 
                   <button 
-                    onClick={() => setIsCompact(!isCompact)}
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${isCompact ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
-                    title={isCompact ? "Enlarge Interface" : "Compact Interface"}
+                    onClick={() => setUiLayoutMode(prev => prev === "full" ? "compact" : prev === "compact" ? "hidden" : "full")}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${uiLayoutMode !== "full" ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    title={uiLayoutMode === "full" ? "Compact Layout" : uiLayoutMode === "compact" ? "Hidden Visualizer" : "Full Layout"}
                   >
-                      {isCompact ? <Maximize2 className="w-5 h-5" /> : <Minimize2 className="w-5 h-5" />}
+                      {uiLayoutMode === "full" ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
                   </button>
                 </div>
             </div>
 
             {/* EQ Panel (Inline) */}
             {showTuning && (
-               <div className="w-full mt-2 flex flex-col gap-4 bg-black/20 backdrop-blur-md rounded-[24px] border border-white/5 p-5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative overflow-hidden transition-all duration-500 animate-in slide-in-from-top-2 fade-in z-50">
+               <div className={`w-full mt-2 flex flex-col gap-4 bg-black/20 backdrop-blur-md rounded-[24px] border border-white/5 p-5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-top-2 fade-in z-50 ${isCompact ? 'overflow-y-auto max-h-[35vh] scrollbar-thin scrollbar-thumb-white/10' : 'overflow-hidden'}`}>
                    
                    {/* HD Master & iOS BG Mode Toggles Grid */}
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
@@ -3417,6 +3749,8 @@ export default function App() {
                       </div>
 
                    </div>
+
+
 
                    {bgPlayBypass && (
                      <div className="p-3 bg-amber-500/10 border border-amber-500/10 rounded-[14px] text-amber-300 text-[10.5px] leading-relaxed relative overflow-hidden backdrop-blur-sm shadow-[inset_0_0_12px_rgba(251,191,36,0.03)] select-none animate-in fade-in slide-in-from-top-1 duration-300">
@@ -3517,7 +3851,7 @@ export default function App() {
                     : "text-white/40 hover:text-white/70"
                 }`}
               >
-                Up Next {recentSongs.length > 0 && `(${recentSongs.length})`}
+                Songs {recentSongs.length > 0 && `(${recentSongs.length})`}
                 {playlistTab === "upnext" && (
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
                 )}
@@ -3821,38 +4155,42 @@ export default function App() {
                     onClick={() => {
                       fetchAndPlayUserAlbum(alb.username);
                     }}
-                    className={`group flex flex-col justify-between p-3.5 rounded-[22px] cursor-pointer border transition-all duration-300 relative overflow-hidden h-[105px] ${
+                    className={`group flex flex-col justify-between p-4 rounded-[24px] cursor-pointer border transition-all duration-500 relative overflow-hidden h-[120px] ${
                       isActive
-                        ? "bg-amber-400/10 border-amber-400/30 shadow-lg shadow-amber-400/5"
-                        : "bg-white/[0.03] border-white/5 hover:bg-white/[0.07] hover:border-white/10"
+                        ? "bg-gradient-to-br from-amber-500/20 to-amber-900/10 border-amber-400/40 shadow-[0_8px_30px_rgb(245,158,11,0.15)]"
+                        : "bg-gradient-to-br from-white/[0.04] to-white/[0.01] border-white/5 hover:from-white/[0.08] hover:to-white/[0.03] hover:border-white/20 hover:shadow-xl hover:shadow-black/50"
                     }`}
                   >
                     <div className="flex items-center justify-between w-full mb-2">
                       {/* Premium Circle Avatar Layout with Layered Zero-State Fallback */}
-                      <div className="relative w-8.5 h-8.5 rounded-full overflow-hidden shrink-0 shadow-lg border border-white/5">
-                        <div className={`absolute inset-0 flex items-center justify-center font-black text-[10px] select-none uppercase transition-all duration-300 ${
+                      <div className="relative w-10 h-10 rounded-full overflow-hidden shrink-0 shadow-lg border border-white/10 group-hover:border-white/30 transition-colors">
+                        <div className={`absolute inset-0 flex items-center justify-center font-black text-[12px] select-none uppercase transition-all duration-500 ${
                           isActive 
-                            ? "bg-amber-400 text-black shadow-[0_0_12px_rgba(245,158,11,0.4)]" 
-                            : "bg-white/10 text-white/70 group-hover:bg-white/20 group-hover:text-white"
+                            ? "bg-gradient-to-br from-amber-300 to-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.5)]" 
+                            : "bg-gradient-to-br from-white/10 to-white/5 text-white/80 group-hover:from-white/20 group-hover:to-white/10 group-hover:text-white"
                         }`}>
                           {alb.avatarSub || alb.username.slice(0, 2).toUpperCase()}
                         </div>
-                        {alb.avatar && (
+                        {alb.avatar ? (
                           <img 
                             src={alb.avatar} 
-                            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300 rounded-full" 
+                            className="absolute inset-0 w-full h-full object-cover transition-all duration-500 rounded-full group-hover:scale-110" 
                             alt="" 
                             referrerPolicy="no-referrer"
                             onError={(e) => {
-                              // tiktok hotlink block causes opacity fallback
                               e.currentTarget.style.opacity = "0";
                             }}
                           />
+                        ) : (
+                          <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent mix-blend-overlay"></div>
                         )}
                         {/* active animated gold pulsing border */}
                         {isActive && (
-                          <div className="absolute inset-0 border border-amber-400 rounded-full animate-pulse pointer-events-none" />
+                          <div className="absolute inset-0 border-[2px] border-amber-400 rounded-full animate-pulse pointer-events-none" />
                         )}
+                        
+                        {/* Luxury Glossy Sheen */}
+                        <div className="absolute inset-0 bg-gradient-to-b from-white/20 to-transparent opacity-50 rounded-full pointer-events-none" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 40%, 0 20%)' }}></div>
                       </div>
                       
                       {/* Control Tray Inside Album Block (Refresh cached / Delete album) */}
@@ -3893,32 +4231,33 @@ export default function App() {
                       </div>
                     </div>
                     
-                    <div className="flex flex-col min-w-0 mb-1">
-                      <h4 className={`text-[12px] font-extrabold tracking-tight truncate leading-snug ${
-                        isActive ? "text-amber-400" : "text-white/90 group-hover:text-white"
+                    <div className="flex flex-col min-w-0 mb-1 z-10 relative">
+                      <h4 className={`text-[13px] font-black tracking-tight truncate leading-snug drop-shadow-sm ${
+                        isActive ? "text-amber-300 drop-shadow-[0_0_8px_rgba(252,211,77,0.4)]" : "text-white/90 group-hover:text-white"
                       }`}>
                         {alb.displayName || `@${alb.username}`}
                       </h4>
                       
                       {/* Dynamic Offline / Cached Indicator */}
                       {isCached ? (
-                        <div className="flex items-center gap-1.5 mt-0.5">
-                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0" />
-                          <p className="text-[9.5px] text-emerald-400/80 font-bold tracking-tight uppercase select-none truncate">
-                            Saved ({cacheData.songs.length} Tracks)
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
+                          <p className="text-[10px] text-emerald-400/90 font-bold tracking-wider uppercase select-none truncate">
+                            Saved ({cacheData.songs.length})
                           </p>
                         </div>
                       ) : (
-                        <p className="text-[9.5px] text-white/40 mt-0.5 font-medium tracking-tight uppercase select-none">
-                          TikTok Creator
+                        <p className="text-[10px] text-white/40 mt-1 font-semibold tracking-wider uppercase select-none group-hover:text-white/60 transition-colors">
+                          Creator
                         </p>
                       )}
                     </div>
 
                     {/* Silky glowing decoration */}
-                    {isActive && (
-                      <div className="absolute right-0 bottom-0 w-8 h-8 rounded-full bg-amber-400/10 blur-xl translate-x-2 translate-y-2 pointer-events-none" />
-                    )}
+                    <div className={`absolute right-0 bottom-0 w-24 h-24 rounded-full blur-[25px] transition-all duration-700 pointer-events-none translate-x-8 translate-y-8 ${
+                      isActive ? "bg-amber-500/20" : "bg-white/5 group-hover:bg-amber-400/10 group-hover:blur-[30px]"
+                    }`} />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-50 pointer-events-none" />
                   </div>
                 );
               })}
@@ -3939,10 +4278,10 @@ export default function App() {
                 <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-amber-400/10 to-transparent blur-xl pointer-events-none" />
                 <h3 className="text-xs font-black tracking-widest text-amber-400 uppercase mb-2.5 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 animate-pulse" />
-                  About Acoustic Presence
+                  About [FC PLAYER v 1.2]
                 </h3>
                 <p className="text-[11px] sm:text-xs leading-relaxed text-white/70">
-                  Welcome to the ultimate high-fidelity streaming companion! <strong>Acoustic Presence</strong> extracts audio tracks directly from public TikTok creators, hashtag videos, or direct URL links to stream them back-to-back in real time.
+                  Welcome to the ultimate high-fidelity streaming companion! <strong>FC PLAYER</strong> extracts audio tracks directly from public TikTok creators, FB, NCT, hashtag videos, or direct URL links to stream them back-to-back in real time.
                 </p>
                 <div className="grid grid-cols-2 gap-2.5 mt-4 pt-4 border-t border-white/5">
                   <div className="bg-black/20 p-3 rounded-xl border border-white/[0.02]">
@@ -4243,8 +4582,20 @@ export default function App() {
                 </div>
 
                 {/* Info / Tips */}
-                <div className="text-[10px] text-white/50 leading-normal bg-black/20 rounded-xl p-3 border border-white/5 select-none">
-                  <strong className="text-white">🚀 Instruction:</strong> Install a Chrome/Firefox extension like <span className="text-amber-300">"Get cookies.txt LOCALLY"</span> or <span className="text-amber-300 font-bold">"Cookie-Editor"</span>, sign in to YouTube, export cookies in <strong>Netscape</strong> or <strong>JSON</strong> format, and paste the output. This completely bypasses bot-detection walls.
+                <div className="text-[10px] text-white/50 leading-relaxed bg-black/20 rounded-xl p-3 border border-white/5 select-none flex flex-col gap-2">
+                  <p>
+                    <strong className="text-white">🚀 Instruction:</strong> Install the{" "}
+                    <a href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm" target="_blank" rel="noreferrer" className="text-amber-400 hover:text-amber-300 hover:underline inline-flex items-center gap-0.5 font-bold">
+                      "Get cookies Editor" <ExternalLink className="w-2.5 h-2.5" />
+                    </a>{" "}
+                    extension, sign in to YouTube, export cookies in <strong>Netscape</strong> or <strong>JSON</strong> format, and paste the output here. This completely bypasses bot-detection walls.
+                  </p>
+                  <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400/90 rounded-lg p-2.5 flex items-start gap-1.5 leading-tight">
+                    <ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-[1px]" />
+                    <p>
+                      <strong>Privacy Notice:</strong> We do <strong>not</strong> save your data to our server. Your cookies are <strong>only saved in localStorage</strong> on your local device.
+                    </p>
+                  </div>
                 </div>
 
                 {/* Notifications */}
@@ -4302,8 +4653,13 @@ export default function App() {
           onTimeUpdate={handleTimeUpdate}
           onEnded={() => {
             handleEnded();
-            if (currentSong && recentSongs.length > 1) {
+            if (repeatMode === "one" && audioRef.current) {
+              audioRef.current.currentTime = 0;
+              audioRef.current.play().then(() => setIsPlaying(true)).catch(console.warn);
+            } else if (repeatMode === "all" && currentSong && recentSongs.length > 1) {
               handleNextSong();
+            } else if (repeatMode === "off") {
+              setIsPlaying(false);
             }
           }}
           onLoadedMetadata={handleLoadedMetadata}
