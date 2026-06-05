@@ -2027,16 +2027,11 @@ export default function App() {
   const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide">("upnext");
   const [tiktokAlbums, setTiktokAlbums] = useState<any[]>(() => {
     const defaultVietnameseAlbums = [
-      { id: "alb_sontung", username: "sontungmtp.official", displayName: "Sơn Tùng M-TP", avatarSub: "ST" },
-      { id: "alb_mytam", username: "mytam.official", displayName: "Mỹ Tâm", avatarSub: "MT" },
-      { id: "alb_hieuthuhai", username: "hieuthuhai.official", displayName: "HIEUTHUHAI", avatarSub: "HT" },
-      { id: "alb_mono", username: "mono.official", displayName: "MONO", avatarSub: "MO" },
-      { id: "alb_amee", username: "ameemee_m", displayName: "AMEE", avatarSub: "AM" },
-      { id: "alb_tlinh", username: "tlinh.original", displayName: "tlinh", avatarSub: "TL" },
-      { id: "alb_hoaminzy", username: "hoaminzy_hoarose", displayName: "Hòa Minzy", avatarSub: "HM" },
-      { id: "alb_wrenevans", username: "wrenevans", displayName: "Wren Evans", avatarSub: "WE" },
-      { id: "alb_phuongly", username: "phuongly.phuongly", displayName: "Phương Ly", avatarSub: "PL" },
-      { id: "alb_greyd", username: "greyd.official", displayName: "GREY D", avatarSub: "GD" },
+      { id: "alb_chammusicboxofficial", username: "chammusicboxofficial", displayName: "Chạm Music", avatarSub: "CM" },
+      { id: "alb_nhachayss", username: "nhachayss", displayName: "Nhạc Hay", avatarSub: "NH" },
+      { id: "alb_motchutbuon_stt07", username: "motchutbuon_stt07", displayName: "Trạm dừng Chân", avatarSub: "TDC" },
+      { id: "alb_nhacchudu", username: "nhacchudu", displayName: "Nhạc Chu Du", avatarSub: "CD" },
+
     ];
 
     try {
