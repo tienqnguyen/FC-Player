@@ -7,6 +7,7 @@ import fs from "fs/promises";
 import { existsSync } from "fs";
 import { fetchNctPlaylistWithProxyRace, parseNctHtml } from "./server/nctParser";
 import { hasYoutubeCookies, getCookiesFilePath, saveYoutubeCookies, getYoutubeCookiesStatus } from "./server/youtubeCookieHelper";
+import { getCachedData, setCachedData, invalidateCache } from "./server/cacheHelper";
 
 async function startServer() {
   const app = express();
@@ -253,13 +254,29 @@ async function startServer() {
   app.get("/api/nhaccuatui/playlist", async (req, res) => {
     try {
       const playlistUrl = req.query.url as string;
+      const forceRefresh = req.query.refresh === 'true';
+
       if (!playlistUrl) {
         return res.status(400).json({ error: "NhacCuaTui playlist URL is required." });
+      }
+
+      if (forceRefresh) {
+        await invalidateCache("nct_playlist", playlistUrl);
+      } else {
+        const cached = await getCachedData<any>("nct_playlist", playlistUrl);
+        if (cached) {
+          console.log(`[API] Serving CACHED NhacCuaTui playlist: ${playlistUrl}`);
+          return res.json({ success: true, data: cached });
+        }
       }
 
       console.log(`[API] Fetching NhacCuaTui playlist: ${playlistUrl}`);
       const rawHtml = await fetchNctPlaylistWithProxyRace(playlistUrl);
       const parsedData = parseNctHtml(rawHtml);
+
+      if (parsedData && parsedData.songs && parsedData.songs.length > 0) {
+        await setCachedData("nct_playlist", playlistUrl, parsedData);
+      }
 
       res.json({
         success: true,
@@ -374,11 +391,23 @@ async function startServer() {
       const unique_id = req.query.unique_id as string;
       const clientCursor = (req.query.cursor as string) || "0";
       const clientCount = (req.query.count as string) || "50";
+      const forceRefresh = req.query.refresh === 'true';
       
       if (!unique_id) {
         return res.status(400).json({ error: "Username is required" });
       }
       
+      const cacheKey = `${unique_id}_${clientCursor}_${clientCount}`;
+      if (forceRefresh) {
+        await invalidateCache("tiktok_user", cacheKey);
+      } else {
+        const cached = await getCachedData<any>("tiktok_user", cacheKey);
+        if (cached) {
+          console.log(`[API] Serving CACHED TikTok user: ${unique_id}`);
+          return res.json(cached);
+        }
+      }
+
       const strategies = [
         // Strategy 1: tikwm user posts API with pagination
         async () => {
@@ -473,14 +502,16 @@ async function startServer() {
         try {
           const result = await executeStrategy();
           if (result && result.videos && result.videos.length > 0) {
-            res.json({ 
+            const finalResult = { 
               code: 0, 
               data: { 
                 videos: result.videos, 
                 cursor: result.cursor, 
                 hasMore: result.hasMore 
               } 
-            });
+            };
+            await setCachedData("tiktok_user", cacheKey, finalResult);
+            res.json(finalResult);
             return;
           }
         } catch (e) {
