@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone
+  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock
 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
 
@@ -1863,6 +1863,62 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
 
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [cookiesInputText, setCookiesInputText] = useState("");
+  const [cookiesStatus, setCookiesStatus] = useState<{ loaded: boolean; length: number; preview: string }>({
+    loaded: false,
+    length: 0,
+    preview: ""
+  });
+  const [isSavingCookies, setIsSavingCookies] = useState(false);
+  const [saveCookiesMessage, setSaveCookiesMessage] = useState("");
+  const [saveCookiesError, setSaveCookiesError] = useState("");
+
+  const refreshCookiesStatus = async () => {
+    try {
+      const res = await fetch("/api/youtube/cookies");
+      const json = await res.json();
+      if (json.success && json.status) {
+        setCookiesStatus(json.status);
+      }
+    } catch (e) {
+      console.error("Failed to load youtube cookies status", e);
+    }
+  };
+
+  const handleSaveCookies = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setIsSavingCookies(true);
+    setSaveCookiesMessage("");
+    setSaveCookiesError("");
+    try {
+      const res = await fetch("/api/youtube/cookies", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ cookiesText: cookiesInputText })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to update cookies");
+      }
+      setSaveCookiesMessage(data.message);
+      setCookiesStatus(data.status);
+      if (!cookiesInputText.trim()) {
+        setSaveCookiesMessage("Cookies cleared successfully.");
+      }
+    } catch (err: any) {
+      setSaveCookiesError(err.message || "An unexpected error occurred while saving cookies.");
+    } finally {
+      setIsSavingCookies(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshCookiesStatus();
+  }, []);
+
   const [tiktokUrl, setTiktokUrl] = useState("");
   const [isFetchingTiktok, setIsFetchingTiktok] = useState(false);
   const [tiktokError, setTiktokError] = useState("");
@@ -1879,6 +1935,94 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("acoustic_presence_recent_tiktok", JSON.stringify(recentSongs));
   }, [recentSongs]);
+
+  const [defaultPlaylistInput, setDefaultPlaylistInput] = useState("");
+  const [isSavingDefaultPlaylist, setIsSavingDefaultPlaylist] = useState(false);
+  const [saveDefaultMsg, setSaveDefaultMsg] = useState("");
+  const [saveDefaultErr, setSaveDefaultErr] = useState("");
+  const [saveQueueSuccess, setSaveQueueSuccess] = useState(false);
+
+  const handleLoadDefaultPlaylist = async (forceClean = false) => {
+    try {
+      const res = await fetch("/api/default-songs");
+      const json = await res.json();
+      if (json.success && json.songs && json.songs.length > 0) {
+        setRecentSongs(json.songs);
+        if (forceClean || !currentSong) {
+          const firstSong = json.songs[0];
+          setCurrentSong(firstSong);
+          let playUrl = firstSong.audioUrl;
+          if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
+            playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
+          }
+          setAudioUrl(playUrl);
+          setFileName(firstSong.title || "Default Song");
+        }
+        return true;
+      }
+    } catch (e) {
+      console.error("Failed to load default playlist config", e);
+    }
+    return false;
+  };
+
+  // Load server-configured default playlist on startup if browser storage is empty
+  useEffect(() => {
+    const saved = localStorage.getItem("acoustic_presence_recent_tiktok");
+    if (!saved || JSON.parse(saved).length === 0) {
+      handleLoadDefaultPlaylist();
+    }
+  }, []);
+
+  const handleSaveCurrentQueueAsDefault = async () => {
+    try {
+      const res = await fetch("/api/nhaccuatui/save-default", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ songs: recentSongs })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to save playlist");
+      }
+      setSaveQueueSuccess(true);
+      setTimeout(() => setSaveQueueSuccess(false), 3000);
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const handleSaveDefaultPlaylistLink = async () => {
+    setIsSavingDefaultPlaylist(true);
+    setSaveDefaultMsg("");
+    setSaveDefaultErr("");
+    try {
+      const res = await fetch("/api/nhaccuatui/save-default", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ url: defaultPlaylistInput })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to parse or save playlist");
+      }
+      setSaveDefaultMsg(`Successfully set! Default playlist saved; loaded ${data.songs?.length || 0} songs.`);
+      if (data.songs && data.songs.length > 0) {
+        setRecentSongs(data.songs);
+      }
+      setDefaultPlaylistInput("");
+      setTimeout(() => setSaveDefaultMsg(""), 4000);
+    } catch (err: any) {
+      setSaveDefaultErr(err.message || "An unexpected error occurred.");
+      setTimeout(() => setSaveDefaultErr(""), 5000);
+    } finally {
+      setIsSavingDefaultPlaylist(false);
+    }
+  };
 
   const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide">("upnext");
   const [tiktokAlbums, setTiktokAlbums] = useState<any[]>(() => {
@@ -1938,7 +2082,14 @@ export default function App() {
   const playRecentSong = (song: any) => {
     shouldAutoPlayRef.current = true;
     setCurrentSong(song);
-    setAudioUrl(song.audioUrl);
+    
+    let playUrl = song.audioUrl;
+    // On-the-fly upgrade for legacy/cached NCT streams to use the new proxy stream endpoint
+    if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
+      playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
+    }
+    
+    setAudioUrl(playUrl);
     setFileName(song.title || "TikTok Audio");
     setTiktokUrl(song.originalUrl || "");
     resumeContext();
@@ -1952,26 +2103,45 @@ export default function App() {
   const downloadAudio = async (e: React.MouseEvent, song: any) => {
     e.stopPropagation();
     if (!song.audioUrl) return;
-    try {
-      const response = await fetch(song.audioUrl);
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = `${song.title || "audio"}.mp3`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(blobUrl);
-    } catch (error) {
+
+    // Handle local files (blob URLs) directly
+    if (song.audioUrl.startsWith("blob:")) {
       const link = document.createElement("a");
       link.href = song.audioUrl;
-      link.target = "_blank";
-      link.download = `${song.title || "audio"}.mp3`;
+      link.download = `${song.title || "audio"}.m4a`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      return;
     }
+
+    // Proxy network files through our backend to force attachment disposition
+    // For YouTube, we need to pass the original YouTube URL
+    let targetUrl = song.id?.toString().startsWith("yt_") ? song.originalUrl : song.audioUrl;
+    
+    // If the audio URL is already a proxy-stream link, extract the encoded URL for the download endpoint
+    if (targetUrl && (targetUrl.startsWith("/api/proxy-stream") || targetUrl.includes("/api/proxy-stream"))) {
+      try {
+        const urlObj = new URL(targetUrl, window.location.origin);
+        const extractedUrl = urlObj.searchParams.get("url");
+        if (extractedUrl) {
+          targetUrl = extractedUrl;
+        }
+      } catch (err) {
+        console.warn("Could not parse proxy audio URL for download:", err);
+      }
+    }
+    
+    // Construct the proxy download URL
+    const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(song.title || "audio")}`;
+
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    // adding download attribute as a fallback
+    link.download = `${song.title || "audio"}.m4a`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const fetchAndPlayUserAlbum = async (username: string, loadMore = false, forceRefresh = false) => {
@@ -2120,15 +2290,27 @@ export default function App() {
     if (!val) return;
 
     let username = "";
-    if (val.startsWith("@")) {
-      username = val.substring(1).trim();
-    } else if (val.includes("tiktok.com/")) {
-      const match = val.match(/tiktok\.com\/@([^\/\?]+)/);
-      if (match) {
-        username = match[1];
+    const isDirectLink = val.includes("youtube.com") || 
+                         val.includes("youtu.be") || 
+                         val.includes("nhaccuatui.com") ||
+                         val.includes("nct.vn") ||
+                         val.startsWith("[") ||
+                         val.includes("__NUXT_DATA__") ||
+                         val.includes("/video/") || 
+                         val.includes("/photo/") || 
+                         (val.includes("://") && !val.includes("@"));
+
+    if (!isDirectLink) {
+      if (val.startsWith("@")) {
+        username = val.substring(1).trim();
+      } else if (val.includes("tiktok.com/")) {
+        const match = val.match(/tiktok\.com\/@([^\/\?]+)/);
+        if (match) {
+          username = match[1];
+        }
+      } else {
+        username = val;
       }
-    } else {
-      username = val;
     }
 
     if (username) {
@@ -2159,26 +2341,138 @@ export default function App() {
       // Execute the fetch
       setTimeout(() => {
         const fakeForm = { preventDefault: () => {} } as React.FormEvent;
-        handleTiktokFetch(fakeForm);
+        handleTiktokFetch(fakeForm, val);
       }, 50);
     }
   };
 
-  const handleTiktokFetch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tiktokUrl) return;
+  const handleTiktokFetch = async (e: React.FormEvent, urlOverride?: string) => {
+    if (e && e.preventDefault) e.preventDefault();
+    const urlToUse = urlOverride || tiktokUrl;
+    if (!urlToUse) return;
     setIsFetchingTiktok(true);
     setTiktokError("");
     
+    // Robust general URL fetching (supports YouTube, Facebook, SoundCloud, Twitch, Vimeo, Twitter/X, etc. via yt-dlp)
+    const isTikTokUrl = urlToUse.includes("tiktok.com") || (urlToUse.includes("@") && !urlToUse.includes("://"));
+    const isNctUrl = urlToUse.includes("nhaccuatui.com") || urlToUse.includes("nct.vn") || urlToUse.startsWith("[") || urlToUse.includes("__NUXT_DATA__");
+
+    if (!isTikTokUrl && !isNctUrl) {
+      try {
+        const metadataRes = await fetch(`/api/metadata?url=${encodeURIComponent(urlToUse)}`);
+        let data;
+        try {
+          data = await metadataRes.json();
+        } catch {
+          throw new Error("Server returned an invalid HTML or timeout response instead of JSON. The link might be a massive playlist or restricted by CAPTCHA.");
+        }
+        
+        if (!metadataRes.ok) {
+          throw new Error(data?.error || "Failed to extract track metadata. Link might be restricted or private.");
+        }
+        
+        shouldAutoPlayRef.current = true;
+        const streamUrl = `/api/stream?url=${encodeURIComponent(urlToUse)}`;
+        setAudioUrl(streamUrl);
+        setFileName(data.title || "Shared Audio");
+        
+        // YouTube-specific thumbnail lookup fallback if none is provided
+        let defaultCover = data.cover;
+        if (!defaultCover && (urlToUse.includes("youtube.com") || urlToUse.includes("youtu.be"))) {
+          const ytId = urlToUse.match(/(?:v=|\/)([0-9A-Za-z_-]{11}).*/)?.[1];
+          if (ytId) {
+            defaultCover = `https://img.youtube.com/vi/${ytId}/hqdefault.jpg`;
+          }
+        }
+        if (!defaultCover) {
+          defaultCover = "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300";
+        }
+        
+        const newSong = {
+          id: "yt_" + Date.now().toString(),
+          title: data.title || "Shared Audio Track",
+          originalUrl: urlToUse,
+          audioUrl: streamUrl,
+          cover: defaultCover,
+          author: data.author || "Web Audio",
+          timestamp: Date.now()
+        };
+
+        setRecentSongs((prev) => {
+          const filtered = prev.filter((s) => s.originalUrl !== urlToUse);
+          return [newSong, ...filtered].slice(0, 50);
+        });
+        
+        resumeContext();
+        setTiktokUrl(""); 
+      } catch(err: any) {
+        setTiktokError(err.message || "Failed to fetch media audio. Video/track might be restricted.");
+      } finally {
+        setIsFetchingTiktok(false);
+      }
+      return;
+    }
+
+    // NhacCuaTui fetching
+    if (urlToUse.includes("nhaccuatui.com") || urlToUse.includes("nct.vn") || urlToUse.startsWith("[") || urlToUse.includes("__NUXT_DATA__")) {
+      try {
+        let res;
+        if (urlToUse.startsWith("[") || urlToUse.includes("__NUXT_DATA__")) {
+          // Explicit manual payload! Use the POST endpoint
+          res = await fetch("/api/nhaccuatui/manual", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ htmlText: urlToUse })
+          });
+        } else {
+          // Standard NhacCuaTui link
+          res = await fetch(`/api/nhaccuatui/playlist?url=${encodeURIComponent(urlToUse)}`);
+        }
+        
+        let json;
+        try {
+          json = await res.json();
+        } catch {
+          throw new Error("Server returned an invalid HTML or timeout response instead of JSON. The link might be invalid or process timed out.");
+        }
+        
+        if (!res.ok || !json.success) {
+          throw new Error(json.error || "Failed to process NhacCuaTui request.");
+        }
+        
+        const { title, songs } = json.data;
+        if (!songs || songs.length === 0) {
+          throw new Error("No play-ready audio tracks found in this NhacCuaTui link/source.");
+        }
+        
+        // Load songs into queue
+        setRecentSongs(songs);
+        
+        // Auto play first track
+        shouldAutoPlayRef.current = true;
+        playRecentSong(songs[0]);
+        
+        setTiktokUrl("");
+        setTiktokError("");
+      } catch (err: any) {
+        setTiktokError(err.message || "Failed to fetch or parse NhacCuaTui source. Make sure you pasted the complete playlist link or raw view-source text!");
+      } finally {
+        setIsFetchingTiktok(false);
+      }
+      return;
+    }
+
     let isUserLink = false;
     let username = "";
     
-    if (tiktokUrl.startsWith("@")) {
+    if (urlToUse.startsWith("@")) {
       isUserLink = true;
-      username = tiktokUrl.substring(1).trim();
+      username = urlToUse.substring(1).trim();
     } else {
-      const match = tiktokUrl.match(/tiktok\.com\/@([^\/\?]+)(?:\?|$|\/$)/);
-      if (match && !tiktokUrl.includes('/video/') && !tiktokUrl.includes('/photo/')) {
+      const match = urlToUse.match(/tiktok\.com\/@([^\/\?]+)(?:\?|$|\/$)/);
+      if (match && !urlToUse.includes('/video/') && !urlToUse.includes('/photo/')) {
         isUserLink = true;
         username = match[1];
       }
@@ -2238,7 +2532,7 @@ export default function App() {
     try {
       let oembedData: any = {};
       try {
-        const oembedRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent("https://www.tiktok.com/oembed?url=" + tiktokUrl)}`);
+        const oembedRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent("https://www.tiktok.com/oembed?url=" + urlToUse)}`);
         oembedData = await oembedRes.json();
       } catch (e) {
         // ignore oembed error
@@ -2249,9 +2543,14 @@ export default function App() {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded"
         },
-        body: "url=" + encodeURIComponent(tiktokUrl) + "&hd=1"
+        body: "url=" + encodeURIComponent(urlToUse) + "&hd=1"
       });
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error("Could not parse provider response. The API might be experiencing rate limits or blocking queries.");
+      }
       if (data && data.data && (data.data.music || data.data.play)) {
         const urlToFetch = data.data.music || data.data.play;
         
@@ -2264,7 +2563,7 @@ export default function App() {
         const newSong = {
           id: data.data.id || Date.now().toString(),
           title: songTitle,
-          originalUrl: tiktokUrl,
+          originalUrl: urlToUse,
           audioUrl: urlToFetch,
           cover: oembedData.thumbnail_url || data.data.cover || data.data.origin_cover,
           author: oembedData.author_name || data.data.author?.nickname,
@@ -2272,7 +2571,7 @@ export default function App() {
         };
 
         setRecentSongs((prev) => {
-          const filtered = prev.filter((s) => s.originalUrl !== tiktokUrl && s.id !== newSong.id);
+          const filtered = prev.filter((s) => s.originalUrl !== urlToUse && s.id !== newSong.id);
           return [newSong, ...filtered].slice(0, 50); // increased limit
         });
         
@@ -2897,7 +3196,7 @@ export default function App() {
                 <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75 animate-ping"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600"></span>
               </span>
-              <span className="font-sans font-bold">
+              <span className="font-sans font-bold text-[9px]">
                 {countdown.type === "HD"
                   ? `Lossless HD ${countdown.targetValue ? "Activated" : "Deactivated"}!`
                   : `iOS BG Mode ${countdown.targetValue ? "Enabled" : "Disabled"}!`}
@@ -2909,7 +3208,7 @@ export default function App() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-black opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-black"></span>
               </span>
-              <span className="font-mono">
+              <span className="font-mono text-[9px]">
                 {countdown.type === "HD" 
                   ? `${countdown.targetValue ? "Activating" : "Deactivating"} Lossless HD in ${countdown.secondsLeft}s`
                   : `${countdown.targetValue ? "Enabling" : "Disabling"} iOS BG Mode in ${countdown.secondsLeft}s`}
@@ -3242,85 +3541,72 @@ export default function App() {
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
                 )}
               </button>
-
-              <button
-                onClick={() => setPlaylistTab("guide")}
-                className={`text-[13px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 ${
-                  playlistTab === "guide" 
-                    ? "text-white" 
-                    : "text-white/40 hover:text-white/70"
-                }`}
-              >
-                Guide
-                {playlistTab === "guide" && (
-                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
-                )}
-              </button>
             </div>
 
             {/* Quick header action inside Album/UpNext */}
             <div className="flex items-center gap-2">
-              {playlistTab === "albums" ? (
-                <>
+              {recentSongs.length > 0 && playlistTab === "upnext" && (
+                <div className="flex items-center gap-1.5">
                   <button
-                    onClick={() => setShowAddAlbum(!showAddAlbum)}
-                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                      showAddAlbum 
-                        ? "bg-amber-400 text-black rotate-45" 
-                        : "bg-white/10 text-white hover:bg-white/20"
-                    }`}
-                    title="Add TikTok link or profile"
+                    onClick={() => {
+                      setRecentSongs([]);
+                      setCurrentSong(null);
+                      setAudioUrl(null);
+                      setFileName(null);
+                    }}
+                    className="w-7 h-7 rounded-full flex items-center justify-center bg-white/[0.02] border border-white/5 text-[#E0E2E8]/30 hover:text-red-400 hover:bg-white/10 transition-all"
+                    title="Clear all songs"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Trash2 className="w-4 h-4" />
                   </button>
-                  <button
-                    onClick={() => setPlaylistTab("guide")}
-                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                      playlistTab === "guide"
-                        ? "bg-amber-400 text-black shadow-lg shadow-amber-400/20"
-                        : "bg-white/10 text-white hover:bg-white/20 hover:text-amber-400"
-                    }`}
-                    title="App Introduction & Setup Guide"
-                  >
-                    <Info className="w-4 h-4" />
-                  </button>
-                </>
-              ) : (
-                <>
-                  {recentSongs.length > 0 && playlistTab === "upnext" && (
-                    <button
-                      onClick={() => {
-                        setRecentSongs([]);
-                        setCurrentSong(null);
-                        setAudioUrl(null);
-                        setFileName(null);
-                      }}
-                      className="text-[10px] font-extrabold tracking-widest text-white/30 hover:text-red-400 uppercase transition-all mr-1.5"
-                      title="Clear all songs"
-                    >
-                      Clear All
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setPlaylistTab("guide")}
-                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                      playlistTab === "guide"
-                        ? "bg-amber-400 text-black shadow-lg shadow-amber-400/20"
-                        : "bg-white/10 text-white hover:bg-white/20 hover:text-amber-400"
-                    }`}
-                    title="App Introduction & Setup Guide"
-                  >
-                    <Info className="w-4 h-4" />
-                  </button>
-                </>
+                </div>
               )}
+              <button
+                onClick={() => {
+                  setShowAddAlbum(!showAddAlbum);
+                }}
+                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                  showAddAlbum
+                    ? "bg-amber-400 text-black rotate-45" 
+                    : "bg-white/10 text-white hover:bg-white/20"
+                }`}
+                title="Add TikTok/YouTube link or profile"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setPlaylistTab("guide")}
+                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                  playlistTab === "guide"
+                    ? "bg-amber-400 text-black shadow-lg shadow-amber-400/20"
+                    : "bg-white/10 text-white hover:bg-white/20 hover:text-amber-400"
+                }`}
+                title="App Introduction & Setup Guide"
+              >
+                <Info className="w-4 h-4" />
+              </button>
+              {/* YouTube Cookies/Bypass Settings Button - Always visible */}
+              <button
+                onClick={() => {
+                  refreshCookiesStatus();
+                  setShowSettingsModal(true);
+                }}
+                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                  showSettingsModal 
+                    ? "bg-amber-400 text-black" 
+                    : "bg-white/10 text-white hover:bg-white/20 hover:text-amber-400"
+                }`}
+                title="YouTube Bot Bypass (Add Cookies)"
+              >
+                <Settings className={`w-4 h-4 ${cookiesStatus.loaded ? "text-emerald-400" : ""}`} />
+              </button>
             </div>
           </div>
 
           {/* Tab contents */}
           
-          {/* 1. Add Album Form (Always shows when showAddAlbum is true in albums tab) */}
-          {playlistTab === "albums" && showAddAlbum && (
+          {/* 1. Add Album Form (Always shows when showAddAlbum is true) */}
+          {showAddAlbum && (
             <form 
               onSubmit={handleAddAlbumSubmit} 
               className="mb-5 bg-white/5 border border-white/10 rounded-2xl p-4 animate-in slide-in-from-top-1 fade-in duration-300"
@@ -3331,7 +3617,7 @@ export default function App() {
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="e.g. @bellapoarch or TikTok link..."
+                  placeholder="e.g. @bellapoarch, TikTok, or YouTube link..."
                   value={newAlbumInput}
                   onChange={(e) => setNewAlbumInput(e.target.value)}
                   className="flex-1 bg-black/40 border border-white/5 rounded-xl px-3.5 py-2.5 text-[16px] md:text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/20"
@@ -3356,7 +3642,7 @@ export default function App() {
           {isFetchingTiktok && (
             <div className="mb-4 bg-white/5 rounded-2xl p-4 flex flex-col items-center justify-center border border-white/5 animate-pulse">
               <div className="w-5 h-5 border-2 border-amber-400 rounded-full border-t-transparent animate-spin mb-2" />
-              <div className="text-[11px] font-bold tracking-widest text-[#E0E2E8]/70 uppercase">Extracting TikTok Audio...</div>
+              <div className="text-[11px] font-bold tracking-widest text-[#E0E2E8]/70 uppercase">Extracting Audio...</div>
             </div>
           )}
 
@@ -3379,12 +3665,20 @@ export default function App() {
                 <div className="flex flex-col items-center justify-center py-12 px-4 bg-white/[0.02] border border-white/[0.04] rounded-3xl text-center">
                   <Music className="w-8 h-8 text-white/10 mb-3" />
                   <div className="text-xs font-bold text-white/50 tracking-wider">Queue is currently empty</div>
-                  <button 
-                    onClick={() => setPlaylistTab("albums")}
-                    className="text-[11px] font-extrabold text-amber-400 hover:text-amber-300 uppercase tracking-widest mt-2.5 bg-amber-400/10 border border-amber-400/20 px-3.5 py-1.5 rounded-full"
-                  >
-                    Browse Albums
-                  </button>
+                  <div className="flex flex-wrap gap-2 justify-center mt-3">
+                    <button 
+                      onClick={() => setPlaylistTab("albums")}
+                      className="text-[10px] font-extrabold text-amber-400 hover:text-amber-300 uppercase tracking-widest bg-amber-400/10 border border-amber-400/20 px-3.5 py-1.5 rounded-full transition-all"
+                    >
+                      Browse Albums
+                    </button>
+                    <button 
+                      onClick={() => handleLoadDefaultPlaylist(true)}
+                      className="text-[10px] font-extrabold text-white/60 hover:text-white uppercase tracking-widest bg-white/5 border border-white/15 px-3.5 py-1.5 rounded-full transition-all"
+                    >
+                      Load Default
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="flex flex-col min-h-0 flex-1">
@@ -3489,11 +3783,37 @@ export default function App() {
 
           {/* Tab 2: Albums */}
           {playlistTab === "albums" && (
-            <div className={`grid grid-cols-2 gap-3 pb-4 items-start content-start ${
-              isCompact 
-                ? "flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10" 
-                : ""
-            }`}>
+            <div className="flex flex-col gap-3 min-h-0 flex-1">
+              {/* Compact Defaults Control Bar */}
+              <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 p-2 px-3 rounded-2xl shrink-0">
+                <span className="text-[9px] font-black tracking-widest text-[#E0E2E8]/40 uppercase">Default Playlist</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={handleSaveCurrentQueueAsDefault}
+                    className={`text-[8px] font-black tracking-widest uppercase transition-all px-2.5 py-1.5 rounded-xl border ${
+                      saveQueueSuccess 
+                        ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" 
+                        : "text-[#E0E2E8]/40 bg-white/[0.02] border-white/5 hover:bg-emerald-500/10 hover:border-emerald-500/30 hover:text-emerald-400"
+                    }`}
+                    title="Save active queue as the default start list on server"
+                  >
+                    {saveQueueSuccess ? "Saved ✓" : "Save as Default"}
+                  </button>
+                  <button
+                    onClick={() => handleLoadDefaultPlaylist(true)}
+                    className="text-[8px] font-black tracking-widest text-[#E0E2E8]/40 hover:text-amber-400 bg-white/[0.02] border border-white/5 px-2.5 py-1.5 rounded-xl uppercase transition-all"
+                    title="Reset playlist to the server defaults"
+                  >
+                    Reset Default
+                  </button>
+                </div>
+              </div>
+
+              <div className={`grid grid-cols-2 gap-3 pb-4 items-start content-start ${
+                isCompact 
+                  ? "flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10" 
+                  : ""
+              }`}>
               {tiktokAlbums.map((alb) => {
                 const normalizedUser = alb.username.toLowerCase();
                 const isActive = activeAlbumUsername === normalizedUser;
@@ -3608,6 +3928,7 @@ export default function App() {
                 );
               })}
             </div>
+            </div>
           )}
 
           {/* Tab 3: Help Guide & PWA installation */}
@@ -3699,6 +4020,91 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Supported Platforms Card */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-5 sm:p-6 relative backdrop-blur-sm">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-bl from-blue-400/5 to-transparent blur-xl pointer-events-none" />
+                <h3 className="text-xs font-black tracking-widest text-amber-400 uppercase mb-3 flex items-center gap-1.5">
+                  <ListMusic className="w-3.5 h-3.5 text-amber-400" />
+                  Compatible Platforms
+                </h3>
+                <p className="text-[11px] sm:text-xs leading-relaxed text-white/70 mb-4">
+                  Powered by a comprehensive, updated <strong className="text-amber-300">yt-dlp</strong> core, Acoustic Presence is fully compatible with thousands of platforms. Simply paste any sharing URL to instantly stream the audio:
+                </p>
+
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">YouTube & Music</div>
+                      <div className="text-[9px] text-[#2cc0ff]">Full Playback & HD</div>
+                    </div>
+                    <span className="text-[8px] bg-red-500/15 border border-red-500/30 text-red-400 px-1.5 py-0.5 rounded font-black">YT</span>
+                  </div>
+
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">TikTok</div>
+                      <div className="text-[9px] text-white/50">Direct & User Profiles</div>
+                    </div>
+                    <span className="text-[8px] bg-white/10 border border-white/20 text-white px-1.5 py-0.5 rounded font-black">TT</span>
+                  </div>
+
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">SoundCloud</div>
+                      <div className="text-[9px] text-white/50">Tracks & Sets</div>
+                    </div>
+                    <span className="text-[8px] bg-orange-500/15 border border-orange-500/30 text-orange-400 px-1.5 py-0.5 rounded font-black">SC</span>
+                  </div>
+
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">NhacCuaTui (NCT)</div>
+                      <div className="text-[9px] text-[#2cc0ff]">Playlists & Direct HTML</div>
+                    </div>
+                    <span className="text-[8px] bg-blue-500/15 border border-blue-500/30 text-blue-400 px-1.5 py-0.5 rounded font-black">NCT</span>
+                  </div>
+
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">Bandcamp</div>
+                      <div className="text-[9px] text-white/50">Releases & Artists</div>
+                    </div>
+                    <span className="text-[8px] bg-cyan-500/15 border border-cyan-500/30 text-cyan-400 px-1.5 py-0.5 rounded font-black">BC</span>
+                  </div>
+
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">Twitch</div>
+                      <div className="text-[9px] text-white/50">VODs, clips & highlights</div>
+                    </div>
+                    <span className="text-[8px] bg-purple-500/15 border border-purple-500/30 text-purple-400 px-1.5 py-0.5 rounded font-black">TW</span>
+                  </div>
+
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">Vimeo & Streamable</div>
+                      <div className="text-[9px] text-white/50">HD video streams</div>
+                    </div>
+                    <span className="text-[8px] bg-teal-500/15 border border-teal-500/30 text-teal-400 px-1.5 py-0.5 rounded font-black">VM</span>
+                  </div>
+
+                  <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div>
+                      <div className="text-[10px] font-bold text-white">Social Media</div>
+                      <div className="text-[9px] text-white/50">FB, X, Reddit, IG, Tumblr</div>
+                    </div>
+                    <span className="text-[8px] bg-pink-500/15 border border-pink-500/30 text-pink-400 px-1.5 py-0.5 rounded font-black">SOC</span>
+                  </div>
+                </div>
+
+                <div className="mt-3.5 pt-3 border-t border-white/5 flex items-center justify-between text-[9px] text-white/40">
+                  <span>And 1,000+ others like Mixcloud, Hearthis.at, Rumble...</span>
+                  <a href="https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md" target="_blank" rel="noreferrer" className="text-amber-400 hover:underline flex items-center gap-0.5 font-bold">
+                    Full Official List <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+              </div>
+
               {/* iOS Background Play tip */}
               <div className="bg-amber-400/5 border border-amber-400/10 rounded-2xl p-4 text-[10px] sm:text-[11px] leading-relaxed relative select-none">
                 <div className="font-extrabold uppercase tracking-widest text-[9px] text-amber-400 mb-1 flex items-center gap-1.5">
@@ -3714,8 +4120,181 @@ export default function App() {
 
         </div>
 
+        {/* YouTube Cookies Bot Bypass Configuration Modal */}
+        {showSettingsModal && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300" id="youtube_cookie_modal">
+            <div className="relative w-full max-w-lg bg-[#0E1015]/95 border border-white/10 rounded-[24px] overflow-y-auto p-6 shadow-2xl shadow-black/80 flex flex-col gap-4 max-h-[95vh] sm:max-h-[90vh] scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                    <Settings className="w-4 h-4 animate-spin-slow" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-black tracking-widest text-white uppercase">System Settings</h2>
+                    <p className="text-[10px] text-white/40">Manage global audio sources, bypass cookies, and app defaults</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSettingsModal(false);
+                    setSaveCookiesMessage("");
+                    setSaveCookiesError("");
+                  }}
+                  className="w-7 h-7 rounded-full bg-white/5 text-white/50 hover:bg-white/10 hover:text-white flex items-center justify-center text-xs transition-all"
+                  id="close_cookie_modal_btn"
+                >
+                  ✕
+                </button>
+              </div>
 
+              {/* Section A: App Default Playlist (NhacCuaTui) */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[10px] font-black tracking-wider text-amber-400 uppercase flex items-center gap-1.5">
+                    <Music className="w-3.5 h-3.5" />
+                    De-facto App Playlist
+                  </h3>
+                  <span className="text-[8px] bg-blue-500/15 border border-blue-500/30 text-blue-400 px-1.5 py-0.5 rounded font-black font-mono">FILE PERSISTED</span>
+                </div>
+                <p className="text-[10px] text-white/50 leading-relaxed font-sans">
+                  Instantly load a NhacCuaTui playlist link as the default homepage song list on restart. The server will fetch and persist these songs in a physical configuration file.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Paste NhacCuaTui playlist link (nct.vn or nhaccuatui.com)..."
+                    value={defaultPlaylistInput}
+                    onChange={(e) => setDefaultPlaylistInput(e.target.value)}
+                    className="flex-1 bg-black/50 border border-white/5 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-400/40 focus:ring-1 focus:ring-amber-400/15"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveDefaultPlaylistLink}
+                    disabled={isSavingDefaultPlaylist || !defaultPlaylistInput.trim()}
+                    className="px-4 py-2 bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-black font-extrabold text-[10px] uppercase tracking-wider rounded-xl transition-all"
+                  >
+                    {isSavingDefaultPlaylist ? "Saving..." : "Apply"}
+                  </button>
+                </div>
+                {saveDefaultMsg && (
+                  <div className="text-[10px] font-semibold text-center text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl py-2 px-3 animate-in slide-in-from-top-1 duration-150">
+                    ✓ {saveDefaultMsg}
+                  </div>
+                )}
+                {saveDefaultErr && (
+                  <div className="text-[10px] font-semibold text-center text-rose-400 bg-red-500/10 border border-red-500/20 rounded-xl py-2 px-3 animate-in slide-in-from-top-1 duration-150 font-sans">
+                    ✕ {saveDefaultErr}
+                  </div>
+                )}
+              </div>
 
+              {/* Status Section */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 flex flex-col gap-3">
+                <h3 className="text-[10px] font-black tracking-wider text-white/50 uppercase flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+                  Current Status
+                </h3>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${cookiesStatus.loaded ? "bg-emerald-500 animate-pulse" : "bg-red-500"}`} />
+                    <span className="text-[11px] font-bold text-white">
+                      {cookiesStatus.loaded ? "Cookies Loaded & Active" : "No Active Cookies (Using Default Agent)"}
+                    </span>
+                  </div>
+                  {cookiesStatus.loaded && (
+                    <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                      {cookiesStatus.length} lines parsed
+                    </span>
+                  )}
+                </div>
+
+                {cookiesStatus.loaded && cookiesStatus.preview && (
+                  <div className="flex flex-col gap-1 mt-1">
+                    <span className="text-[9px] font-bold text-white/30 uppercase">Preview:</span>
+                    <pre className="text-[10px] font-mono bg-black/45 border border-white/5 rounded-lg p-2 text-emerald-400/80 overflow-x-auto whitespace-pre-wrap leading-relaxed select-all">
+                      {cookiesStatus.preview}
+                    </pre>
+                  </div>
+                )}
+              </div>
+
+              {/* Form Input */}
+              <form onSubmit={handleSaveCookies} className="flex flex-col gap-3 flex-1 min-h-0">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black tracking-wider text-amber-400 uppercase flex items-center gap-1.5" htmlFor="cookies_textarea">
+                    <Key className="w-3.5 h-3.5" />
+                    Paste exported cookies
+                  </label>
+                  <a
+                    href="https://github.com/yt-dlp/yt-dlp#how-do-i-pass-cookies-to-yt-dlp"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-[9px] text-[#2cc0ff] hover:underline flex items-center gap-1"
+                  >
+                    How to get Cookies? <ExternalLink className="w-2.5 h-2.5" />
+                  </a>
+                </div>
+
+                <div className="flex-1 min-h-[120px] relative">
+                  <textarea
+                    id="cookies_textarea"
+                    placeholder="Paste Netscape (cookies.txt) or raw JSON cookies array here... &#13;&#10;Examples: &#13;&#10;[ { &quot;domain&quot;: &quot;.youtube.com&quot;, &quot;name&quot;: &quot;SID&quot;, ... } ] &#13;&#10;Or raw space-separated or Cookie header: &#13;&#10;SID=xyz; HSID=abc; ..."
+                    value={cookiesInputText}
+                    onChange={(e) => setCookiesInputText(e.target.value)}
+                    className="w-full h-full bg-black/50 border border-white/5 rounded-2xl p-3 text-xs font-mono text-white placeholder:text-white/20 focus:outline-none focus:border-amber-400/40 focus:ring-1 focus:ring-amber-400/15 resize-none leading-relaxed"
+                  />
+                </div>
+
+                {/* Info / Tips */}
+                <div className="text-[10px] text-white/50 leading-normal bg-black/20 rounded-xl p-3 border border-white/5 select-none">
+                  <strong className="text-white">🚀 Instruction:</strong> Install a Chrome/Firefox extension like <span className="text-amber-300">"Get cookies.txt LOCALLY"</span> or <span className="text-amber-300 font-bold">"Cookie-Editor"</span>, sign in to YouTube, export cookies in <strong>Netscape</strong> or <strong>JSON</strong> format, and paste the output. This completely bypasses bot-detection walls.
+                </div>
+
+                {/* Notifications */}
+                {saveCookiesMessage && (
+                  <div className="text-[11px] font-bold text-center text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl py-2 px-3 animate-in fade-in duration-200" id="cookie_success_msg">
+                    ✓ {saveCookiesMessage}
+                  </div>
+                )}
+                {saveCookiesError && (
+                  <div className="text-[11px] font-bold text-center text-rose-400 bg-red-500/10 border border-red-500/20 rounded-xl py-2 px-3 animate-in fade-in duration-200" id="cookie_error_msg">
+                    ✕ {saveCookiesError}
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCookiesInputText("");
+                      handleSaveCookies();
+                    }}
+                    disabled={isSavingCookies}
+                    className="flex-1 px-4 py-3 bg-zinc-900 border border-white/5 hover:bg-zinc-800 disabled:opacity-40 text-rose-400 hover:text-rose-300 font-bold text-xs rounded-xl transition-all"
+                    id="clear_cookies_btn"
+                  >
+                    Clear Cookies
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingCookies}
+                    className="flex-[2] px-5 py-3 bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-black font-extrabold text-xs rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-400/15 transition-all"
+                    id="save_cookies_btn"
+                  >
+                    {isSavingCookies ? (
+                      <span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <span>Save & Apply Cookies</span>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
          <audio
           key={bgPlayBypass ? "audio-bypass" : "audio-processed"}
