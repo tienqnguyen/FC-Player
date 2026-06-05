@@ -198,8 +198,10 @@ const Visualizer = ({
     };
 
     handleResize();
-    const width = canvas.width / (window.devicePixelRatio || 1);
-    const height = canvas.height / (window.devicePixelRatio || 1);
+    const resizeObserver = new ResizeObserver(() => {
+      handleResize();
+    });
+    resizeObserver.observe(canvas);
 
     // Set responsive FFT size based on visualizer style if active
     if (analyser) {
@@ -216,6 +218,13 @@ const Visualizer = ({
 
     const draw = () => {
       requestRef.current = requestAnimationFrame(draw);
+      
+      const dpr = window.devicePixelRatio || 1;
+      const width = canvas.width / dpr;
+      const height = canvas.height / dpr;
+      const centerX = width / 2;
+      const centerY = height / 2;
+
       
       if (analyser) {
         analyser.getByteFrequencyData(dataArray);
@@ -246,9 +255,6 @@ const Visualizer = ({
           }
         }
       }
-
-      const centerY = height / 2;
-      const centerX = width / 2;
 
       // Clean viewport
       ctx.clearRect(0, 0, width, height);
@@ -399,7 +405,8 @@ const Visualizer = ({
       } else if (settings.type === "stardust_orbit") {
         // --- 2. LUXURY STARDUST ORBIT ---
         // Rotating physical vinyl turntable core with expanding radial hairpins & orbital trails
-        const radBase = Math.min(width, height) / 4.4;
+        const radBaseScale = isCompact ? 2.5 : 4.4;
+        const radBase = Math.min(width, height) / radBaseScale;
         const reactiveCoreRad = radBase * (1.0 + smoothedBass * 0.22 * settings.colorIntensity);
 
         ctx.translate(centerX, centerY);
@@ -731,7 +738,8 @@ const Visualizer = ({
       } else if (settings.type === "cosmic_mandala") {
         // --- 5. COSMIC MANDALA PORTAL (Photo 1 Style) ---
         // Rotating sacred geometry portal with radiating spikes & central orbs
-        const radBase = Math.min(width, height) / 5.2;
+        const scaleFactor = isCompact ? 2.8 : 5.2;
+        const radBase = Math.min(width, height) / scaleFactor;
         const reactiveCoreRad = radBase * (1.1 + smoothedBass * 0.28 * settings.colorIntensity);
         ctx.translate(centerX, centerY);
 
@@ -1070,8 +1078,8 @@ const Visualizer = ({
         ctx.translate(centerX, centerY);
 
         const polygonSides = 6;
-        const baseRadius = Math.min(width, height) * 0.22;
-        const bassImpact = smoothedBass * 35 * settings.colorIntensity;
+        const baseRadius = isCompact ? Math.min(width, height) * 0.35 : Math.min(width, height) * 0.22;
+        const bassImpact = smoothedBass * (isCompact ? 15 : 35) * settings.colorIntensity;
         const currentRadius = baseRadius + bassImpact;
 
         // Draw inner glowing core
@@ -1168,7 +1176,7 @@ const Visualizer = ({
            }
         }
         
-        ctx.fillStyle = "rgba(255,255,255,0.8)";
+        ctx.fillStyle = "rgb(255,255,255)";
         ctx.shadowBlur = 10;
         ctx.shadowColor = "white";
         particlesRef.current.forEach((p) => {
@@ -1183,11 +1191,12 @@ const Visualizer = ({
               p.vy = Math.sin(angle) * (Math.random() * 2 + 1);
               p.alpha = 1;
            }
+           ctx.globalAlpha = p.alpha;
            ctx.beginPath();
            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-           ctx.fillStyle = `rgba(255,255,255,${p.alpha})`;
            ctx.fill();
         });
+        ctx.globalAlpha = 1.0;
 
         ctx.translate(-centerX, -centerY);
 
@@ -1242,9 +1251,13 @@ const Visualizer = ({
 
         // Draw album cover floating in center above the line
         if (loadedImage) {
-           const coverSize = Math.max(120, Math.min(width, height) * 0.35);
+           const coverSize = isCompact ? Math.min(width, height) * 0.7 : Math.max(120, Math.min(width, height) * 0.35);
            const coverX = centerX - coverSize / 2;
-           const coverY = centerYPos - coverSize - 40 - (smoothedBass * 20);
+           const offset = isCompact ? 10 : 40;
+           let coverY = centerYPos - coverSize - offset - (smoothedBass * (isCompact ? 5 : 20));
+           if (isCompact && coverY < 0) {
+              coverY = 5; // prevent going off screen in compact mode
+           }
            
            ctx.shadowBlur = 30 * settings.glowStrength;
            ctx.shadowColor = "rgba(168, 85, 247, 0.4)";
@@ -1273,8 +1286,9 @@ const Visualizer = ({
 
     return () => {
       if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      resizeObserver.disconnect();
     };
-  }, [analyser, isPlaying, settings, loadedImage, isExpanded, isSignatureSound]);
+  }, [analyser, isPlaying, settings, loadedImage, isExpanded, isSignatureSound, isCompact]);
 
   const getModeFriendlyName = (type: string) => {
     switch (type) {
@@ -1434,6 +1448,8 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
   const vocalPresenceNodeRef = useRef<BiquadFilterNode | null>(null);
   const vocalAirRef = useRef<BiquadFilterNode | null>(null);
 
+  const masterGainRef = useRef<GainNode | null>(null);
+
   const eqSettingsRef = useRef(eqSettings);
   const spatialSettingsRef = useRef(spatialSettings);
 
@@ -1486,11 +1502,17 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
         sourceRef.current = ctx.createMediaElementSource(audioElement);
         connectedAudioElementRef.current = audioElement;
 
+        if (!masterGainRef.current) {
+          masterGainRef.current = ctx.createGain();
+          masterGainRef.current.gain.value = 1.0;
+          masterGainRef.current.connect(ctx.destination);
+        }
+
         if (!analyserRef.current) {
           analyserRef.current = ctx.createAnalyser();
           analyserRef.current.fftSize = 128;
           analyserRef.current.smoothingTimeConstant = 0.8;
-          analyserRef.current.connect(ctx.destination);
+          analyserRef.current.connect(masterGainRef.current);
         }
         setAnalyser(analyserRef.current);
 
@@ -1630,6 +1652,7 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
     updateSpatial,
     audioError,
     audioContextRef,
+    masterGainRef,
   };
 }
 
@@ -2245,6 +2268,9 @@ export default function App() {
     const defaultVietnameseAlbums = [
       { id: "alb_chammusicboxofficial", username: "chammusicboxofficial", displayName: "Chạm Music", avatarSub: "CM" },
       { id: "alb_nhachayss", username: "nhachayss", displayName: "Nhạc Hay", avatarSub: "NH" },
+      { id: "alb_tuanying198x", username: "tuanying198x", displayName: "Tuấn Ying", avatarSub: "TY" },
+      { id: "alb_buon19936", username: "buon19936", displayName: "Buồn199x", avatarSub: "B1" },
+
       { id: "alb_motchutbuon_stt07", username: "motchutbuon_stt07", displayName: "Trạm dừng Chân", avatarSub: "TDC" },
       { id: "alb_nhacchudu", username: "nhacchudu", displayName: "Nhạc Chu Du", avatarSub: "CD" },
 
@@ -2829,6 +2855,7 @@ export default function App() {
     updateSpatial,
     audioError,
     audioContextRef,
+    masterGainRef,
   } = useAudioProcessor(eqSettings, spatialSettings);
 
   const isSignatureSoundRef = useRef(isSignatureSound);
@@ -2874,6 +2901,9 @@ export default function App() {
     localStorage.setItem("acoustic_presence_volume", String(masterVolume));
     if (audioRef.current) {
        audioRef.current.volume = masterVolume;
+    }
+    if (masterGainRef.current) {
+       masterGainRef.current.gain.value = masterVolume;
     }
   }, [masterVolume]);
 
@@ -2926,6 +2956,9 @@ export default function App() {
           if (audioRef.current) {
             currentVol = Math.max(0, currentVol - volumeStep);
             audioRef.current.volume = currentVol;
+          }
+          if (masterGainRef.current) {
+            masterGainRef.current.gain.value = currentVol;
           }
           if (currentVol <= 0 && fadeTimeoutRef.current) {
             clearInterval(fadeTimeoutRef.current);
@@ -3179,7 +3212,11 @@ export default function App() {
       
       // Combine with masterVolume if not in the middle of a countdown fade!
       if (!countdown || countdown.isCompleting) {
-          audioRef.current.volume = Math.max(0, Math.min(1, targetVolume * masterVolume));
+          const finalVol = Math.max(0, Math.min(1, targetVolume * masterVolume));
+          audioRef.current.volume = finalVol;
+          if (masterGainRef.current) {
+             masterGainRef.current.gain.value = finalVol;
+          }
       }
 
       const p = (currentTime / duration) * 100;
