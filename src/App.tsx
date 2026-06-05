@@ -4344,6 +4344,21 @@ export default function App() {
                 </div>
               ) : (
                 <div className="flex flex-col min-h-0 flex-1">
+                  <div className="flex items-center justify-between mb-2 pb-2 border-b border-white/5 shrink-0 px-1">
+                    <span className="text-[10px] font-bold text-white/50 tracking-wider uppercase">Up Next ({recentSongs.length})</span>
+                    <button
+                      onClick={() => {
+                        if (recentSongs.length > 0) {
+                          const randomIndex = Math.floor(Math.random() * recentSongs.length);
+                          playRecentSong(recentSongs[randomIndex]);
+                        }
+                      }}
+                      className="text-[10px] font-bold text-amber-400 hover:text-amber-300 uppercase px-2.5 py-1 bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/20 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      <Shuffle className="w-3 h-3" />
+                      Play Random
+                    </button>
+                  </div>
                   <div className={`flex flex-col gap-1 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent ${
                     isCompact ? "flex-1 overflow-y-auto" : "max-h-[350px] overflow-y-auto"
                   }`}>
@@ -4771,8 +4786,31 @@ export default function App() {
                     <button type="submit" className="text-[10px] font-bold bg-amber-400/10 text-amber-400 px-2 py-0.5 rounded border border-amber-400/20">OK</button>
                   </form>
                 ) : communityTracks.length > 0 && (
-                  <div className="text-[9px] font-extrabold text-amber-400/80 bg-amber-400/5 border border-amber-400/10 px-2 py-0.5 rounded-full select-none uppercase tracking-wider">
-                    {communityTracks.length} Shared
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        const standardTracks = communityTracks.map(t => ({
+                          id: t.id,
+                          title: t.title,
+                          author: t.author,
+                          cover: t.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100",
+                          duration: t.duration,
+                          audioUrl: t.audioUrl,
+                          originalUrl: t.originalUrl
+                        }));
+                        setRecentSongs(standardTracks);
+                        if (standardTracks.length > 0) {
+                          playRecentSong(standardTracks[0]);
+                        }
+                      }}
+                      className="text-[9px] font-extrabold text-black bg-amber-400 hover:bg-amber-300 px-2.5 py-0.5 rounded-full select-none uppercase tracking-wider transition-colors flex items-center gap-1 cursor-pointer"
+                    >
+                      <Play className="w-2.5 h-2.5 fill-black" />
+                      Play All
+                    </button>
+                    <div className="text-[9px] font-extrabold text-amber-400/80 bg-amber-400/5 border border-amber-400/10 px-2 py-0.5 rounded-full select-none uppercase tracking-wider">
+                      {communityTracks.length} Shared
+                    </div>
                   </div>
                 )}
               </div>
