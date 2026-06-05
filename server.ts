@@ -5,9 +5,84 @@ import cors from "cors";
 import path from "path";
 import fs from "fs/promises";
 import { existsSync } from "fs";
+import { Readable } from "stream";
 import { fetchNctPlaylistWithProxyRace, parseNctHtml } from "./server/nctParser";
 import { hasYoutubeCookies, getCookiesFilePath, saveYoutubeCookies, getYoutubeCookiesStatus } from "./server/youtubeCookieHelper";
 import { getCachedData, setCachedData, invalidateCache } from "./server/cacheHelper";
+
+async function resolveFacebookRedirect(url: string): Promise<string> {
+  const isFb = url.includes("facebook.com") || url.includes("fb.watch");
+  if (!isFb) return url;
+
+  try {
+    const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "User-Agent": userAgent,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+      },
+      redirect: "follow"
+    });
+    
+    if (response.url && response.url !== url) {
+      console.log(`[Facebook Redirect] Resolved: ${url} -> ${response.url}`);
+      return response.url;
+    }
+  } catch (err: any) {
+    console.error("[Facebook Redirect] Error resolving:", err.message);
+  }
+  return url;
+}
+
+const directStreamMemoryCache = new Map<string, { url: string; expiresAt: number }>();
+const directStreamInFlightPromises = new Map<string, Promise<string>>();
+
+async function getDirectMediaUrl(url: string): Promise<string> {
+  const now = Date.now();
+  const cached = directStreamMemoryCache.get(url);
+  if (cached && cached.expiresAt > now) {
+    return cached.url;
+  }
+
+  let inFlightPromise = directStreamInFlightPromises.get(url);
+  if (!inFlightPromise) {
+    inFlightPromise = (async () => {
+      try {
+        const ytdlOptions: any = {
+          dumpSingleJson: true,
+          noWarnings: true,
+          noPlaylist: true,
+          f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+          jsRuntimes: "node",
+          noCheckCertificates: true,
+        };
+
+        if (await hasYoutubeCookies()) {
+          ytdlOptions.cookies = getCookiesFilePath();
+        }
+
+        const info = (await youtubedl(url, ytdlOptions)) as any;
+        if (!info || !info.url) {
+          throw new Error("No direct stream URL found in media metadata");
+        }
+
+        directStreamMemoryCache.set(url, {
+          url: info.url,
+          expiresAt: Date.now() + (2 * 60 * 60 * 1000) // cache for 2 hours
+        });
+
+        return info.url;
+      } finally {
+        directStreamInFlightPromises.delete(url);
+      }
+    })();
+    directStreamInFlightPromises.set(url, inFlightPromise);
+  }
+
+  return inFlightPromise;
+}
 
 async function startServer() {
   const app = express();
@@ -20,12 +95,78 @@ async function startServer() {
   // API to stream audio of YouTube, Facebook, SoundCloud, etc.
   app.get("/api/stream", async (req, res) => {
     try {
-      const url = req.query.url as string;
+      let url = req.query.url as string;
       if (!url) {
         res.status(400).json({ error: "Invalid stream URL" });
         return;
       }
 
+      url = await resolveFacebookRedirect(url);
+
+      // Attempt high-performance Range-proxying using direct CDN URL extraction
+      try {
+        const directUrl = await getDirectMediaUrl(url);
+        console.log(`[Stream Range Proxy] Streaming direct URL: ${directUrl.substring(0, 80)}...`);
+
+        const headers: Record<string, string> = {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        };
+
+        if (req.headers.range) {
+          headers["Range"] = req.headers.range;
+        }
+
+        const response = await fetch(directUrl, { headers });
+
+        if (response.status !== 200 && response.status !== 206) {
+          console.warn(`[Stream Range Proxy] Upstream returned non-success status ${response.status} for URL. Evicting cache.`);
+          directStreamMemoryCache.delete(url);
+          throw new Error(`Upstream returned non-success status: ${response.status}`);
+        }
+
+        res.status(response.status);
+
+        let contentType = response.headers.get("content-type");
+        if (contentType) {
+          // Normalize video/mp4 (e.g. from Facebook) to audio/mp4 so mobile browsers and HTML5 <audio> handle it reliably
+          if (contentType.startsWith("video/")) {
+            contentType = contentType.replace("video/", "audio/");
+          }
+          res.setHeader("Content-Type", contentType);
+        } else {
+          res.setHeader("Content-Type", "audio/mp4");
+        }
+
+        const contentLength = response.headers.get("content-length");
+        if (contentLength) res.setHeader("Content-Length", contentLength);
+
+        const contentRange = response.headers.get("content-range");
+        if (contentRange) res.setHeader("Content-Range", contentRange);
+
+        const acceptRanges = response.headers.get("accept-ranges");
+        if (acceptRanges) {
+          res.setHeader("Accept-Ranges", acceptRanges);
+        } else {
+          res.setHeader("Accept-Ranges", "bytes");
+        }
+
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+
+        if (response.body) {
+          const nodeStream = Readable.fromWeb(response.body as any);
+          nodeStream.pipe(res);
+          res.on("close", () => {
+            nodeStream.destroy();
+          });
+          return;
+        }
+      } catch (proxyError: any) {
+        console.warn(`[Stream Range Proxy] Failed to extract/stream direct URL, falling back to live spawned pipeline:`, proxyError.message || proxyError);
+      }
+
+      // FALLBACK: Spawned live yt-dlp pipeline (No native Range support, but streams directly)
       res.header("Content-Type", "audio/mp4");
       res.header("Accept-Ranges", "bytes");
       res.header(
@@ -38,7 +179,9 @@ async function startServer() {
         f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
         noPlaylist: true,
         jsRuntimes: "node",
+        noCheckCertificates: true,
       };
+      
       if (await hasYoutubeCookies()) {
         ytdlOptions.cookies = getCookiesFilePath();
       }
@@ -68,11 +211,13 @@ async function startServer() {
   // API to get general metadata (supported sites: YouTube, Facebook, SoundCloud, Twitter, etc.)
   app.get("/api/metadata", async (req, res) => {
     try {
-      const url = req.query.url as string;
+      let url = req.query.url as string;
       if (!url) {
         res.status(400).json({ error: "Invalid URL" });
         return;
       }
+      
+      url = await resolveFacebookRedirect(url);
       
       const ytdlOptions: any = {
         dumpSingleJson: true,
@@ -80,7 +225,9 @@ async function startServer() {
         noPlaylist: true,
         f: "all",
         jsRuntimes: "node",
+        noCheckCertificates: true,
       };
+      
       if (await hasYoutubeCookies()) {
         ytdlOptions.cookies = getCookiesFilePath();
       }
@@ -102,13 +249,15 @@ async function startServer() {
   // API to proxy and download audio as attachment
   app.get("/api/download", async (req, res) => {
     try {
-      const url = req.query.url as string;
+      let url = req.query.url as string;
       const title = (req.query.title as string) || "audio";
       
       if (!url) {
         res.status(400).json({ error: "Invalid URL" });
         return;
       }
+
+      url = await resolveFacebookRedirect(url);
 
       res.header("Content-Type", "audio/mp4");
       res.header(
@@ -125,7 +274,9 @@ async function startServer() {
           o: "-",
           f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
           jsRuntimes: "node",
+          noCheckCertificates: true,
         };
+        
         if (await hasYoutubeCookies()) {
           ytdlOptions.cookies = getCookiesFilePath();
         }
@@ -224,18 +375,10 @@ async function startServer() {
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
 
       if (response.body) {
-        const reader = response.body.getReader();
-        const pumper = async () => {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(value);
-          }
-          res.end();
-        };
-        pumper().catch(err => {
-          console.error("[Proxy Stream Pipe Error]", err.message);
-          if (!res.writableEnded) res.end();
+        const nodeStream = Readable.fromWeb(response.body as any);
+        nodeStream.pipe(res);
+        res.on("close", () => {
+          nodeStream.destroy();
         });
       } else {
         res.status(500).json({ error: "No body in audio stream source." });
@@ -356,6 +499,193 @@ async function startServer() {
     } catch (error: any) {
       console.error("[API Get Default Songs Error]", error.message);
       res.status(500).json({ success: false, error: error.message || "Failed to retrieve default songs.", songs: [] });
+    }
+  });
+
+  // GET community tracks
+  app.get("/api/community/tracks", async (req, res) => {
+    try {
+      const dbPath = path.join(process.cwd(), "community_tracks.json");
+      let tracks: any[] = [];
+
+      // Seed with some awesome default track entries if the database doesn't exist
+      if (!existsSync(dbPath)) {
+        tracks = [
+          {
+            id: "comm_seed1",
+            title: "Em (feat. SOOBIN) - Classic Vibe",
+            author: "Binz, SOOBIN",
+            cover: "https://image-cdn.nct.vn/song/2026/05/21/t/a/x/v/1779370796566.jpg",
+            duration: 296,
+            audioUrl: "/api/proxy-stream?url=https%3A%2F%2Fstream.nct.vn%2Fresa%2F2605%2Fa4%2F52%2F96myxlw2bg.mp3%3Fst%3DG5iXoDQWnWgHmtXbfr2ucQ%26e%3D1781276871%26a%3D6%26p%3D0%26r%3D885ad4649ef1d80dd7233f228343a253",
+            originalUrl: "https://www.nhaccuatui.com/song/xLLyzXlyrRLa.html",
+            sharedBy: "Acoustic System",
+            sharedAt: new Date().toISOString(),
+            likes: 15
+          },
+          {
+            id: "comm_seed2",
+            title: "Lofi Hip Hop Radio 📚 Beats to Study/Relax to",
+            author: "Lofi Girl",
+            cover: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300",
+            duration: 3600,
+            audioUrl: "/api/stream?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DjfKfPfyJRdk",
+            originalUrl: "https://www.youtube.com/watch?v=jfKfPfyJRdk",
+            sharedBy: "Lofi Team",
+            sharedAt: new Date().toISOString(),
+            likes: 24
+          }
+        ];
+        await fs.writeFile(dbPath, JSON.stringify(tracks, null, 2), "utf-8");
+      } else {
+        const content = await fs.readFile(dbPath, "utf-8");
+        tracks = JSON.parse(content);
+      }
+
+      res.json({ success: true, tracks });
+    } catch (error: any) {
+      console.error("[API GET Tracks Error]", error.message);
+      res.status(500).json({ success: false, error: error.message || "Failed to retrieve community tracks.", tracks: [] });
+    }
+  });
+
+  // POST share community track
+  app.post("/api/community/share", async (req, res) => {
+    try {
+      let { url, title, author, cover, duration, sharedBy } = req.body;
+      if (!url || typeof url !== "string") {
+        return res.status(400).json({ success: false, error: "Valid URL is required." });
+      }
+
+      url = url.trim();
+      sharedBy = sharedBy?.trim() || "Acoustic Lover";
+
+      // If we don't have enough metadata, let's fetch it dynamically
+      if (!title || !cover) {
+        console.log(`[Community Share] Resolving metadata for URL: ${url}`);
+        if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
+          try {
+            const rawHtml = await fetchNctPlaylistWithProxyRace(url);
+            const parsedData = parseNctHtml(rawHtml);
+            if (parsedData.songs && parsedData.songs.length > 0) {
+              const firstSong = parsedData.songs[0];
+              title = title || firstSong.title;
+              author = author || firstSong.author;
+              cover = cover || firstSong.cover;
+              duration = duration || firstSong.duration;
+            }
+          } catch (e: any) {
+            console.warn("[Community Share] Fallback NCT parsing issue:", e.message);
+          }
+        } else {
+          try {
+            const urlToFetch = await resolveFacebookRedirect(url);
+            const ytdlOptions: any = {
+              dumpSingleJson: true,
+              noWarnings: true,
+              noPlaylist: true,
+              f: "all",
+              jsRuntimes: "node",
+              noCheckCertificates: true,
+            };
+            if (await hasYoutubeCookies()) {
+              ytdlOptions.cookies = getCookiesFilePath();
+            }
+            const info = (await youtubedl(urlToFetch, ytdlOptions)) as any;
+            title = title || info.title;
+            cover = cover || info.thumbnail || info.thumbnails?.[0]?.url;
+            author = author || info.uploader || info.artist;
+            duration = duration || info.duration;
+          } catch (e: any) {
+            console.warn("[Community Share] Fallback yt-dlp metadata issue:", e.message);
+          }
+        }
+      }
+
+      // Default fallbacks in case both parsing and direct values are missing
+      title = title || "Shared Web Clip";
+      author = author || "Acoustic Community";
+      cover = cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300";
+      duration = duration || 180;
+
+      // Unify stream routes cleanly
+      let audioUrl = "";
+      if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
+        audioUrl = `/api/proxy-stream?url=${encodeURIComponent(url)}`;
+      } else {
+        audioUrl = `/api/stream?url=${encodeURIComponent(url)}`;
+      }
+
+      const songObj = {
+        id: "comm_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now(),
+        title,
+        author,
+        cover,
+        duration,
+        audioUrl,
+        originalUrl: url,
+        sharedBy,
+        sharedAt: new Date().toISOString(),
+        likes: 0
+      };
+
+      const dbPath = path.join(process.cwd(), "community_tracks.json");
+      let tracks: any[] = [];
+      if (existsSync(dbPath)) {
+        try {
+          const content = await fs.readFile(dbPath, "utf-8");
+          tracks = JSON.parse(content);
+        } catch {
+          tracks = [];
+        }
+      }
+
+      // Check if URL is already shared
+      const existingIndex = tracks.findIndex(t => t.originalUrl === url);
+      if (existingIndex !== -1) {
+        // Update contributor or bump shared time
+        tracks[existingIndex] = {
+          ...tracks[existingIndex],
+          title: songObj.title,
+          author: songObj.author,
+          cover: songObj.cover,
+          sharedBy: songObj.sharedBy,
+          sharedAt: songObj.sharedAt
+        };
+      } else {
+        tracks.unshift(songObj);
+      }
+
+      await fs.writeFile(dbPath, JSON.stringify(tracks, null, 2), "utf-8");
+      res.json({ success: true, track: songObj });
+    } catch (error: any) {
+      console.error("[API Community Share Error]", error.message);
+      res.status(500).json({ success: false, error: error.message || "Failed to share track to community." });
+    }
+  });
+
+  // POST like community track
+  app.post("/api/community/like", async (req, res) => {
+    try {
+      const { id } = req.body;
+      if (!id) {
+        return res.status(400).json({ error: "Track ID is required" });
+      }
+      const dbPath = path.join(process.cwd(), "community_tracks.json");
+      if (!existsSync(dbPath)) {
+        return res.status(404).json({ error: "No tracks list found" });
+      }
+      const content = await fs.readFile(dbPath, "utf-8");
+      const tracks = JSON.parse(content);
+      const track = tracks.find((t: any) => t.id === id);
+      if (track) {
+        track.likes = (track.likes || 0) + 1;
+        await fs.writeFile(dbPath, JSON.stringify(tracks, null, 2), "utf-8");
+        return res.json({ success: true, likes: track.likes });
+      }
+      res.status(404).json({ error: "Track not found" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
     }
   });
 

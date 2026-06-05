@@ -1,0 +1,46 @@
+{
+  "entities": {
+    "SharedUsername": {
+      "title": "Shared Username",
+      "description": "Shared TikTok creator username to sync with community",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "avatarSub": { "type": "string" },
+        "sharedBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "username"]
+    },
+    "SharedTrack": {
+      "title": "Shared Track",
+      "description": "Shared audio stream track detail",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "cover": { "type": "string" },
+        "duration": { "type": "number" },
+        "audioUrl": { "type": "string" },
+        "originalUrl": { "type": "string" },
+        "sharedBy": { "type": "string" },
+        "sharedAt": { "type": "string" },
+        "likes": { "type": "number" }
+      },
+      "required": ["id", "title", "originalUrl"]
+    }
+  },
+  "firestore": {
+    "shared_usernames/{usernameId}": {
+      "schema": "SharedUsername",
+      "description": "TikTok usernames shared with the community"
+    },
+    "shared_tracks/{trackId}": {
+      "schema": "SharedTrack",
+      "description": "Audio track links shared with the community"
+    }
+  }
+}

@@ -1,8 +1,10 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff
+  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard
 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
+import { db, auth, initAuth, handleFirestoreError, OperationType } from "./firebase";
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 
 const VISUALIZER_PALETTES = {
   gold: {
@@ -216,6 +218,25 @@ const Visualizer = ({
     let smoothedMid = 0;
     let smoothedHigh = 0;
 
+    const drawImageCover = (ctx: CanvasRenderingContext2D, img: HTMLImageElement, dx: number, dy: number, dw: number, dh: number) => {
+      const imgRatio = img.width / img.height;
+      const canvasRatio = dw / dh;
+      let sWidth = img.width;
+      let sHeight = img.height;
+      let sx = 0;
+      let sy = 0;
+      
+      if (imgRatio > canvasRatio) {
+        sWidth = img.height * canvasRatio;
+        sx = (img.width - sWidth) / 2;
+      } else {
+        sHeight = img.width / canvasRatio;
+        sy = (img.height - sHeight) / 2;
+      }
+      
+      ctx.drawImage(img, sx, sy, sWidth, sHeight, dx, dy, dw, dh);
+    };
+
     const draw = () => {
       requestRef.current = requestAnimationFrame(draw);
       
@@ -255,6 +276,10 @@ const Visualizer = ({
           }
         }
       }
+      
+      // Reset styles to prevent GPU lag during clear/draw sweeps
+      ctx.shadowBlur = 0;
+      ctx.shadowColor = "transparent";
 
       // Clean viewport
       ctx.clearRect(0, 0, width, height);
@@ -487,7 +512,8 @@ const Visualizer = ({
 
         if (loadedImage) {
           ctx.rotate(rotationAngleRef.current);
-          ctx.drawImage(
+          drawImageCover(
+            ctx,
             loadedImage,
             -reactiveCoreRad,
             -reactiveCoreRad,
@@ -844,7 +870,8 @@ const Visualizer = ({
 
         if (loadedImage) {
           ctx.rotate(-rotationAngleRef.current * 0.16);
-          ctx.drawImage(
+          drawImageCover(
+            ctx,
             loadedImage,
             -reactiveCoreRad * 0.9,
             -reactiveCoreRad * 0.9,
@@ -1111,7 +1138,8 @@ const Visualizer = ({
         ctx.clip();
         
         if (loadedImage) {
-           ctx.drawImage(
+           drawImageCover(
+              ctx,
               loadedImage,
               -currentRadius,
               -currentRadius,
@@ -1266,7 +1294,7 @@ const Visualizer = ({
            ctx.roundRect(coverX, coverY, coverSize, coverSize, 20);
            ctx.save();
            ctx.clip();
-           ctx.drawImage(loadedImage, coverX, coverY, coverSize, coverSize);
+           drawImageCover(ctx, loadedImage, coverX, coverY, coverSize, coverSize);
            ctx.restore();
            
            ctx.strokeStyle = "rgba(255,255,255,0.15)";
@@ -1449,6 +1477,7 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
   const vocalAirRef = useRef<BiquadFilterNode | null>(null);
 
   const masterGainRef = useRef<GainNode | null>(null);
+  const currentRouteStateRef = useRef<boolean | null>(null);
 
   const eqSettingsRef = useRef(eqSettings);
   const spatialSettingsRef = useRef(spatialSettings);
@@ -1549,6 +1578,7 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
         } else {
           sourceRef.current.connect(analyserRef.current);
         }
+        currentRouteStateRef.current = shouldEnableHD;
       }
     } catch (err: any) {
       setAudioError(err.message || "Unknown audio routing error");
@@ -1608,7 +1638,7 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
     }
   };
 
-  const toggleSignatureSound = (enable: boolean) => {
+  const toggleSignatureSound = (enable: boolean, force = false) => {
     setIsSignatureSound(enable);
     if (
       !sourceRef.current ||
@@ -1618,10 +1648,24 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
       !audioContextRef.current
     )
       return;
+
+    if (!force && currentRouteStateRef.current === enable) {
+      // Already routed correctly! Skip disconnect/connect to avoid audio glitches or temporary mutes
+      return;
+    }
+
     const ctx = audioContextRef.current;
 
-    sourceRef.current.disconnect();
-    sigOutRef.current.disconnect();
+    try {
+      sourceRef.current.disconnect();
+    } catch (e) {
+      console.warn("Error disconnecting old sourceRef routing:", e);
+    }
+    try {
+      sigOutRef.current.disconnect();
+    } catch (e) {
+      console.warn("Error disconnecting old sigOutRef routing:", e);
+    }
 
     if (enable) {
       sourceRef.current.connect(sigInRef.current);
@@ -1629,6 +1673,7 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
     } else {
       sourceRef.current.connect(analyserRef.current);
     }
+    currentRouteStateRef.current = enable;
   };
 
   const resumeContext = async () => {
@@ -2125,6 +2170,29 @@ export default function App() {
     }
   };
 
+  const handlePasteCookies = async () => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          setCookiesInputText(text);
+          setSaveCookiesMessage("Pasted cookies from clipboard successfully!");
+          setTimeout(() => setSaveCookiesMessage(""), 3000);
+        } else {
+          setSaveCookiesError("Clipboard is empty or contains no readable data.");
+          setTimeout(() => setSaveCookiesError(""), 3000);
+        }
+      } else {
+        setSaveCookiesError("Automatic paste not supported. Please press Ctrl+V / Cmd+V in the box.");
+        setTimeout(() => setSaveCookiesError(""), 4000);
+      }
+    } catch (err: any) {
+      console.warn("Clipboard read error:", err);
+      setSaveCookiesError("Please allow clipboard permission when prompted, or manually use Ctrl+V (Cmd+V) instead.");
+      setTimeout(() => setSaveCookiesError(""), 4000);
+    }
+  };
+
   const handleSaveCookies = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSavingCookies(true);
@@ -2263,7 +2331,176 @@ export default function App() {
     }
   };
 
-  const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide">("upnext");
+  const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community">("upnext");
+
+  // Community Share & Real-time Sync states & functions
+  const [communityTracks, setCommunityTracks] = useState<any[]>([]);
+  const [firebaseUsernames, setFirebaseUsernames] = useState<any[]>([]);
+  const [communityNickname, setCommunityNickname] = useState(() => {
+    return localStorage.getItem("acoustic_presence_nickname") || "Acoustic Lover";
+  });
+
+  const [isSharingToCommunity, setIsSharingToCommunity] = useState(false);
+  const [communityError, setCommunityError] = useState("");
+  const [communitySuccess, setCommunitySuccess] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminPin, setShowAdminPin] = useState(false);
+  const [adminPinInput, setAdminPinInput] = useState("");
+
+  // Initialize Anonymous Firebase login for seamless security rule validation
+  useEffect(() => {
+    initAuth();
+  }, []);
+
+  // Sync nickname preference to client storage
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_nickname", communityNickname);
+  }, [communityNickname]);
+
+  // Real-time Listener for shared TikTok Usernames from Firestore database
+  useEffect(() => {
+    try {
+      const unsubscribe = onSnapshot(collection(db, "shared_usernames"), (snapshot) => {
+        const ulist: any[] = [];
+        snapshot.forEach((docSnap) => {
+          ulist.push(docSnap.data());
+        });
+        setFirebaseUsernames(ulist);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, "shared_usernames");
+      });
+      return () => unsubscribe();
+    } catch (err) {
+      console.warn("Firestore Username real-time subscription issue:", err);
+    }
+  }, []);
+
+  // Real-time Listener for shared general track links from Firestore database
+  useEffect(() => {
+    try {
+      const unsubscribe = onSnapshot(collection(db, "shared_tracks"), (snapshot) => {
+        const tlist: any[] = [];
+        snapshot.forEach((docSnap) => {
+          tlist.push(docSnap.data());
+        });
+        // Sort tracks so newer or liked tracks appear beautifully
+        tlist.sort((a, b) => {
+          const tA = a.sharedAt ? new Date(a.sharedAt).getTime() : 0;
+          const tB = b.sharedAt ? new Date(b.sharedAt).getTime() : 0;
+          return tB - tA;
+        });
+        setCommunityTracks(tlist);
+      }, (error) => {
+        handleFirestoreError(error, OperationType.LIST, "shared_tracks");
+      });
+      return () => unsubscribe();
+    } catch (err) {
+      console.warn("Firestore Track real-time subscription issue:", err);
+    }
+  }, []);
+
+  // Share or unshare creator username in community database
+  const handleToggleShareUsername = async (alb: any) => {
+    setCommunityError("");
+    setCommunitySuccess("");
+    try {
+      const sanitizedId = alb.username.toLowerCase().replace(/[^a-zA-Z0-9_\-]/g, "_");
+      const isShared = firebaseUsernames.some(u => u.username.toLowerCase() === alb.username.toLowerCase());
+
+      if (isShared) {
+        // Tapped/Shared already -> untap to REMOVE
+        await deleteDoc(doc(db, "shared_usernames", sanitizedId));
+        setCommunitySuccess(`Unshared creator @${alb.username} from group database!`);
+        setTimeout(() => setCommunitySuccess(""), 3000);
+      } else {
+        // Untapped/Not shared -> tap to CREATE
+        const docData = {
+          id: sanitizedId,
+          username: alb.username,
+          displayName: alb.displayName || `@${alb.username}`,
+          avatarSub: alb.avatarSub || alb.username.slice(0, 2).toUpperCase(),
+          sharedBy: communityNickname.trim() || "Anonymous Listener",
+          createdAt: new Date().toISOString()
+        };
+        await setDoc(doc(db, "shared_usernames", sanitizedId), docData);
+        setCommunitySuccess(`Shared creator @${alb.username} with travelers!`);
+        setTimeout(() => setCommunitySuccess(""), 4500);
+      }
+    } catch (error) {
+      console.error("Failed to sync shared username to Firestore:", error);
+      setCommunityError("Failed to update shared creator. Verify your internet connection.");
+      setTimeout(() => setCommunityError(""), 5000);
+    }
+  };
+
+  // Toggle share/unshare of any fetched general music links (YouTube, Facebook, NCT, or TikTok URLs)
+  const handleToggleShareTrack = async (track: any) => {
+    setCommunityError("");
+    setCommunitySuccess("");
+    try {
+      // Find if this URL has been shared inside Firestore already
+      const sharedTrack = communityTracks.find(t => t.originalUrl === track.originalUrl);
+
+      if (sharedTrack) {
+        // Already shared - untap to DELETE
+        await deleteDoc(doc(db, "shared_tracks", sharedTrack.id));
+        setCommunitySuccess(`Removed "${track.title || "fetched song"}" from shared community library.`);
+        setTimeout(() => setCommunitySuccess(""), 3000);
+      } else {
+        // Not shared - tap to CREATE
+        const newDocRef = doc(collection(db, "shared_tracks"));
+        const docData = {
+          id: newDocRef.id,
+          title: track.title || "Shared Audio",
+          author: track.author || "Unknown Artist",
+          cover: track.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100",
+          duration: track.duration || 0,
+          audioUrl: track.audioUrl || "",
+          originalUrl: track.originalUrl || "",
+          sharedBy: communityNickname.trim() || "Anonymous Listener",
+          sharedAt: new Date().toISOString(),
+          likes: 0
+        };
+        await setDoc(newDocRef, docData);
+        setCommunitySuccess(`Shared "${track.title || "fetched song"}" with travelers!`);
+        setTimeout(() => setCommunitySuccess(""), 4500);
+      }
+    } catch (error) {
+      console.error("Failed to sync shared track to Firestore:", error);
+      setCommunityError("Could not update document inside Firestore database.");
+      setTimeout(() => setCommunityError(""), 5000);
+    }
+  };
+
+  // Upvote/Like general track in community database
+  const handleLikeCommunityTrack = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const docRef = doc(db, "shared_tracks", id);
+      const currentLikes = communityTracks.find(t => t.id === id)?.likes || 0;
+      await setDoc(docRef, { likes: currentLikes + 1 }, { merge: true });
+    } catch (err) {
+      console.error("Failed to like Firestore track:", err);
+    }
+  };
+
+  const playCommunityTrack = (track: any) => {
+    // Standard playback translation object template matching player expectation
+    const targetObj = {
+      id: track.id,
+      title: track.title,
+      author: track.author,
+      cover: track.cover,
+      duration: track.duration,
+      audioUrl: track.audioUrl,
+      originalUrl: track.originalUrl
+    };
+    if (!recentSongs.some(s => s.id === targetObj.id)) {
+      setRecentSongs(prev => [targetObj, ...prev]);
+    }
+    playRecentSong(targetObj);
+  };
+
   const [tiktokAlbums, setTiktokAlbums] = useState<any[]>(() => {
     const defaultVietnameseAlbums = [
       { id: "alb_chammusicboxofficial", username: "chammusicboxofficial", displayName: "Chạm Music", avatarSub: "CM" },
@@ -2294,6 +2531,27 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("acoustic_presence_tiktok_albums", JSON.stringify(tiktokAlbums));
   }, [tiktokAlbums]);
+
+  // Reactively pool local custom creators and community shared usernames
+  const allAlbums = React.useMemo(() => {
+    const combined = [...(tiktokAlbums || [])];
+    (firebaseUsernames || []).forEach((fu) => {
+      const normalizedSharedName = (fu.username || "").toLowerCase();
+      if (!normalizedSharedName) return;
+      const alreadyInLocal = combined.some(alb => (alb.username || "").toLowerCase() === normalizedSharedName);
+      if (!alreadyInLocal) {
+        combined.push({
+          id: `community_${normalizedSharedName}`,
+          username: fu.username,
+          displayName: fu.displayName || `@${fu.username}`,
+          isFromCommunity: true,
+          avatar: fu.avatar || "",
+          avatarSub: fu.avatarSub || fu.username.slice(0, 2).toUpperCase()
+        });
+      }
+    });
+    return combined;
+  }, [tiktokAlbums, firebaseUsernames]);
 
   const [albumsCache, setAlbumsCache] = useState<Record<string, { songs: any[], cursor: string, hasMore: boolean, updatedAt: number }>>(() => {
     try {
@@ -2641,6 +2899,7 @@ export default function App() {
           return [newSong, ...filtered].slice(0, 50);
         });
         
+        setCurrentSong(newSong);
         resumeContext();
         setTiktokUrl(""); 
       } catch(err: any) {
@@ -2862,6 +3121,22 @@ export default function App() {
   useEffect(() => {
     isSignatureSoundRef.current = isSignatureSound;
   }, [isSignatureSound]);
+
+  useEffect(() => {
+    const handleGesture = () => {
+      if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+        audioContextRef.current.resume().catch((err) => {
+          console.warn("[App Gesture Autoresume] Failed to resume audio context:", err);
+        });
+      }
+    };
+    window.addEventListener("pointerdown", handleGesture);
+    window.addEventListener("click", handleGesture);
+    return () => {
+      window.removeEventListener("pointerdown", handleGesture);
+      window.removeEventListener("click", handleGesture);
+    };
+  }, [audioContextRef]);
 
   const [uiLayoutMode, setUiLayoutMode] = useState<"full" | "compact" | "hidden">(() => {
     try {
@@ -3194,6 +3469,11 @@ export default function App() {
 
   const handleTimeUpdate = () => {
     if (audioRef.current && !isNaN(audioRef.current.duration)) {
+      // Self-heal: If playing but AudioContext is suspended, auto-resume
+      if (isPlaying && audioContextRef.current && audioContextRef.current.state === "suspended") {
+        audioContextRef.current.resume().catch(console.warn);
+      }
+
       const currentTime = audioRef.current.currentTime;
       const duration = audioRef.current.duration;
       
@@ -3299,6 +3579,7 @@ export default function App() {
 
   const formatDurationDisplay = (sec: number | null) => {
     if (sec === null || isNaN(sec)) return "--:--";
+    if (sec === 0 && !audioUrl) return "ERROR";
     const minutes = Math.floor(sec / 60);
     const seconds = Math.floor(sec % 60);
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
@@ -3878,11 +4159,11 @@ export default function App() {
         }`}>
           
           {/* Header tabs row */}
-          <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 px-3">
-            <div className="flex gap-5 sm:gap-6">
+          <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 px-3 col-span-full">
+            <div className="flex gap-4 sm:gap-6 overflow-x-auto scrollbar-none max-w-full">
               <button
                 onClick={() => setPlaylistTab("upnext")}
-                className={`text-[13px] font-bold tracking-widest uppercase transition-all pb-1 relative ${
+                className={`text-[10px] sm:text-[12px] font-bold tracking-widest uppercase transition-all pb-1 relative flex-shrink-0 ${
                   playlistTab === "upnext" 
                     ? "text-white" 
                     : "text-white/40 hover:text-white/70"
@@ -3896,7 +4177,7 @@ export default function App() {
               
               <button
                 onClick={() => setPlaylistTab("albums")}
-                className={`text-[13px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 ${
+                className={`text-[10px] sm:text-[12px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 flex-shrink-0 ${
                   playlistTab === "albums" 
                     ? "text-white" 
                     : "text-white/40 hover:text-white/70"
@@ -3904,6 +4185,21 @@ export default function App() {
               >
                 Albums
                 {playlistTab === "albums" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setPlaylistTab("community")}
+                className={`transition-all pb-1 px-1 relative flex items-center justify-center flex-shrink-0 ${
+                  playlistTab === "community" 
+                    ? "text-white" 
+                    : "text-white/40 hover:text-white/70"
+                }`}
+                title="Community"
+              >
+                <Share2 className="w-4 h-4 text-amber-400 animate-pulse" />
+                {playlistTab === "community" && (
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
                 )}
               </button>
@@ -4146,7 +4442,6 @@ export default function App() {
               )}
             </div>
           )}
-
           {/* Tab 2: Albums */}
           {playlistTab === "albums" && (
             <div className="flex flex-col gap-3 min-h-0 flex-1">
@@ -4180,11 +4475,12 @@ export default function App() {
                   ? "flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10" 
                   : ""
               }`}>
-              {tiktokAlbums.map((alb) => {
+              {allAlbums.map((alb) => {
                 const normalizedUser = alb.username.toLowerCase();
                 const isActive = activeAlbumUsername === normalizedUser;
                 const cacheData = albumsCache[normalizedUser];
                 const isCached = !!cacheData && cacheData.songs?.length > 0;
+                const isSharedInFirebase = firebaseUsernames.some(u => u.username.toLowerCase() === normalizedUser);
                 
                 return (
                   <div
@@ -4199,7 +4495,7 @@ export default function App() {
                     }`}
                   >
                     <div className="flex items-center justify-between w-full mb-2">
-                      {/* Premium Circle Avatar Layout with Layered Zero-State Fallback */}
+                       {/* Premium Circle Avatar Layout with Layered Zero-State Fallback */}
                       <div className="relative w-10 h-10 rounded-full overflow-hidden shrink-0 shadow-lg border border-white/10 group-hover:border-white/30 transition-colors">
                         <div className={`absolute inset-0 flex items-center justify-center font-black text-[12px] select-none uppercase transition-all duration-500 ${
                           isActive 
@@ -4245,22 +4541,37 @@ export default function App() {
                             <RefreshCw className="w-3.5 h-3.5" />
                           </button>
                         )}
+
+                        {/* TOGGLE SHARE CREATOR */}
+                        <button
+                          onClick={() => handleToggleShareUsername(alb)}
+                          className={`p-1 hover:bg-white/10 rounded-full transition-all ${
+                            isSharedInFirebase ? "text-amber-400 animate-bounce" : "text-white/40 hover:text-amber-400"
+                          }`}
+                          title={isSharedInFirebase ? "Shared in Community Database (Unshare)" : "Share Creator Username with Community"}
+                        >
+                          <Share2 className="w-3.5 h-3.5" />
+                        </button>
                         
-                        {alb.id.startsWith("alb_") && (
+                        {(alb.id.startsWith("alb_") || alb.isFromCommunity) && (
                           <button
                             onClick={() => {
-                              setTiktokAlbums(prev => prev.filter(a => a.id !== alb.id));
-                              // Also wipe caches for clean state
-                              if (albumsCache[normalizedUser]) {
-                                setAlbumsCache(prev => {
-                                  const updated = { ...prev };
-                                  delete updated[normalizedUser];
-                                  return updated;
-                                });
+                              if (alb.isFromCommunity) {
+                                handleToggleShareUsername(alb);
+                              } else {
+                                setTiktokAlbums(prev => prev.filter(a => a.id !== alb.id));
+                                // Also wipe caches for clean state
+                                if (albumsCache[normalizedUser]) {
+                                  setAlbumsCache(prev => {
+                                    const updated = { ...prev };
+                                    delete updated[normalizedUser];
+                                    return updated;
+                                  });
+                                }
                               }
                             }}
                             className="p-1 hover:bg-white/10 text-white/40 hover:text-red-400 rounded-full transition-all"
-                            title="Delete custom album & wipe links"
+                            title={alb.isFromCommunity ? "Delete from community database" : "Delete custom album & wipe links"}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -4285,11 +4596,11 @@ export default function App() {
                         </div>
                       ) : (
                         <p className="text-[10px] text-white/40 mt-1 font-semibold tracking-wider uppercase select-none group-hover:text-white/60 transition-colors">
-                          Creator
+                          {alb.isFromCommunity ? "Shared Creator" : "Local Creator"}
                         </p>
                       )}
                     </div>
-
+ 
                     {/* Silky glowing decoration */}
                     <div className={`absolute right-0 bottom-0 w-24 h-24 rounded-full blur-[25px] transition-all duration-700 pointer-events-none translate-x-8 translate-y-8 ${
                       isActive ? "bg-amber-500/20" : "bg-white/5 group-hover:bg-amber-400/10 group-hover:blur-[30px]"
@@ -4298,7 +4609,259 @@ export default function App() {
                   </div>
                 );
               })}
+              </div>
+
+              {/* Other Fetched Tracks (YouTube, Facebook, NCT, or custom URLs) */}
+              <div className="mt-3 border-t border-white/5 pt-3 shrink-0">
+                <div className="flex items-center justify-between mb-2 px-0.5">
+                  <div className="flex flex-col">
+                    <h3 className="text-xs font-black tracking-widest text-[#E0E2E8]/90 uppercase flex items-center gap-1.5">
+                      <Music className="w-3.5 h-3.5 text-amber-400" />
+                      Other Fetched Tracks
+                    </h3>
+                    <p className="text-[10px] text-white/30 font-semibold tracking-wide">
+                      Your loaded YouTube, Facebook, or music links
+                    </p>
+                  </div>
+                </div>
+
+                {recentSongs.filter(s => s.originalUrl).length === 0 ? (
+                  <div className="text-center py-5 px-4 bg-white/[0.01] border border-dashed border-white/5 rounded-2xl">
+                    <p className="text-[10px] text-white/30 font-semibold leading-relaxed">
+                      No external tracks fetched yet.<br />Paste a YouTube or Facebook link to load elements.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2 max-h-[175px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
+                    {recentSongs.filter(s => s.originalUrl).map((song) => {
+                      const isShared = communityTracks.some(t => t.originalUrl === song.originalUrl);
+                      const isCurrentlyPlaying = currentSong?.originalUrl === song.originalUrl;
+                      
+                      return (
+                        <div 
+                          key={song.id}
+                          className={`flex items-center justify-between p-2 rounded-xl border transition-all duration-300 ${
+                            isCurrentlyPlaying 
+                              ? "bg-amber-400/5 border-amber-400/35" 
+                              : "bg-white/[0.02] border-white/5 hover:bg-white/[0.04] hover:border-white/10"
+                          }`}
+                        >
+                          {/* Playable Area */}
+                          <div 
+                            onClick={() => playRecentSong(song)}
+                            className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
+                          >
+                            <img 
+                              src={song.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100"} 
+                              alt=""
+                              className="w-8 h-8 object-cover rounded-lg border border-white/5 shrink-0"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="flex flex-col min-w-0">
+                              <h4 className={`text-[11px] font-bold truncate leading-snug ${
+                                isCurrentlyPlaying ? "text-amber-400" : "text-white/80"
+                              }`}>
+                                {song.title}
+                              </h4>
+                              <p className="text-[10px] text-white/40 truncate">
+                                {song.author || "Unknown Artist"}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Action Items */}
+                          <div className="flex items-center gap-1.5 shrink-0 pl-2">
+                            {/* Source Platform Badge */}
+                            {song.originalUrl?.includes("youtube") || song.originalUrl?.includes("youtu.be") ? (
+                              <span className="text-[8px] font-black tracking-wider text-red-500 bg-red-500/10 border border-red-500/20 px-1 py-0.5 rounded-md uppercase select-none">YT</span>
+                            ) : song.originalUrl?.includes("facebook") || song.originalUrl?.includes("fb") ? (
+                              <span className="text-[8px] font-black tracking-wider text-blue-400 bg-blue-500/10 border border-blue-500/20 px-1 py-0.5 rounded-md uppercase select-none">FB</span>
+                            ) : song.originalUrl?.includes("nhaccuatui") ? (
+                              <span className="text-[8px] font-black tracking-wider text-teal-400 bg-teal-500/10 border border-teal-500/20 px-1 py-0.5 rounded-md uppercase select-none">NCT</span>
+                            ) : (
+                              <span className="text-[8px] font-black tracking-wider text-amber-400 bg-amber-400/10 border border-amber-400/20 px-1 py-0.5 rounded-md uppercase select-none">URL</span>
+                            )}
+
+                            {/* TAP / SHARE TOGGLE BUTTON */}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleShareTrack(song);
+                              }}
+                              className={`p-1 hover:bg-white/10 rounded-lg transition-all ${
+                                isShared 
+                                  ? "bg-amber-400/10 border border-amber-400/35 text-amber-400" 
+                                  : "text-white/35 hover:text-amber-400"
+                              }`}
+                              title={isShared ? "Shared (Click to Unshare/Delete)" : "Click to Share with Community"}
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                            </button>
+                            
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setRecentSongs(prev => prev.filter(s => s.id !== song.id));
+                              }}
+                              className="p-1 hover:bg-white/10 text-white/35 hover:text-red-400 rounded-lg transition-all"
+                              title="Delete from Queue"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
+          )}
+
+          {playlistTab === "community" && (
+            <div className={`flex flex-col gap-3 text-white/90 pb-8 ${
+              isCompact 
+                ? "flex-1 overflow-y-auto pr-1 min-h-0 scrollbar-thin scrollbar-thumb-white/10" 
+                : "h-auto w-full"
+            }`}>
+              
+              {/* Simplified Community Tab Header */}
+              <div className="flex items-center justify-between border-b border-white/5 pb-2 shrink-0">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-black tracking-widest text-[#E0E2E8] uppercase flex items-center gap-1.5">
+                      <Waves className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                      Community Lounge
+                    </h3>
+                    <button
+                      onClick={() => isAdmin ? setIsAdmin(false) : setShowAdminPin(!showAdminPin)}
+                      className={`p-1 rounded-md transition-colors ${isAdmin ? "bg-amber-400/20 text-amber-400" : "text-white/20 hover:text-white/50"}`}
+                      title={isAdmin ? "Exit Admin Mode" : "Admin Access"}
+                    >
+                      <Lock className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <p className="text-[10px] text-white/30 font-semibold tracking-wide">
+                    Tap any shared track icon to play immediately
+                  </p>
+                </div>
+                
+                {showAdminPin && !isAdmin ? (
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (adminPinInput === "311") {
+                        setIsAdmin(true);
+                        setShowAdminPin(false);
+                        setAdminPinInput("");
+                      } else {
+                        setAdminPinInput("");
+                      }
+                    }}
+                    className="flex items-center gap-1"
+                  >
+                    <input
+                      type="password"
+                      value={adminPinInput}
+                      onChange={(e) => setAdminPinInput(e.target.value)}
+                      placeholder="PIN"
+                      className="w-14 bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white text-center focus:outline-none focus:border-amber-400/50"
+                      autoFocus
+                    />
+                    <button type="submit" className="text-[10px] font-bold bg-amber-400/10 text-amber-400 px-2 py-0.5 rounded border border-amber-400/20">OK</button>
+                  </form>
+                ) : communityTracks.length > 0 && (
+                  <div className="text-[9px] font-extrabold text-amber-400/80 bg-amber-400/5 border border-amber-400/10 px-2 py-0.5 rounded-full select-none uppercase tracking-wider">
+                    {communityTracks.length} Shared
+                  </div>
+                )}
+              </div>
+
+              {/* Grid of Shared Tracks (Is Icon-Only Catalog) */}
+              {communityTracks.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 bg-white/[0.01] border border-dashed border-white/5 rounded-3xl text-center px-4">
+                  <Music className="w-6 h-6 text-white/20 mb-2" />
+                  <p className="text-xs text-white/50 font-bold uppercase tracking-wider">Lounge stands empty</p>
+                  <p className="text-[10px] text-white/30 max-w-[240px] mt-1 leading-normal">
+                    Go to the Albums tab and click the Share icon next to any of your fetched songs to publish them here!
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3.5 overflow-y-auto max-h-[380px] pr-1 pb-4 scrollbar-thin scrollbar-thumb-white/10 Content-start">
+                  {communityTracks.map((track) => {
+                    const isActive = currentSong?.originalUrl === track.originalUrl;
+                    
+                    return (
+                      <div
+                        key={track.id}
+                        onClick={() => playCommunityTrack(track)}
+                        className={`group relative aspect-square rounded-[18px] overflow-hidden cursor-pointer border transition-all duration-300 ${
+                          isActive 
+                            ? "border-amber-400 shadow-[0_0_15px_rgba(245,158,11,0.25)]" 
+                            : "border-white/5 hover:border-white/20 hover:scale-102"
+                        }`}
+                        title={`${track.title} — ${track.author || "Unknown Artist"}`}
+                      >
+                        {/* Album Cover */}
+                        <img 
+                          src={track.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100"} 
+                          alt={track.title}
+                          className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                          referrerPolicy="no-referrer"
+                        />
+
+                        {/* Hover details overlay */}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/85 to-transparent p-2 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                          <p className="text-[10px] font-bold text-amber-300 truncate leading-tight">{track.title}</p>
+                          <p className="text-[9px] text-white/50 truncate font-semibold mt-0.5">{track.author || "Unknown Artist"}</p>
+                          <p className="text-[8px] text-[#E0E2E8]/40 font-bold uppercase tracking-widest mt-1 truncate">By {track.sharedBy}</p>
+                        </div>
+
+                        {/* Active stream indicator / play button */}
+                        <div className={`absolute top-2 right-2 w-5 h-5 rounded-full bg-black/70 flex items-center justify-center border border-white/10 ${
+                          isActive ? "opacity-100 animate-pulse" : "opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                        }`}>
+                          {isActive && isPlaying ? (
+                            <AudioLines className="w-3 h-3 text-amber-400 animate-pulse" />
+                          ) : (
+                            <Play className="w-2.5 h-2.5 text-amber-400 fill-amber-400 ml-0.5" />
+                          )}
+                        </div>
+
+                        {/* Mini likes badge */}
+                        <div 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleLikeCommunityTrack(track.id, e);
+                          }}
+                          className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md bg-black/60 border border-white/5 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity active:scale-90"
+                        >
+                          <Heart className="w-2.5 h-2.5 text-red-500 fill-red-500" />
+                          <span className="text-[8px] font-bold text-white/80">{track.likes || 0}</span>
+                        </div>
+
+                        {/* Admin Delete Action */}
+                        {isAdmin && (
+                          <div
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                await deleteDoc(doc(db, "shared_tracks", track.id));
+                              } catch (error) {
+                                console.error("Failed to delete track:", error);
+                              }
+                            }}
+                            className="absolute top-2 left-2 px-1.5 py-1.5 rounded-md bg-red-500/80 border border-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity active:scale-90 shadow-lg"
+                            title="Delete track"
+                          >
+                            <Trash2 className="w-3 h-3 text-white" />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -4594,10 +5157,21 @@ export default function App() {
               {/* Form Input */}
               <form onSubmit={handleSaveCookies} className="flex flex-col gap-3 flex-1 min-h-0">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-black tracking-wider text-amber-400 uppercase flex items-center gap-1.5" htmlFor="cookies_textarea">
-                    <Key className="w-3.5 h-3.5" />
-                    Paste exported cookies
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-[10px] font-black tracking-wider text-amber-400 uppercase flex items-center gap-1.5" htmlFor="cookies_textarea">
+                      <Key className="w-3.5 h-3.5" />
+                      Paste exported cookies
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handlePasteCookies}
+                      className="flex items-center gap-1 px-2 py-0.5 bg-amber-400/10 hover:bg-amber-400/20 active:scale-95 text-amber-400 font-extrabold text-[9px] uppercase tracking-wider rounded-lg border border-amber-400/20 transition-all select-none cursor-pointer"
+                      title="Paste from clipboard"
+                    >
+                      <Clipboard className="w-3 h-3" />
+                      Paste
+                    </button>
+                  </div>
                   <a
                     href="https://github.com/yt-dlp/yt-dlp#how-do-i-pass-cookies-to-yt-dlp"
                     target="_blank"
@@ -4687,6 +5261,25 @@ export default function App() {
           playsInline
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
+          onError={(e) => {
+            const err = (e.target as HTMLAudioElement).error;
+            if (err) {
+              console.warn("Audio element error event:", err.code, err.message);
+              // Ignore MEDIA_ERR_ABORTED (code 1) or when audio is intentionally cleared
+              if (err.code === 1 || !audioUrl) {
+                return;
+              }
+              setTiktokError(`Failed to play audio source. The track might be age-restricted, unavailable, or unsupported.`);
+              setIsPlaying(false);
+              setDuration(0);
+              setAudioUrl("");
+              // Optional: remove bad track from list
+              if (currentSong) {
+                setRecentSongs(prev => prev.filter(s => s.id !== currentSong.id));
+                setCurrentSong(null);
+              }
+            }
+          }}
           onTimeUpdate={handleTimeUpdate}
           onEnded={() => {
             handleEnded();
