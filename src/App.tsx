@@ -2068,11 +2068,7 @@ export default function App() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("all");
-  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
-  const [lastMutedVolume, setLastMutedVolume] = useState(1);
-  const volStartYRef = useRef(0);
-  const volStartValRef = useRef(0);
-  const isMutingClickRef = useRef(true);
+  // Volume logic removed
   const [isAIAnalyzing, setIsAIAnalyzing] = useState(false);
   
   const [duration, setDuration] = useState<number | null>(null);
@@ -2184,6 +2180,31 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    const initCookies = async () => {
+      const localCookies = localStorage.getItem("youtubeCookies");
+      if (localCookies) {
+        setCookiesInputText(localCookies);
+        try {
+          const saveRes = await fetch("/api/youtube/cookies", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cookiesText: localCookies })
+          });
+          const saveData = await saveRes.json();
+          if (saveData.success && saveData.status) {
+            setCookiesStatus(saveData.status);
+          }
+        } catch(e) {
+          console.warn("Failed to auto-restore cookies from localStorage", e);
+          refreshCookiesStatus();
+        }
+      } else {
+        refreshCookiesStatus();
+      }
+    };
+    initCookies();
+  }, []);
   const handlePasteCookies = async () => {
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.readText) {
@@ -2207,8 +2228,12 @@ export default function App() {
     }
   };
 
-  const handleSaveCookies = async (e?: React.FormEvent) => {
+  const handleSaveCookies = async (e?: React.FormEvent, overrideText?: string) => {
     if (e) e.preventDefault();
+    
+    // Determine the actual string to save
+    const textToSave = overrideText !== undefined ? overrideText : cookiesInputText;
+    
     setIsSavingCookies(true);
     setSaveCookiesMessage("");
     setSaveCookiesError("");
@@ -2218,7 +2243,7 @@ export default function App() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ cookiesText: cookiesInputText })
+        body: JSON.stringify({ cookiesText: textToSave })
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -2226,8 +2251,11 @@ export default function App() {
       }
       setSaveCookiesMessage(data.message);
       setCookiesStatus(data.status);
-      if (!cookiesInputText.trim()) {
-        setSaveCookiesMessage("Cookies cleared successfully.");
+      if (!textToSave.trim()) {
+        setSaveCookiesMessage("Reset to default cookies.");
+        localStorage.removeItem("youtubeCookies");
+      } else {
+        localStorage.setItem("youtubeCookies", textToSave);
       }
     } catch (err: any) {
       setSaveCookiesError(err.message || "An unexpected error occurred while saving cookies.");
@@ -2589,28 +2617,65 @@ export default function App() {
   const [showAddAlbum, setShowAddAlbum] = useState(false);
   const [newAlbumInput, setNewAlbumInput] = useState("");
 
+  const activePreloadUrlRef = useRef<string | null>(null);
+
   const playRecentSong = (song: any) => {
-    setIsPlaying(false);
-    if (audioRef.current) {
-      audioRef.current.pause();
+    // Determine target URL
+    let playUrl = song.audioUrl;
+    if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
+      playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
     }
+
+    if (!playUrl) return;
+
+    shouldAutoPlayRef.current = true;
     
-    // Slight artificial delay to transition smoothly and prevent freezing/lag especially in HD mode
-    setTimeout(() => {
-      shouldAutoPlayRef.current = true;
-      setCurrentSong(song);
-      
-      let playUrl = song.audioUrl;
-      // On-the-fly upgrade for legacy/cached NCT streams to use the new proxy stream endpoint
-      if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
-        playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
-      }
-      
-      setAudioUrl(playUrl);
-      setFileName(song.title || "TikTok Audio");
-      setTiktokUrl(song.originalUrl || "");
-      resumeContext();
-    }, 1500);
+    // If we're already playing something smoothly, let's preload in background!
+    if (isPlaying && audioUrl && audioRef.current && !audioRef.current.paused) {
+         setIsAIAnalyzing(true);
+         activePreloadUrlRef.current = playUrl;
+
+         const preloader = new window.Audio();
+         preloader.src = playUrl;
+         preloader.preload = "auto";
+         
+         const handleReady = () => {
+             if (activePreloadUrlRef.current !== playUrl) return;
+             
+             setCurrentSong(song);
+             setAudioUrl(playUrl);
+             setFileName(song.title || "TikTok Audio");
+             setTiktokUrl(song.originalUrl || "");
+             resumeContext();
+             setIsAIAnalyzing(false);
+             preloader.removeEventListener("canplay", handleReady);
+         };
+
+         const handleError = () => {
+             if (activePreloadUrlRef.current !== playUrl) return;
+             
+             // Fallback: immediately switch
+             setCurrentSong(song);
+             setAudioUrl(playUrl);
+             setFileName(song.title || "TikTok Audio");
+             setTiktokUrl(song.originalUrl || "");
+             resumeContext();
+             setIsAIAnalyzing(false);
+         };
+
+         preloader.addEventListener("canplay", handleReady);
+         preloader.addEventListener("error", handleError);
+         
+         // Trigger browser network fetch if possible locally
+         preloader.load();
+    } else {
+        // Fallback: immediately switch
+        setCurrentSong(song);
+        setAudioUrl(playUrl);
+        setFileName(song.title || "TikTok Audio");
+        setTiktokUrl(song.originalUrl || "");
+        resumeContext();
+    }
   };
 
   const deleteRecentSong = (id: string, e: React.MouseEvent) => {
@@ -2934,8 +2999,7 @@ export default function App() {
           return [newSong, ...filtered].slice(0, 50);
         });
         
-        setCurrentSong(newSong);
-        resumeContext();
+        playRecentSong(newSong);
         setTiktokUrl(""); 
       } catch(err: any) {
         setTiktokError(err.message || "Failed to fetch media audio. Video/track might be restricted.");
@@ -3086,13 +3150,8 @@ export default function App() {
       }
       if (data && data.data && (data.data.music || data.data.play)) {
         const urlToFetch = data.data.music || data.data.play;
-        
-        // Use a proxy URL if the raw URL requires referer, tikwm usually allows direct audio src
-        shouldAutoPlayRef.current = true;
-        setAudioUrl(urlToFetch);
         const songTitle = oembedData.title || data.data.title || "TikTok Audio";
-        setFileName(songTitle);
-
+        
         const newSong = {
           id: data.data.id || Date.now().toString(),
           title: songTitle,
@@ -3108,7 +3167,7 @@ export default function App() {
           return [newSong, ...filtered].slice(0, 50); // increased limit
         });
         
-        resumeContext();
+        playRecentSong(newSong);
         setTiktokUrl(""); // clear input
       } else {
         setTiktokError(data?.msg || "Could not extract audio from this link. Make sure it's public.");
@@ -3198,24 +3257,7 @@ export default function App() {
     return false;
   });
 
-  const [masterVolume, setMasterVolume] = useState(() => {
-    try {
-      const saved = localStorage.getItem("acoustic_presence_volume");
-      return saved ? parseFloat(saved) : 1.0;
-    } catch {
-      return 1.0;
-    }
-  });
-
-  useEffect(() => {
-    localStorage.setItem("acoustic_presence_volume", String(masterVolume));
-    if (audioRef.current) {
-       audioRef.current.volume = masterVolume;
-    }
-    if (masterGainRef.current) {
-       masterGainRef.current.gain.value = masterVolume;
-    }
-  }, [masterVolume]);
+  // master volume removed as requested to fix muting
 
   const [countdown, setCountdown] = useState<{
     type: "HD" | "BG";
@@ -3525,9 +3567,9 @@ export default function App() {
         }
       }
       
-      // Combine with masterVolume if not in the middle of a countdown fade!
+      // Apply fade if not in the middle of a countdown fade!
       if (!countdown || countdown.isCompleting) {
-          const finalVol = Math.max(0, Math.min(1, targetVolume * masterVolume));
+          const finalVol = Math.max(0, Math.min(1, targetVolume));
           audioRef.current.volume = finalVol;
           if (masterGainRef.current) {
              masterGainRef.current.gain.value = finalVol;
@@ -3969,58 +4011,8 @@ export default function App() {
                     </button>
                   </div>
 
-                  {/* Right: Volume Button with Dropdown slider */}
+                  {/* Empty Right container to balance flex space */}
                   <div className="relative flex justify-center w-12 border-none">
-                     <button
-                       className={`transition-all rounded-full p-2 flex items-center justify-center select-none touch-none ${showVolumeSlider ? 'text-amber-400 bg-white/10 scale-90' : 'text-white/40 hover:text-white/80 active:scale-90'}`}
-                       onPointerDown={(e) => {
-                          isMutingClickRef.current = true;
-                          volStartYRef.current = e.clientY;
-                          volStartValRef.current = masterVolume;
-                          setShowVolumeSlider(true);
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                       }}
-                       onPointerMove={(e) => {
-                          if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-                          const deltaY = volStartYRef.current - e.clientY;
-                          if (Math.abs(deltaY) > 5) {
-                             isMutingClickRef.current = false;
-                          }
-                          const range = 70; // 70px for full volume range
-                          let newVal = volStartValRef.current + deltaY / range;
-                          newVal = Math.max(0, Math.min(1, newVal));
-                          setMasterVolume(newVal);
-                       }}
-                       onPointerUp={(e) => {
-                          e.currentTarget.releasePointerCapture(e.pointerId);
-                          if (isMutingClickRef.current) {
-                             if (masterVolume > 0) {
-                                setLastMutedVolume(masterVolume);
-                                setMasterVolume(0);
-                             } else {
-                                setMasterVolume(lastMutedVolume === 0 ? 0.5 : lastMutedVolume);
-                             }
-                          }
-                          setTimeout(() => setShowVolumeSlider(false), 800);
-                       }}
-                       onPointerCancel={(e) => {
-                           e.currentTarget.releasePointerCapture(e.pointerId);
-                           setShowVolumeSlider(false);
-                       }}
-                     >
-                       {masterVolume === 0 ? (
-                          <VolumeX className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
-                       ) : (
-                          <Speaker className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
-                       )}
-                     </button>
-                     {/* Custom Slider overlay */}
-                     <div className={`absolute pointer-events-none bottom-[110%] flex items-center justify-center transition-all duration-300 origin-bottom z-50 ${showVolumeSlider ? 'opacity-100 scale-100 translate-y-0' : 'opacity-0 scale-75 translate-y-4'}`} style={{ width: '40px', height: '70px' }}>
-                           <div className="relative w-1.5 h-full bg-white/10 rounded-full flex flex-col justify-end items-center overflow-visible shadow-[inset_0_0_5px_rgba(0,0,0,0.5)]">
-                              <div className="absolute bottom-0 w-full bg-amber-500 rounded-full" style={{ height: `${masterVolume * 100}%` }} />
-                              <div className="absolute w-3 h-3 bg-white rounded-full shadow-[0_0_12px_rgba(245,158,11,0.9)]" style={{ bottom: `${masterVolume * 100}%`, transform: 'translateY(50%)' }} />
-                           </div>
-                     </div>
                   </div>
                 </div>
 
@@ -5400,7 +5392,7 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       setCookiesInputText("");
-                      handleSaveCookies();
+                      handleSaveCookies(undefined, "");
                     }}
                     disabled={isSavingCookies}
                     className="flex-1 px-4 py-3 bg-zinc-900 border border-white/5 hover:bg-zinc-800 disabled:opacity-40 text-rose-400 hover:text-rose-300 font-bold text-xs rounded-xl transition-all"
