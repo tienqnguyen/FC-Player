@@ -3792,35 +3792,45 @@ export default function App() {
 
        {countdown && (
         <div 
-          className={`fixed top-6 left-1/2 -translate-x-1/2 bg-amber-500/95 backdrop-blur-md text-black px-6 py-3 rounded-full z-[100] text-xs font-black uppercase tracking-widest flex items-center justify-center shadow-[0_12px_40px_rgba(245,158,11,0.5)] border border-amber-400 transition-all duration-[1000ms] ease-out min-w-[200px] ${
-            countdown.visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-95 -translate-y-2 pointer-events-none"
+          className={`fixed top-4 sm:top-6 left-1/2 -translate-x-1/2 bg-[#0E0F14]/95 backdrop-blur-md text-[#E0E2E8] px-4 py-2 rounded-full z-[100] text-[10px] sm:text-xs font-semibold uppercase tracking-wider flex items-center justify-center border border-white/10 shadow-[0_12px_30px_rgba(0,0,0,0.8)] transition-all duration-[600ms] ease-out select-none ${
+            countdown.visible ? "opacity-100 scale-100 translate-y-0" : "opacity-0 scale-90 -translate-y-4 pointer-events-none"
           }`}
         >
-          {countdown.isCompleting ? (
-            <>
-              <span className="absolute left-4 flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75 animate-ping"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600"></span>
-              </span>
-              <span className="font-sans font-bold text-[10px] text-center w-full">
-                {countdown.type === "HD"
-                  ? `Lossless HD ${countdown.targetValue ? "Activated" : "Deactivated"}!`
-                  : `iOS BG Mode ${countdown.targetValue ? "Enabled" : "Disabled"}!`}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="absolute left-4 flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-black opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-black"></span>
-              </span>
-              <span className="font-mono text-[10px] text-center w-full">
-                {countdown.type === "HD" 
-                  ? `${countdown.targetValue ? "Activating" : "Deactivating"} Lossless HD in ${countdown.secondsLeft}s`
-                  : `${countdown.targetValue ? "Enabling" : "Disabling"} iOS BG Mode in ${countdown.secondsLeft}s`}
-              </span>
-            </>
-          )}
+          <div className="flex items-center gap-2">
+            {countdown.isCompleting ? (
+              <>
+                <span className="flex h-1.5 w-1.5 relative shrink-0">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75 animate-ping"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                </span>
+                <span className="font-mono text-[9px] sm:text-[10px] text-emerald-400 font-extrabold tracking-widest shrink-0">
+                  {countdown.type === "HD" ? "HD OK" : "BG OK"}
+                </span>
+                <span className="text-white/15 text-[8px] select-none shrink-0">|</span>
+                <span className="font-sans text-[10px] text-white/90 truncate max-w-[140px] sm:max-w-xs normal-case">
+                  {countdown.type === "HD"
+                    ? `Lossless HD Enabled`
+                    : `iOS BG Mode Active`}
+                </span>
+              </>
+            ) : (
+              <>
+                <span className="flex h-1.5 w-1.5 relative shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500"></span>
+                </span>
+                <span className="font-mono text-[9px] sm:text-[10px] text-amber-400 font-extrabold tracking-widest shrink-0">
+                  {countdown.type === "HD" ? "HD" : "BG PLAY"}
+                </span>
+                <span className="text-white/15 text-[8px] select-none shrink-0">|</span>
+                <span className="font-sans text-[10px] text-white/90 truncate max-w-[140px] sm:max-w-xs normal-case">
+                  {countdown.type === "HD" 
+                    ? `${countdown.targetValue ? "Activating" : "Deactivating"} in ${countdown.secondsLeft}s`
+                    : `${countdown.targetValue ? "Enabling" : "Disabling"} in ${countdown.secondsLeft}s`}
+                </span>
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -4773,22 +4783,22 @@ export default function App() {
               
               {/* Simplified Community Tab Header */}
               <div className="flex items-center justify-between border-b border-white/5 pb-2 shrink-0">
-                <div className="flex flex-col">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xs font-black tracking-widest text-[#E0E2E8] uppercase flex items-center gap-1.5">
-                      <Waves className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-                      Community Lounge
+                <div className="flex flex-col min-w-0 flex-1 mr-2">
+                  <div className="flex items-center gap-1.5">
+                    <h3 className="text-[11px] sm:text-xs font-black tracking-widest text-[#E0E2E8] uppercase flex items-center gap-1">
+                      <Waves className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-amber-400 animate-pulse shrink-0" />
+                      Community
                     </h3>
                     <button
                       onClick={() => isAdmin ? setIsAdmin(false) : setShowAdminPin(!showAdminPin)}
-                      className={`p-1 rounded-md transition-colors ${isAdmin ? "bg-amber-400/20 text-amber-400" : "text-white/20 hover:text-white/50"}`}
+                      className={`p-0.5 rounded-md transition-colors shrink-0 ${isAdmin ? "bg-amber-400/20 text-amber-400" : "text-white/20 hover:text-white/50"}`}
                       title={isAdmin ? "Exit Admin Mode" : "Admin Access"}
                     >
-                      <Lock className="w-3 h-3" />
+                      <Lock className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                     </button>
                   </div>
-                  <p className="text-[10px] text-white/30 font-semibold tracking-wide">
-                    Tap any shared track icon to play immediately
+                  <p className="text-[8px] sm:text-[10px] text-white/30 font-semibold tracking-wide leading-tight mt-0.5 truncate">
+                    Tap shared track to play
                   </p>
                 </div>
                 
@@ -4804,20 +4814,20 @@ export default function App() {
                         setAdminPinInput("");
                       }
                     }}
-                    className="flex items-center gap-1"
+                    className="flex items-center gap-1 shrink-0"
                   >
                     <input
                       type="password"
                       value={adminPinInput}
                       onChange={(e) => setAdminPinInput(e.target.value)}
                       placeholder="PIN"
-                      className="w-14 bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-[10px] text-white text-center focus:outline-none focus:border-amber-400/50"
+                      className="w-12 sm:w-14 bg-black/40 border border-white/10 rounded px-1 py-0.5 text-[9px] sm:text-[10px] text-white text-center focus:outline-none focus:border-amber-400/50"
                       autoFocus
                     />
-                    <button type="submit" className="text-[10px] font-bold bg-amber-400/10 text-amber-400 px-2 py-0.5 rounded border border-amber-400/20">OK</button>
+                    <button type="submit" className="text-[9px] sm:text-[10px] font-bold bg-amber-400/10 text-amber-400 px-1.5 py-0.5 rounded border border-amber-400/20">OK</button>
                   </form>
                 ) : communityTracks.length > 0 && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 sm:gap-2 shrink-0">
                     <button
                       onClick={() => {
                         const standardTracks = communityTracks.map(t => ({
@@ -4834,29 +4844,30 @@ export default function App() {
                           playRecentSong(standardTracks[0]);
                         }
                       }}
-                      className="text-[9px] font-extrabold text-black bg-amber-400 hover:bg-amber-300 px-2.5 py-0.5 rounded-full select-none uppercase tracking-wider transition-colors flex items-center gap-1 cursor-pointer"
+                      className="text-[9px] font-extrabold text-black bg-amber-400 hover:bg-amber-300 px-1.5 sm:px-2.5 py-1 rounded-full select-none uppercase tracking-wider transition-colors flex items-center justify-center gap-1 cursor-pointer h-6 sm:h-auto"
+                      title="Play All"
                     >
-                      <Play className="w-2.5 h-2.5 fill-black" />
-                      Play All
+                      <Play className="w-2.5 h-2.5 fill-black shrink-0" />
+                      <span className="hidden xs:inline">Play All</span>
                     </button>
-                    <div className="flex bg-white/[0.02] border border-white/5 rounded-md overflow-hidden">
+                    <div className="flex bg-white/[0.02] border border-white/5 rounded-md overflow-hidden shrink-0">
                       <button 
                         onClick={() => setCommunityViewMode("grid")}
-                        className={`p-1.5 transition-colors ${communityViewMode === "grid" ? "bg-amber-400/20 text-amber-400" : "text-white/30 hover:text-white/70"}`}
+                        className={`p-1 sm:p-1.5 transition-colors ${communityViewMode === "grid" ? "bg-amber-400/20 text-amber-400" : "text-white/30 hover:text-white/70"}`}
                         title="Grid View"
                       >
-                        <LayoutGrid className="w-3.5 h-3.5" />
+                        <LayoutGrid className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       </button>
                       <button 
                         onClick={() => setCommunityViewMode("list")}
-                        className={`p-1.5 transition-colors ${communityViewMode === "list" ? "bg-amber-400/20 text-amber-400" : "text-white/30 hover:text-white/70"}`}
+                        className={`p-1 sm:p-1.5 transition-colors ${communityViewMode === "list" ? "bg-amber-400/20 text-amber-400" : "text-white/30 hover:text-white/70"}`}
                         title="List View"
                       >
-                        <List className="w-3.5 h-3.5" />
+                        <List className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                       </button>
                     </div>
-                    <div className="text-[9px] font-extrabold text-amber-400/80 bg-amber-400/5 border border-amber-400/10 px-2 py-0.5 rounded-full select-none uppercase tracking-wider">
-                      {communityTracks.length} Shared
+                    <div className="text-[9px] font-extrabold text-amber-400/80 bg-amber-400/5 border border-amber-400/10 px-1.5 sm:px-2 py-1 rounded-full select-none uppercase tracking-wider shrink-0 flex items-center justify-center h-6 sm:h-auto min-w-[20px]">
+                      {communityTracks.length}<span className="hidden xs:inline">&nbsp;Shared</span>
                     </div>
                   </div>
                 )}
