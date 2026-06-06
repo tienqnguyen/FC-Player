@@ -1,0 +1,17 @@
+{
+  "name": "FC PLAYER",
+  "short_name": "FC PLAYER",
+  "description": "FC Mobile MP3 Player",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000"
+}

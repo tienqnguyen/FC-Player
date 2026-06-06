@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard
+  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List
 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
 import { db, auth, initAuth, handleFirestoreError, OperationType } from "./firebase";
@@ -27,6 +27,20 @@ const VISUALIZER_PALETTES = {
     peak: { r: 255, g: 255, b: 255 },
     shadow: "rgba(255, 255, 255, ",
   },
+};
+
+const FallbackImage = ({ src, alt, className, title }: any) => {
+  const [error, setError] = useState(false);
+  
+  if (!src || error) {
+    return (
+      <div className={`flex items-center justify-center bg-white/[0.03] border border-white/5 ${className}`} title={title}>
+        <span className="text-[10px] font-bold text-white/30 truncate px-1">{alt || "No Cover"}</span>
+      </div>
+    );
+  }
+  
+  return <img src={src} alt={alt} className={className} referrerPolicy="no-referrer" onError={() => setError(true)} title={title} />;
 };
 
 const Visualizer = ({
@@ -2335,6 +2349,7 @@ export default function App() {
 
   // Community Share & Real-time Sync states & functions
   const [communityTracks, setCommunityTracks] = useState<any[]>([]);
+  const [communityViewMode, setCommunityViewMode] = useState<"grid" | "list">("grid");
   const [firebaseUsernames, setFirebaseUsernames] = useState<any[]>([]);
   const [communityNickname, setCommunityNickname] = useState(() => {
     return localStorage.getItem("acoustic_presence_nickname") || "Acoustic Lover";
@@ -2575,19 +2590,27 @@ export default function App() {
   const [newAlbumInput, setNewAlbumInput] = useState("");
 
   const playRecentSong = (song: any) => {
-    shouldAutoPlayRef.current = true;
-    setCurrentSong(song);
-    
-    let playUrl = song.audioUrl;
-    // On-the-fly upgrade for legacy/cached NCT streams to use the new proxy stream endpoint
-    if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
-      playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
+    setIsPlaying(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
     }
     
-    setAudioUrl(playUrl);
-    setFileName(song.title || "TikTok Audio");
-    setTiktokUrl(song.originalUrl || "");
-    resumeContext();
+    // Slight artificial delay to transition smoothly and prevent freezing/lag especially in HD mode
+    setTimeout(() => {
+      shouldAutoPlayRef.current = true;
+      setCurrentSong(song);
+      
+      let playUrl = song.audioUrl;
+      // On-the-fly upgrade for legacy/cached NCT streams to use the new proxy stream endpoint
+      if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
+        playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
+      }
+      
+      setAudioUrl(playUrl);
+      setFileName(song.title || "TikTok Audio");
+      setTiktokUrl(song.originalUrl || "");
+      resumeContext();
+    }, 1500);
   };
 
   const deleteRecentSong = (id: string, e: React.MouseEvent) => {
@@ -2610,33 +2633,40 @@ export default function App() {
       return;
     }
 
-    // Proxy network files through our backend to force attachment disposition
-    // For YouTube, we need to pass the original YouTube URL
     let targetUrl = song.id?.toString().startsWith("yt_") ? song.originalUrl : song.audioUrl;
     
     // If the audio URL is already a proxy-stream link, extract the encoded URL for the download endpoint
     if (targetUrl && (targetUrl.startsWith("/api/proxy-stream") || targetUrl.includes("/api/proxy-stream"))) {
       try {
         const urlObj = new URL(targetUrl, window.location.origin);
-        const extractedUrl = urlObj.searchParams.get("url");
-        if (extractedUrl) {
-          targetUrl = extractedUrl;
-        }
-      } catch (err) {
-        console.warn("Could not parse proxy audio URL for download:", err);
-      }
+        let extractedUrl = urlObj.searchParams.get("url");
+        if (extractedUrl) targetUrl = extractedUrl;
+      } catch (err) {}
     }
     
-    // Construct the proxy download URL
     const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(song.title || "audio")}`;
 
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    // adding download attribute as a fallback
-    link.download = `${song.title || "audio"}.m4a`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const res = await fetch(downloadUrl);
+      if (!res.ok) throw new Error("Failed to fetch binary");
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `${song.title || "audio"}.m4a`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    } catch (err) {
+      // fallback
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `${song.title || "audio"}.m4a`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   const fetchAndPlayUserAlbum = async (username: string, loadMore = false, forceRefresh = false) => {
@@ -2864,7 +2894,12 @@ export default function App() {
         }
         
         if (!metadataRes.ok) {
-          throw new Error(data?.error || "Failed to extract track metadata. Link might be restricted or private.");
+          const isYouTube = urlToUse.includes("youtube.com") || urlToUse.includes("youtu.be");
+          let errMsg = data?.error || "Failed to extract track metadata. Link might be restricted or private.";
+          if (isYouTube && !errMsg.toLowerCase().includes("cookie")) {
+            errMsg += " — YouTube blocks fetching by IP. Go to Settings and add YouTube Cookies to fix this!";
+          }
+          throw new Error(errMsg);
         }
         
         shouldAutoPlayRef.current = true;
@@ -4376,7 +4411,7 @@ export default function App() {
                         >
                           <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0 bg-black/40 flex items-center justify-center shadow-md relative group-hover:scale-105 transition-transform duration-300">
                             {song.cover ? (
-                              <img src={song.cover} className="w-full h-full object-cover" alt="cov" referrerPolicy="no-referrer" />
+                              <FallbackImage src={song.cover} alt="cov" className="w-full h-full object-cover" />
                             ) : (
                               <Music className="w-4 h-4 text-white/40" />
                             )}
@@ -4485,11 +4520,9 @@ export default function App() {
                 </div>
               </div>
 
-              <div className={`grid grid-cols-2 gap-3 pb-4 items-start content-start ${
-                isCompact 
-                  ? "flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10" 
-                  : ""
-              }`}>
+              {/* Layout constraint wrapper so Albums and Other Tracks scroll together */}
+              <div className={`flex flex-col pb-4 ${isCompact ? "flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10" : "flex-1 min-h-0"}`}>
+                <div className="grid grid-cols-2 gap-3 items-start content-start">
               {allAlbums.map((alb) => {
                 const normalizedUser = alb.username.toLowerCase();
                 const isActive = activeAlbumUsername === normalizedUser;
@@ -4503,16 +4536,17 @@ export default function App() {
                     onClick={() => {
                       fetchAndPlayUserAlbum(alb.username);
                     }}
-                    className={`group flex flex-col justify-between p-4 rounded-[24px] cursor-pointer border transition-all duration-500 relative overflow-hidden h-[120px] ${
+                    className={`group flex items-center justify-between p-2 rounded-[16px] cursor-pointer border transition-all duration-500 relative overflow-hidden h-[60px] ${
                       isActive
                         ? "bg-gradient-to-br from-amber-500/20 to-amber-900/10 border-amber-400/40 shadow-[0_8px_30px_rgb(245,158,11,0.15)]"
                         : "bg-gradient-to-br from-white/[0.04] to-white/[0.01] border-white/5 hover:from-white/[0.08] hover:to-white/[0.03] hover:border-white/20 hover:shadow-xl hover:shadow-black/50"
                     }`}
                   >
-                    <div className="flex items-center justify-between w-full mb-2">
-                       {/* Premium Circle Avatar Layout with Layered Zero-State Fallback */}
-                      <div className="relative w-10 h-10 rounded-full overflow-hidden shrink-0 shadow-lg border border-white/10 group-hover:border-white/30 transition-colors">
-                        <div className={`absolute inset-0 flex items-center justify-center font-black text-[12px] select-none uppercase transition-all duration-500 ${
+                    {/* Left part: Logo + Username / count */}
+                    <div className="flex items-center gap-2 min-w-0 flex-1 relative z-10">
+                      {/* Premium Circle Avatar Layout with Layered Zero-State Fallback */}
+                      <div className="relative w-8 h-8 rounded-full overflow-hidden shrink-0 shadow-lg border border-white/10 group-hover:border-white/30 transition-colors">
+                        <div className={`absolute inset-0 flex items-center justify-center font-black text-[10px] select-none uppercase transition-all duration-500 ${
                           isActive 
                             ? "bg-gradient-to-br from-amber-300 to-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.5)]" 
                             : "bg-gradient-to-br from-white/10 to-white/5 text-white/80 group-hover:from-white/20 group-hover:to-white/10 group-hover:text-white"
@@ -4520,14 +4554,10 @@ export default function App() {
                           {alb.avatarSub || alb.username.slice(0, 2).toUpperCase()}
                         </div>
                         {alb.avatar ? (
-                          <img 
+                          <FallbackImage 
                             src={alb.avatar} 
                             className="absolute inset-0 w-full h-full object-cover transition-all duration-500 rounded-full group-hover:scale-110" 
-                            alt="" 
-                            referrerPolicy="no-referrer"
-                            onError={(e) => {
-                              e.currentTarget.style.opacity = "0";
-                            }}
+                            alt=""
                           />
                         ) : (
                           <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent mix-blend-overlay"></div>
@@ -4540,82 +4570,83 @@ export default function App() {
                         {/* Luxury Glossy Sheen */}
                         <div className="absolute inset-0 bg-gradient-to-b from-white/20 to-transparent opacity-50 rounded-full pointer-events-none" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 40%, 0 20%)' }}></div>
                       </div>
-                      
-                      {/* Control Tray Inside Album Block (Refresh cached / Delete album) */}
-                      <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        {isCached && (
-                          <button
-                            onClick={() => {
-                              fetchAndPlayUserAlbum(alb.username, false, true);
-                            }}
-                            className={`p-1 hover:bg-white/10 rounded-full transition-all text-white/40 hover:text-amber-400 ${
-                              isFetchingTiktok && isActive ? "animate-spin text-amber-400" : ""
-                            }`}
-                            title="Force refresh database & recreate live audio proxy links"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                          </button>
-                        )}
 
-                        {/* TOGGLE SHARE CREATOR */}
-                        <button
-                          onClick={() => handleToggleShareUsername(alb)}
-                          className={`p-1 hover:bg-white/10 rounded-full transition-all ${
-                            isSharedInFirebase ? "text-amber-400 animate-bounce" : "text-white/40 hover:text-amber-400"
-                          }`}
-                          title={isSharedInFirebase ? "Shared in Community Database (Unshare)" : "Share Creator Username with Community"}
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                        </button>
+                      {/* Display name & Saved/Local count */}
+                      <div className="flex flex-col min-w-0">
+                        <h4 className={`text-[11px] font-black tracking-tight truncate leading-tight drop-shadow-sm ${
+                          isActive ? "text-amber-300 drop-shadow-[0_0_8px_rgba(252,211,77,0.4)]" : "text-white/90 group-hover:text-white"
+                        }`}>
+                          {alb.displayName || `@${alb.username}`}
+                        </h4>
                         
-                        {(alb.id.startsWith("alb_") || alb.isFromCommunity) && (
-                          <button
-                            onClick={() => {
-                              if (alb.isFromCommunity) {
-                                handleToggleShareUsername(alb);
-                              } else {
-                                setTiktokAlbums(prev => prev.filter(a => a.id !== alb.id));
-                                // Also wipe caches for clean state
-                                if (albumsCache[normalizedUser]) {
-                                  setAlbumsCache(prev => {
-                                    const updated = { ...prev };
-                                    delete updated[normalizedUser];
-                                    return updated;
-                                  });
-                                }
-                              }
-                            }}
-                            className="p-1 hover:bg-white/10 text-white/40 hover:text-red-400 rounded-full transition-all"
-                            title={alb.isFromCommunity ? "Delete from community database" : "Delete custom album & wipe links"}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                        {/* Dynamic Offline / Cached Indicator */}
+                        {isCached ? (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
+                            <p className="text-[9px] text-emerald-400/90 font-bold tracking-wider uppercase select-none truncate">
+                              Saved ({cacheData.songs.length})
+                            </p>
+                          </div>
+                        ) : (
+                          <p className="text-[9px] text-white/40 mt-0.5 font-semibold tracking-wider uppercase select-none group-hover:text-white/60 transition-colors truncate">
+                            {alb.isFromCommunity ? "Shared" : "Local"}
+                          </p>
                         )}
                       </div>
                     </div>
-                    
-                    <div className="flex flex-col min-w-0 mb-1 z-10 relative">
-                      <h4 className={`text-[13px] font-black tracking-tight truncate leading-snug drop-shadow-sm ${
-                        isActive ? "text-amber-300 drop-shadow-[0_0_8px_rgba(252,211,77,0.4)]" : "text-white/90 group-hover:text-white"
-                      }`}>
-                        {alb.displayName || `@${alb.username}`}
-                      </h4>
+
+                    {/* Right part: Control Tray Inside Album Block */}
+                    <div className="flex items-center gap-0.5 relative z-10" onClick={(e) => e.stopPropagation()}>
+                      {isCached && (
+                        <button
+                          onClick={() => {
+                            fetchAndPlayUserAlbum(alb.username, false, true);
+                          }}
+                          className={`p-0.5 hover:bg-white/10 rounded-md transition-all text-white/40 hover:text-amber-400 ${
+                            isFetchingTiktok && isActive ? "animate-spin text-amber-400" : ""
+                          }`}
+                          title="Force refresh database & recreate live audio proxy links"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                        </button>
+                      )}
+
+                      {/* TOGGLE SHARE CREATOR */}
+                      <button
+                        onClick={() => handleToggleShareUsername(alb)}
+                        className={`p-0.5 hover:bg-white/10 rounded-md transition-all ${
+                          isSharedInFirebase ? "text-amber-400 animate-bounce" : "text-white/40 hover:text-amber-400"
+                        }`}
+                        title={isSharedInFirebase ? "Shared in Community Database (Unshare)" : "Share Creator Username with Community"}
+                      >
+                        <Share2 className="w-3 h-3" />
+                      </button>
                       
-                      {/* Dynamic Offline / Cached Indicator */}
-                      {isCached ? (
-                        <div className="flex items-center gap-1.5 mt-1">
-                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
-                          <p className="text-[10px] text-emerald-400/90 font-bold tracking-wider uppercase select-none truncate">
-                            Saved ({cacheData.songs.length})
-                          </p>
-                        </div>
-                      ) : (
-                        <p className="text-[10px] text-white/40 mt-1 font-semibold tracking-wider uppercase select-none group-hover:text-white/60 transition-colors">
-                          {alb.isFromCommunity ? "Shared Creator" : "Local Creator"}
-                        </p>
+                      {(alb.id.startsWith("alb_") || alb.isFromCommunity) && (
+                        <button
+                          onClick={() => {
+                            if (alb.isFromCommunity) {
+                              handleToggleShareUsername(alb);
+                            } else {
+                              setTiktokAlbums(prev => prev.filter(a => a.id !== alb.id));
+                              // Also wipe caches for clean state
+                              if (albumsCache[normalizedUser]) {
+                                setAlbumsCache(prev => {
+                                  const updated = { ...prev };
+                                  delete updated[normalizedUser];
+                                  return updated;
+                                });
+                              }
+                            }
+                          }}
+                          className="p-0.5 hover:bg-white/10 text-white/40 hover:text-red-400 rounded-md transition-all"
+                          title={alb.isFromCommunity ? "Delete from community database" : "Delete custom album & wipe links"}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
                       )}
                     </div>
- 
+
                     {/* Silky glowing decoration */}
                     <div className={`absolute right-0 bottom-0 w-24 h-24 rounded-full blur-[25px] transition-all duration-700 pointer-events-none translate-x-8 translate-y-8 ${
                       isActive ? "bg-amber-500/20" : "bg-white/5 group-hover:bg-amber-400/10 group-hover:blur-[30px]"
@@ -4627,7 +4658,7 @@ export default function App() {
               </div>
 
               {/* Other Fetched Tracks (YouTube, Facebook, NCT, or custom URLs) */}
-              <div className="mt-3 border-t border-white/5 pt-3 shrink-0">
+              <div className="mt-5 border-t border-white/5 pt-3 shrink-0">
                 <div className="flex items-center justify-between mb-2 px-0.5">
                   <div className="flex flex-col">
                     <h3 className="text-xs font-black tracking-widest text-[#E0E2E8]/90 uppercase flex items-center gap-1.5">
@@ -4647,7 +4678,7 @@ export default function App() {
                     </p>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-2 max-h-[175px] overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10">
+                  <div className="flex flex-col gap-2">
                     {recentSongs.filter(s => s.originalUrl).map((song) => {
                       const isShared = communityTracks.some(t => t.originalUrl === song.originalUrl);
                       const isCurrentlyPlaying = currentSong?.originalUrl === song.originalUrl;
@@ -4666,11 +4697,10 @@ export default function App() {
                             onClick={() => playRecentSong(song)}
                             className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
                           >
-                            <img 
+                            <FallbackImage 
                               src={song.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100"} 
                               alt=""
                               className="w-8 h-8 object-cover rounded-lg border border-white/5 shrink-0"
-                              referrerPolicy="no-referrer"
                             />
                             <div className="flex flex-col min-w-0">
                               <h4 className={`text-[11px] font-bold truncate leading-snug ${
@@ -4730,6 +4760,7 @@ export default function App() {
                   </div>
                 )}
               </div>
+            </div>
             </div>
           )}
 
@@ -4808,6 +4839,22 @@ export default function App() {
                       <Play className="w-2.5 h-2.5 fill-black" />
                       Play All
                     </button>
+                    <div className="flex bg-white/[0.02] border border-white/5 rounded-md overflow-hidden">
+                      <button 
+                        onClick={() => setCommunityViewMode("grid")}
+                        className={`p-1.5 transition-colors ${communityViewMode === "grid" ? "bg-amber-400/20 text-amber-400" : "text-white/30 hover:text-white/70"}`}
+                        title="Grid View"
+                      >
+                        <LayoutGrid className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        onClick={() => setCommunityViewMode("list")}
+                        className={`p-1.5 transition-colors ${communityViewMode === "list" ? "bg-amber-400/20 text-amber-400" : "text-white/30 hover:text-white/70"}`}
+                        title="List View"
+                      >
+                        <List className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                     <div className="text-[9px] font-extrabold text-amber-400/80 bg-amber-400/5 border border-amber-400/10 px-2 py-0.5 rounded-full select-none uppercase tracking-wider">
                       {communityTracks.length} Shared
                     </div>
@@ -4825,10 +4872,88 @@ export default function App() {
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-3 sm:grid-cols-4 gap-3.5 overflow-y-auto max-h-[380px] pr-1 pb-4 scrollbar-thin scrollbar-thumb-white/10 Content-start">
+                <div className={`${communityViewMode === "grid" ? "grid grid-cols-3 sm:grid-cols-4" : "flex flex-col"} gap-3.5 overflow-y-auto max-h-[380px] pr-1 pb-4 scrollbar-thin scrollbar-thumb-white/10 Content-start`}>
                   {communityTracks.map((track) => {
                     const isActive = currentSong?.originalUrl === track.originalUrl;
                     
+                    if (communityViewMode === "list") {
+                      return (
+                        <div
+                          key={track.id}
+                          onClick={() => playCommunityTrack(track)}
+                          className={`group relative flex items-center gap-3 p-2.5 rounded-xl cursor-pointer border transition-all duration-300 ${
+                            isActive 
+                              ? "bg-amber-400/5 border-amber-400/50 shadow-[0_0_15px_rgba(245,158,11,0.1)]" 
+                              : "bg-white/[0.01] border-white/5 hover:bg-white/[0.03] hover:border-white/15"
+                          }`}
+                          title={`${track.title} — ${track.author || "Unknown Artist"}`}
+                        >
+                          {/* Album Cover */}
+                          <div className="relative w-12 h-12 flex-shrink-0 rounded-lg overflow-hidden border border-white/10">
+                            <FallbackImage 
+                              src={track.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100"} 
+                              alt={track.title}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className={`absolute inset-0 bg-black/50 flex items-center justify-center transition-opacity ${
+                              isActive ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                            }`}>
+                              {isActive && isPlaying ? (
+                                <AudioLines className="w-4 h-4 text-amber-400 animate-pulse" />
+                              ) : (
+                                <Play className="w-4 h-4 text-amber-400 fill-amber-400" />
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Song Details */}
+                          <div className="flex-1 min-w-0 pr-2">
+                            <h4 className={`text-xs font-bold leading-tight truncate ${isActive ? "text-amber-400" : "text-white"}`}>
+                              {track.title}
+                            </h4>
+                            <p className="text-[10px] text-white/50 truncate font-semibold mt-0.5">
+                              {track.author || "Unknown Artist"}
+                            </p>
+                            <p className="text-[9px] text-[#E0E2E8]/40 font-bold uppercase tracking-widest mt-1 truncate">
+                              Shared by {track.sharedBy}
+                            </p>
+                          </div>
+
+                          {/* Quick Actions */}
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleLikeCommunityTrack(track.id, e);
+                              }}
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-400 transition-colors active:scale-95 text-white/40"
+                              title="Like Track"
+                            >
+                              <Heart className="w-3.5 h-3.5 fill-current" />
+                              <span className="text-[10px] font-bold">{track.likes || 0}</span>
+                            </button>
+
+                            {isAdmin && (
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  try {
+                                    await deleteDoc(doc(db, "shared_tracks", track.id));
+                                  } catch (error) {
+                                    console.error("Failed to delete track:", error);
+                                  }
+                                }}
+                                className="p-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors active:scale-95"
+                                title="Delete track"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
                     return (
                       <div
                         key={track.id}
@@ -4841,11 +4966,10 @@ export default function App() {
                         title={`${track.title} — ${track.author || "Unknown Artist"}`}
                       >
                         {/* Album Cover */}
-                        <img 
+                        <FallbackImage 
                           src={track.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100"} 
                           alt={track.title}
                           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
-                          referrerPolicy="no-referrer"
                         />
 
                         {/* Hover details overlay */}
@@ -4963,7 +5087,7 @@ export default function App() {
                       </li>
                       <li className="flex items-start gap-1.5">
                         <span className="text-amber-400 font-bold shrink-0">3.</span>
-                        <span>Specify a custom name if desired, then tap <strong>"Add"</strong> in top-right.</span>
+                        <span>Confirm the icon is shown and the name is set to <strong>"FC PLAYER"</strong>, then tap <strong>"Add"</strong>.</span>
                       </li>
                     </ol>
                   </div>
@@ -5314,7 +5438,7 @@ export default function App() {
               // Optional: remove bad track from list
               if (currentSong) {
                 setRecentSongs(prev => prev.filter(s => s.id !== currentSong.id));
-                setCurrentSong(null);
+                setTimeout(() => handleNextSong(), 500);
               }
             }
           }}
