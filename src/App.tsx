@@ -1,8 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List
+  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List, X, Volume2
 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
+import StemStudio from "./components/StemStudio";
+import { separateStemsWithWebGpu, isWebGpuSupported } from "./utils/webgpuDsp";
+import audioBufferToWav from "audiobuffer-to-wav";
 import { db, auth, initAuth, handleFirestoreError, OperationType } from "./firebase";
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 
@@ -2071,6 +2074,19 @@ export default function App() {
   // Volume logic removed
   const [isAIAnalyzing, setIsAIAnalyzing] = useState(false);
   
+  // Stemmix states
+  const [stemmixStatus, setStemmixStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [separationMode, setSeparationMode] = useState<"webgpu" | "ai">("webgpu");
+  const [stemUrls, setStemUrls] = useState<{ vocals: string | null; drums: string | null; bass: string | null; guitar: string | null; piano: string | null; other: string | null } | null>(null);
+  const [stemmixError, setStemmixError] = useState("");
+  const [showStemmix, setShowStemmix] = useState(true);
+  // Audio elements for playback of stems
+  const stemsAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
+  const [stemsPlaying, setStemsPlaying] = useState(false);
+  const [stemsVolumes, setStemsVolumes] = useState<Record<string, number>>({
+    vocals: 1, drums: 1, bass: 1, guitar: 1, piano: 1, other: 1
+  });
+
   const [duration, setDuration] = useState<number | null>(null);
   const [sampleRate, setSampleRate] = useState<number | null>(null);
 
@@ -2373,7 +2389,103 @@ export default function App() {
     }
   };
 
-  const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community">("upnext");
+  const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search">("upnext");
+
+  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui">("youtube");
+  const [tiktokSearchQuery, setTiktokSearchQuery] = useState("");
+  const [tiktokSearchResults, setTiktokSearchResults] = useState<any[]>([]);
+  const [tiktokSearchError, setTiktokSearchError] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [recentSearches, setRecentSearches] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("acoustic_presence_recent_searches");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [isSearchingTiktok, setIsSearchingTiktok] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("acoustic_presence_recent_searches", JSON.stringify(recentSearches));
+  }, [recentSearches]);
+
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setShowSuggestions(false);
+    };
+    window.addEventListener("click", handleClickOutside);
+    return () => {
+      window.removeEventListener("click", handleClickOutside);
+    };
+  }, []);
+
+  const fetchSuggestions = async (query: string) => {
+    if (!query.trim()) {
+      setSuggestions([]);
+      return;
+    }
+    try {
+      const isYt = tiktokSearchType === "youtube";
+      const res = await fetch(`/api/search/suggest?yt=${isYt}&q=${encodeURIComponent(query)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSuggestions(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch suggestions", e);
+    }
+  };
+
+  const handleTiktokSearch = async (
+    e?: React.FormEvent,
+    isLoadMore = false,
+    typeOverride?: string,
+    queryOverride?: string
+  ) => {
+    if (e) e.preventDefault();
+    const activeType = typeOverride || tiktokSearchType;
+    const activeQuery = (queryOverride !== undefined ? queryOverride : tiktokSearchQuery).trim();
+    
+    if (!activeQuery) return;
+    
+    setIsSearchingTiktok(true);
+    setTiktokSearchError("");
+    setShowSuggestions(false);
+    
+    // Add to recent searches
+    setRecentSearches(prev => {
+      const filtered = prev.filter(t => t.toLowerCase() !== activeQuery.toLowerCase());
+      return [activeQuery, ...filtered].slice(0, 8);
+    });
+    
+    try {
+      let endpoint = "";
+      if (activeType === "youtube") {
+        endpoint = `/api/youtube/search?q=${encodeURIComponent(activeQuery)}`;
+      } else if (activeType === "nhaccuatui") {
+        endpoint = `/api/nct-search?q=${encodeURIComponent(activeQuery)}`;
+      } else {
+        // TikTok search ('sound' or 'video')
+        endpoint = `/api/tiktok/search?type=${activeType}&q=${encodeURIComponent(activeQuery)}`;
+      }
+      
+      const res = await fetch(endpoint);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Search request failed");
+      }
+      
+      const data = await res.json();
+      setTiktokSearchResults(data.videos || []);
+    } catch (err: any) {
+      console.error(err);
+      setTiktokSearchError(err.message || "Failed to find search results. Please try another query.");
+    } finally {
+      setIsSearchingTiktok(false);
+    }
+  };
 
   // Community Share & Real-time Sync states & functions
   const [communityTracks, setCommunityTracks] = useState<any[]>([]);
@@ -3192,6 +3304,27 @@ export default function App() {
     localStorage.setItem("acoustic_presence_active_preset_id", activePresetId);
   }, [activePresetId]);
 
+  const getYouTubeEmbedUrl = (url: string) => {
+    if (!url) return null;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    if (match && match[2].length === 11) {
+      return `https://www.youtube.com/embed/${match[2]}?autoplay=1&mute=0&enablejsapi=1`;
+    }
+    return null;
+  };
+
+  const getTikTokEmbedUrl = (url: string) => {
+    if (!url) return null;
+    const match = url.match(/\/video\/(\d+)/);
+    if (match) {
+      return `https://www.tiktok.com/embed/v2/${match[1]}`;
+    }
+    return null;
+  };
+
+  const isVideoIframePlaying = currentSong && !showVisualizer && (getYouTubeEmbedUrl(currentSong.originalUrl) || getTikTokEmbedUrl(currentSong.originalUrl));
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const shouldAutoPlayRef = useRef<boolean>(false);
   const progressBarRef1 = useRef<HTMLDivElement>(null);
@@ -3509,8 +3642,15 @@ export default function App() {
       audioRef.current.pause();
     } else {
       audioRef.current.play().catch(e => {
-        console.warn("Autoplay/Play blocked:", e);
+        if (e.name !== 'AbortError') {
+           console.warn("Autoplay/Play blocked:", e);
+        }
       });
+      // if stems are playing, pause them when user toggles play on master!
+      if (stemsPlaying) {
+          setStemsPlaying(false);
+          Object.values(stemsAudioRefs.current).forEach((a: any) => a.pause());
+      }
     }
     setIsPlaying(!isPlaying);
   };
@@ -3709,6 +3849,100 @@ export default function App() {
     };
   };
 
+  const handleSeparateStems = async (forceEngine?: "webgpu" | "ai") => {
+    if (!audioUrl) return;
+    setShowStemmix(true);
+    if (audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+    }
+    setStemUrls(null);
+    setStemmixStatus("loading");
+    setStemmixError("");
+
+    const activeEngine = forceEngine || separationMode;
+    console.log(`[Stemmix] Starting separation using engine: ${activeEngine}`);
+
+    if (activeEngine === "webgpu") {
+      try {
+        const support = await isWebGpuSupported();
+        if (!support) {
+          throw new Error("WebGPU is not supported or enabled in this browser. Please use 'AI Cloud' separation.");
+        }
+
+        console.log("[WebGPU] Fetching track buffer:", audioUrl);
+        const response = await fetch(audioUrl);
+        const arrayBuffer = await response.arrayBuffer();
+
+        console.log("[WebGPU] Decoding audio binary data...");
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+        console.log("[WebGPU] Executing 31-tap FIR filters & dynamic enhancers...");
+        const processedStems = await separateStemsWithWebGpu(decodedBuffer, ctx);
+
+        console.log("[WebGPU] Conversion to playable WAV stems in progress...");
+        const stemUrlsObj: any = {};
+
+        const keys = ["vocals", "bass", "drums", "melody", "other"] as const;
+        for (const key of keys) {
+          const buffer = processedStems[key];
+          const wavBuffer = audioBufferToWav(buffer);
+          const wavBlob = new Blob([wavBuffer], { type: "audio/wav" });
+          const blobUrl = URL.createObjectURL(wavBlob);
+
+          if (key === "melody") {
+            stemUrlsObj.guitar = blobUrl;
+            stemUrlsObj.piano = blobUrl;
+          } else {
+            stemUrlsObj[key] = blobUrl;
+          }
+        }
+
+        console.log("[WebGPU] Stems fully compiled client-side!");
+        setStemUrls(stemUrlsObj);
+        setStemmixStatus("ready");
+      } catch (err: any) {
+        console.error("[WebGPU error]", err);
+        setStemmixError(err.message || "WebGPU separation failed. Try selecting AI Cloud mode.");
+        setStemmixStatus("error");
+      }
+    } else {
+      try {
+        const res = await fetch("/api/stemmix", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audioUrl })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || "Failed to separate stems");
+        }
+        setStemUrls(data.stems);
+        setStemmixStatus("ready");
+      } catch (err: any) {
+        console.error(err);
+        setStemmixError(err.message);
+        setStemmixStatus("error");
+      }
+    }
+  };
+
+  useEffect(() => {
+    // Reset stems when song changes
+    setStemUrls(null);
+    setStemmixStatus("idle");
+    setShowStemmix(false);
+    if (stemsPlaying) {
+      setStemsPlaying(false);
+    }
+    Object.values(stemsAudioRefs.current).forEach((a: any) => {
+      a.pause();
+      a.removeAttribute('src');
+    });
+    stemsAudioRefs.current = {};
+  }, [audioUrl]);
+
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (touchStartRef.current === null) return;
     const touchEndX = e.changedTouches[0].clientX;
@@ -3876,15 +4110,31 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Single Page Layout */}
+      
+{/* Main Single Page Layout Container */}
       <div 
-        className={`w-full max-w-screen-md mx-auto flex flex-col relative z-20 px-1 lg:px-4 ${
+        className={`w-full mx-auto relative z-20 ${
           isCompact 
-            ? "h-full max-h-[100dvh] overflow-hidden pt-1 pb-1 flex-1" 
-            : "flex-1 overflow-y-auto h-full pb-10 custom-scrollbar pt-2"
+            ? showStemmix
+              ? "h-full max-h-[100dvh] overflow-hidden flex flex-col lg:grid lg:grid-cols-3 px-1 lg:px-4 pt-1 pb-1 flex-1 lg:gap-6"
+              : "h-full max-h-[100dvh] overflow-hidden flex flex-col px-1 lg:px-4 pt-1 pb-1 flex-1" 
+            : showStemmix
+              ? "w-full max-w-[1500px] flex-1 overflow-hidden h-full pb-10 grid grid-cols-3 px-4 pt-2 gap-6"
+              : "w-full max-w-[1500px] flex-1 overflow-hidden h-full pb-10 flex flex-row px-4 pt-2 gap-6 justify-center"
         }`}
       >
-        {/* Player Section */}
+        {/* Column 1 (Left Column) - Player & Playlist */}
+        <div className={`w-full flex flex-col ${
+          !isCompact 
+            ? (showStemmix
+                ? "col-span-1 h-full overflow-y-auto custom-scrollbar pr-2 gap-4" 
+                : "w-[500px] shrink-0 h-full overflow-y-auto custom-scrollbar pr-2 gap-4 mx-auto")
+            : showStemmix
+              ? "max-w-screen-md mx-auto flex-1 min-h-0 lg:col-span-1 lg:h-full lg:overflow-y-auto lg:custom-scrollbar lg:pr-2 lg:gap-4"
+              : "max-w-screen-md mx-auto flex-1 min-h-0"
+        }`}>
+          
+          {/* Player Section */}
         <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate sticky top-[0.5rem] z-[60] border border-white/10 overflow-hidden ${
           isCompact 
             ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)]" 
@@ -3934,11 +4184,37 @@ export default function App() {
                      isCompact={isCompact}
                      className="w-full h-full flex justify-center items-center relative overflow-hidden bg-black/95" 
                   />
-               ) : currentSong?.cover ? (
+               ) : (() => {
+                 const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;
+                 const ttUrl = currentSong ? getTikTokEmbedUrl(currentSong.originalUrl) : null;
+                 if (ytUrl && isPlaying) {
+                   return (
+                     <iframe 
+                       src={ytUrl} 
+                       title="YouTube Video Player"
+                       className="w-full h-full border-none absolute inset-0"
+                       allow="autoplay; clipboard-write; encrypted-media; picture-in-picture"
+                       allowFullScreen
+                     />
+                   );
+                 }
+                 if (ttUrl && isPlaying) {
+                   return (
+                     <iframe 
+                       src={ttUrl} 
+                       title="TikTok Video Player"
+                       className="w-full h-full border-none absolute inset-0"
+                       allow="autoplay; clipboard-write; encrypted-media; picture-in-picture"
+                       allowFullScreen
+                     />
+                   );
+                 }
+                 return currentSong?.cover ? (
                   <img src={currentSong.cover} alt="Cover" className="w-full h-full object-cover transition-opacity" />
                ) : (
                   <div className="w-full h-full flex items-center justify-center"><Music className={`text-white/20 ${isCompact ? "w-10 h-10" : "w-20 h-20"}`} /></div>
-               )}
+               );
+              })()}
             </div>
             )}
 
@@ -4040,6 +4316,14 @@ export default function App() {
                     title="Visualizer Mode"
                   >
                       <AudioWaveform className="w-5 h-5" />
+                  </button>
+                  
+                  <button 
+                    onClick={handleSeparateStems}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showStemmix ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Separate Audio Stems (Stemmix)"
+                  >
+                      <span className="font-black text-[11px] tracking-widest uppercase">STEMS</span>
                   </button>
 
                   <button 
@@ -4186,14 +4470,14 @@ export default function App() {
                    </div>
                </div>
             )}
-          </div>
+          </div> {/* End of Player Section */}
 
-        {/* Modern Tab Bar - UP NEXT & ALBUMS */}
-        <div className={`w-full max-w-lg mx-auto flex flex-col min-h-0 px-2 ${
-          isCompact 
-            ? "flex-1 overflow-hidden mt-3 pb-3" 
-            : "flex-1 shrink-0 mt-6 pb-6"
-        }`}>
+          {/* Integrated Playlist Section */}
+          <div className={`w-full max-w-lg mx-auto flex flex-col min-h-0 px-2 ${
+            isCompact 
+              ? `flex-1 overflow-hidden mt-3 pb-3 ${showStemmix ? "hidden lg:flex" : ""}` 
+              : "flex-1 shrink-0 mt-6 pb-6"
+          }`}>
           
           {/* Header tabs row */}
           <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 px-3 col-span-full">
@@ -4222,6 +4506,20 @@ export default function App() {
               >
                 Albums
                 {playlistTab === "albums" && (
+                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
+                )}
+              </button>
+
+              <button
+                onClick={() => setPlaylistTab("search")}
+                className={`text-[10px] sm:text-[12px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 flex-shrink-0 ${
+                  playlistTab === "search" 
+                    ? "text-white" 
+                    : "text-white/40 hover:text-white/70"
+                }`}
+              >
+                Search
+                {playlistTab === "search" && (
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
                 )}
               </button>
@@ -4766,6 +5064,384 @@ export default function App() {
             </div>
           )}
 
+          {playlistTab === "search" && (
+            <div className={`z-10 relative flex flex-col min-h-0 ${isCompact ? "flex-1 overflow-hidden" : ""}`}>
+              {/* Search Header */}
+              <div className="flex flex-col gap-3 mb-4 shrink-0">
+                <form onSubmit={handleTiktokSearch} className="flex flex-col gap-2.5">
+                  <div className="flex w-full sm:w-fit self-center gap-1.5 p-1 bg-black/40 rounded-xl border border-white/5 shrink-0 justify-between sm:justify-start">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTiktokSearchType("sound");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "sound");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                        tiktokSearchType === "sound"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <Music className="w-3 h-3" />
+                      Sound Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTiktokSearchType("video");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "video");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                        tiktokSearchType === "video"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <Film className="w-3 h-3" />
+                      TikTok Video
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTiktokSearchType("youtube");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "youtube");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                        tiktokSearchType === "youtube"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <span className="text-[8px] bg-red-500/20 border border-red-500/35 text-red-400 px-1 py-0.2 rounded font-black">YT</span>
+                      YouTube
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTiktokSearchType("nhaccuatui");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "nhaccuatui");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                        tiktokSearchType === "nhaccuatui"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <span className="text-[8px] bg-blue-500/20 border border-blue-500/35 text-blue-400 px-1 py-0.2 rounded font-black">NCT</span>
+                      Audio (NCT)
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2 relative">
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        placeholder={
+                          tiktokSearchType === "sound"
+                            ? "Search viral TikTok sounds/music names..."
+                            : tiktokSearchType === "video"
+                            ? "Search TikTok videos & post hashtags..."
+                            : tiktokSearchType === "nhaccuatui"
+                            ? "Search NhacCuaTui Vietnamese songs..."
+                            : "Search YouTube songs, covers or creators..."
+                        }
+                        value={tiktokSearchQuery}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setTiktokSearchQuery(val);
+                          fetchSuggestions(val);
+                        }}
+                        onFocus={() => {
+                          if (tiktokSearchQuery.trim()) setShowSuggestions(true);
+                        }}
+                        className="w-full bg-black/40 border border-white/5 rounded-xl px-3.5 py-2.5 text-[16px] md:text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/20 pl-9"
+                        disabled={isSearchingTiktok}
+                      />
+                      <Search className="w-4 h-4 text-white/30 absolute left-3 top-3.5" />
+                      {tiktokSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTiktokSearchQuery("");
+                            setTiktokSearchResults([]);
+                            setTiktokSearchError("");
+                            setSuggestions([]);
+                          }}
+                          className="absolute right-3 top-3 text-white/40 hover:text-white"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isSearchingTiktok || !tiktokSearchQuery.trim()}
+                      className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black font-extrabold text-xs px-5 rounded-xl transition-all flex items-center gap-1 shrink-0"
+                    >
+                      {isSearchingTiktok ? (
+                        <div className="w-3.5 h-3.5 border-2 border-black rounded-full border-t-transparent animate-spin" />
+                      ) : (
+                        "Search"
+                      )}
+                    </button>
+
+                    {/* Suggestions list */}
+                    {showSuggestions && suggestions.length > 0 && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900/95 border border-white/10 rounded-xl shadow-2xl z-[80] overflow-hidden backdrop-blur-md">
+                        {suggestions.map((sug, i) => (
+                          <div
+                            key={i}
+                            onClick={() => {
+                              setTiktokSearchQuery(sug);
+                              setShowSuggestions(false);
+                              handleTiktokSearch(undefined, false, tiktokSearchType, sug);
+                            }}
+                            className="px-3.5 py-2.5 hover:bg-white/5 text-xs text-white/80 hover:text-white cursor-pointer flex items-center gap-2 border-b border-white/[0.02] last:border-0"
+                          >
+                            <Search className="w-3 h-3 text-white/40" />
+                            {sug}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </form>
+
+                {/* Recent Searches */}
+                {recentSearches.length > 0 && (
+                  <div className="flex items-center gap-2 flex-wrap px-0.5">
+                    <span className="text-[9px] font-bold text-white/30 uppercase tracking-wider">Recent:</span>
+                    {recentSearches.map((term, idx) => (
+                      <div key={idx} className="flex items-center gap-1 bg-white/5 hover:bg-white/10 border border-white/[0.02] rounded-md pl-2 pr-1 py-0.5 text-[9px] text-white/70 transition-colors">
+                        <span
+                          className="cursor-pointer font-medium hover:text-amber-400"
+                          onClick={() => {
+                            setTiktokSearchQuery(term);
+                            handleTiktokSearch(undefined, false, tiktokSearchType, term);
+                          }}
+                        >
+                          {term}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRecentSearches(prev => prev.filter(t => t !== term));
+                          }}
+                          className="text-white/30 hover:text-red-400 p-0.5"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() => setRecentSearches([])}
+                      className="text-[9px] text-red-400/60 hover:text-red-400 uppercase font-bold tracking-widest ml-auto"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Error messages */}
+              {tiktokSearchError && (
+                <div className="mb-4 bg-red-500/10 border border-red-500/20 rounded-2xl p-3 text-center animate-in zoom-in-95 duration-250 shrink-0">
+                  <p className="text-red-400 text-xs font-medium leading-relaxed">{tiktokSearchError}</p>
+                </div>
+              )}
+
+              {/* Search Results */}
+              <div className={`flex flex-col gap-2 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent flex-1 overflow-y-auto ${
+                isCompact ? "" : "max-h-[350px]"
+              }`}>
+                {isSearchingTiktok && tiktokSearchResults.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-white/50 bg-white/[0.01] border border-white/5 rounded-3xl">
+                    <div className="w-6 h-6 border-2 border-amber-400 rounded-full border-t-transparent animate-spin mb-3" />
+                    <div className="text-[10px] font-black tracking-widest text-[#E0E2E8]/70 uppercase">Querying Databases...</div>
+                    <p className="text-[9px] text-white/30 mt-1 max-w-[200px] text-center leading-normal">
+                      Connecting to public index. This process will resolve proxy links.
+                    </p>
+                  </div>
+                ) : tiktokSearchResults.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 px-4 bg-white/[0.01] border border-white/[0.03] rounded-3xl text-center">
+                    <Search className="w-8 h-8 text-white/10 mb-2.5" />
+                    <div className="text-xs font-bold text-white/50 tracking-wider">
+                      {tiktokSearchQuery.trim() ? "No search results match query" : "Search TikTok/YouTube/NCT catalog"}
+                    </div>
+                    <p className="text-[10px] text-white/30 max-w-[240px] mt-1.5 leading-relaxed">
+                      Enter any track keywords, artist names, music aliases, or TikTok sounds, then press enter.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-1 px-1 shrink-0">
+                      <span className="text-[9px] font-black tracking-wider text-white/40 uppercase">
+                        Returned index ({tiktokSearchResults.length})
+                      </span>
+                    </div>
+
+                    {tiktokSearchResults.map((song: any) => {
+                      const isActive = currentSong?.originalUrl === song.url || currentSong?.id === song.id;
+                      return (
+                        <div
+                          key={song.id || song.url}
+                          onClick={() => {
+                            if (tiktokSearchType === "youtube") {
+                              const streamUrl = `/api/stream?url=${encodeURIComponent(song.url)}`;
+                              const newSong = {
+                                id: song.id,
+                                title: song.title,
+                                originalUrl: song.url,
+                                audioUrl: streamUrl,
+                                cover: song.cover,
+                                author: song.author,
+                                duration: song.duration,
+                                timestamp: Date.now()
+                              };
+                              setRecentSongs(prev => {
+                                const filtered = prev.filter(s => s.originalUrl !== song.url && s.id !== song.id);
+                                return [newSong, ...filtered].slice(0, 50);
+                              });
+                              playRecentSong(newSong);
+                            } else if (tiktokSearchType === "nhaccuatui") {
+                              // If NhacCuaTui proxy stream url is already loaded!
+                              const streamUrl = song.url.includes("api/proxy-stream") 
+                                ? song.url 
+                                : `/api/proxy-stream?url=${encodeURIComponent(song.url)}`;
+                              const newSong = {
+                                id: "nct_" + song.id,
+                                title: song.title,
+                                originalUrl: song.nctLink || `https://www.nhaccuatui.com/bai-hat/${song.id}.html`,
+                                audioUrl: streamUrl,
+                                cover: song.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=100",
+                                author: song.author,
+                                duration: song.duration,
+                                timestamp: Date.now()
+                              };
+                              setRecentSongs(prev => {
+                                const filtered = prev.filter(s => s.id !== newSong.id);
+                                return [newSong, ...filtered].slice(0, 50);
+                              });
+                              playRecentSong(newSong);
+                            } else {
+                              // TikTok type
+                              const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.id}`;
+                              const streamUrl = song.audioUrl || song.music || (song.music_info && song.music_info.play) || song.play;
+                              const songTitle = song.title || song.desc || "TikTok Audio";
+                              const coverArt = song.cover || song.origin_cover || (song.music_info && song.music_info.cover);
+                              const creator = song.author?.nickname || song.author || "TikTok Creator";
+                              
+                              if (!streamUrl) {
+                                // Fallback fetching direct link!
+                                setTiktokUrl(oembedUrl);
+                                setPlaylistTab("upnext");
+                                setTimeout(() => {
+                                  const fakeForm = { preventDefault: () => {} } as React.FormEvent;
+                                  handleTiktokFetch(fakeForm, oembedUrl);
+                                }, 50);
+                                return;
+                              }
+
+                              const newSong = {
+                                id: song.id,
+                                title: songTitle,
+                                originalUrl: oembedUrl,
+                                audioUrl: streamUrl,
+                                cover: coverArt,
+                                author: creator,
+                                duration: song.duration,
+                                timestamp: Date.now()
+                              };
+                              setRecentSongs(prev => {
+                                const filtered = prev.filter(s => s.originalUrl !== oembedUrl && s.id !== song.id);
+                                return [newSong, ...filtered].slice(0, 50);
+                              });
+                              playRecentSong(newSong);
+                            }
+                          }}
+                          className={`group flex items-center gap-3.5 p-2.5 rounded-2xl cursor-pointer border transition-all duration-300 ${
+                            isActive
+                              ? "bg-amber-400/5 border-amber-400/35"
+                              : "bg-white/[0.01] border-white/[0.03] hover:bg-white/[0.03] hover:border-white/10"
+                          }`}
+                        >
+                          <div className="w-10 h-10 rounded-xl overflow-hidden shrink-0 bg-black/40 flex items-center justify-center relative group-hover:scale-105 transition-transform">
+                            {song.cover || (song.music_info && song.music_info.cover) ? (
+                              <FallbackImage
+                                src={song.cover || (song.music_info && song.music_info.cover)}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <Music className="w-4 h-4 text-white/40" />
+                            )}
+                            {isActive && (
+                              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                {isPlaying ? (
+                                  <span className="flex gap-0.5 items-end h-3">
+                                    <span className="w-0.5 bg-amber-400 animate-[bounce_1s_infinite_100ms] h-full" />
+                                    <span className="w-0.5 bg-amber-400 animate-[bounce_1s_infinite_300ms] h-3/4" />
+                                    <span className="w-0.5 bg-amber-400 animate-[bounce_1s_infinite_500ms] h-1/2" />
+                                  </span>
+                                ) : (
+                                  <Play className="w-3" />
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <h4 className={`text-[11px] font-bold truncate leading-tight ${isActive ? "text-amber-400" : "text-white"}`}>
+                              {song.title || song.desc}
+                            </h4>
+                            <p className="text-[10px] text-white/40 truncate mt-0.5">
+                              {song.author?.nickname || song.author || "TikTok Creator"}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0 pl-1">
+                            {/* Source badges */}
+                            {tiktokSearchType === "youtube" ? (
+                              <span className="text-[8px] font-black tracking-wider text-red-500 bg-red-500/10 border border-red-500/20 px-1 py-0.5 rounded-md uppercase select-none">YT</span>
+                            ) : tiktokSearchType === "nhaccuatui" ? (
+                              <span className="text-[8px] font-black tracking-wider text-[#2cc0ff] bg-[#2cc0ff]/10 border border-[#2cc0ff]/20 px-1 py-0.5 rounded-md uppercase select-none">NCT</span>
+                            ) : (
+                              <span className="text-[8px] font-black tracking-wider text-white/45 bg-white/5 border border-white/10 px-1 py-0.5 rounded-md uppercase select-none">TT</span>
+                            )}
+
+                            {song.duration ? (
+                              <span className="text-[9px] font-mono text-white/40">{formatDurationDisplay(song.duration)}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
           {playlistTab === "community" && (
             <div className={`flex flex-col gap-3 text-white/90 pb-8 ${
               isCompact 
@@ -5219,7 +5895,37 @@ export default function App() {
 
         </div>
 
-        {/* YouTube Cookies Bot Bypass Configuration Modal */}
+        </div> {/* End of Column 1 (Left Column) */}
+
+        {/* Column 2 (Right Column) - Stem Studio */}
+        {showStemmix && (
+          <div className={`flex flex-col ${
+            !isCompact 
+              ? "col-span-2 h-full" 
+              : "w-full mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
+          } bg-[#0A0A0C]/95 backdrop-blur-xl rounded-[24px] border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
+            <StemStudio 
+               stemUrls={stemUrls} 
+               songTitle={currentSong?.title || "Untitled Track"}
+               originalDuration={duration || 0}
+               onClose={() => setShowStemmix(false)}
+               isEmbedded={true}
+               isCompactUI={isCompact}
+               stemmixStatus={stemmixStatus}
+               stemmixError={stemmixError}
+               onRetrySeparate={handleSeparateStems}
+               separationMode={separationMode}
+               onSetSeparationMode={(mode) => {
+                 setSeparationMode(mode);
+                 handleSeparateStems(mode);
+               }}
+            />
+          </div>
+        )}
+
+      </div> {/* End Main Single Page Layout Container */}
+
+      {/* YouTube Cookies Bot Bypass Configuration Modal */}
         {showSettingsModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-300" id="youtube_cookie_modal">
             <div className="relative w-full max-w-lg bg-[#0E1015]/95 border border-white/10 rounded-[24px] overflow-y-auto p-6 shadow-2xl shadow-black/80 flex flex-col gap-4 max-h-[95vh] sm:max-h-[90vh] scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
@@ -5424,6 +6130,7 @@ export default function App() {
           src={audioUrl || undefined}
           autoPlay
           playsInline
+          muted={!!isVideoIframePlaying}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           onError={(e) => {
@@ -5461,7 +6168,8 @@ export default function App() {
           crossOrigin="anonymous"
           className="hidden"
         />
+        
       </div>
-    </div>
   );
 }
+

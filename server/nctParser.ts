@@ -42,9 +42,15 @@ export function unflattenNuxtData(dataObj: any[]): any[] {
   }
 
   return Array.from(songsMap.values()).map(s => {
-    // Quality 128kbps is usually the first or standard
-    const q128 = s.streamURL.find((q: any) => q.type === "128") || s.streamURL[0];
-    const directAudioUrl = q128 ? q128.stream : "";
+    // Prefer FLAC/Lossless stream qualities, then 320, then 128, then fallback to first available
+    const flacQual = s.streamURL.find((q: any) => 
+      q.type === "flac" || 
+      q.type === "lossless" || 
+      (q.typeUI && q.typeUI.toLowerCase().includes("flac")) || 
+      (q.stream && q.stream.toLowerCase().includes(".flac"))
+    );
+    const selectedQual = flacQual || s.streamURL.find((q: any) => q.type === "320") || s.streamURL.find((q: any) => q.type === "128") || s.streamURL[0];
+    const directAudioUrl = selectedQual ? selectedQual.stream : "";
     
     // Wrap with proxy stream endpoint to bypass region blocks and allow CORS playback
     const proxiedAudioUrl = directAudioUrl ? `/api/proxy-stream?url=${encodeURIComponent(directAudioUrl)}` : "";

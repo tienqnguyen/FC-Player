@@ -1,0 +1,361 @@
+      >
+        {/* Main Column */}
+        <div className={`w-full max-w-screen-md mx-auto flex flex-col flex-1 ${!isCompact ? "overflow-y-auto custom-scrollbar pr-2" : "min-h-0"}`}>
+        
+        {/* Player Section */}
+        <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate sticky top-[0.5rem] z-[60] border border-white/10 overflow-hidden ${
+          isCompact 
+            ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)]" 
+            : "pt-4 pb-2 mb-4 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
+        }`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+            
+            {/* Dynamic Artwork Background */}
+            {currentSong?.cover && (
+               <div 
+                  className="absolute inset-0 -z-20 bg-center bg-cover blur-[50px] opacity-50 scale-[1.2] transition-all duration-1000 saturate-[1.5]"
+                  style={{ backgroundImage: `url(${currentSong.cover})` }}
+               />
+            )}
+            <div className="absolute inset-0 -z-10 bg-[#0A0B10]/50 backdrop-blur-[40px]" />
+            
+            {/* Cover Art / Visualizer */}
+            {uiLayoutMode !== "hidden" && (
+            <div 
+               onClick={!showVisualizer ? cycleVisualizer : undefined}
+               className={`transition-all duration-500 ease-out bg-black/40 overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border shrink-0 relative ${
+                 isCompact
+                   ? (showVisualizer && isVisualizerExpanded 
+                       ? 'w-[calc(100%-2.5rem)] h-[110px] md:h-[130px] rounded-[1rem] border-white/10 select-none mb-3' 
+                       : `w-[110px] h-[110px] md:w-[130px] md:h-[130px] rounded-[1.25rem] mb-3 ${showVisualizer ? 'border-white/10 select-none' : 'border-white/5 cursor-pointer hover:border-white/20'}`)
+                   : (showVisualizer && isVisualizerExpanded 
+                       ? 'w-[calc(100%-2.5rem)] h-[240px] md:h-[320px] rounded-[1.5rem] border-white/10 select-none mb-6' 
+                       : `w-[220px] h-[220px] md:w-[280px] md:h-[280px] rounded-[2rem] mb-6 ${showVisualizer ? 'border-white/10 select-none' : 'border-white/5 cursor-pointer hover:border-white/20'}`)
+               } ${isPlaying && !showVisualizer ? 'scale-100' : 'scale-[0.98]'}`}
+            >
+               {showVisualizer ? (
+                  <Visualizer 
+                     analyser={bgPlayBypass ? null : analyser} 
+                     isPlaying={isPlaying} 
+                     settings={{ 
+                       type: visSettings.type, 
+                       palette: visSettings.palette, 
+                       barWidthMultiplier: visSettings.barWidthMultiplier, 
+                       barSpacing: visSettings.barSpacing, 
+                       colorIntensity: visSettings.colorIntensity, 
+                       glowStrength: visSettings.glowStrength 
+                     }} 
+                     coverUrl={currentSong?.cover}
+                     onContainerClick={cycleVisualizer}
+                     isExpanded={isVisualizerExpanded}
+                     onToggleExpand={() => setIsVisualizerExpanded(!isVisualizerExpanded)}
+                     isSignatureSound={isSignatureSound}
+                     isCompact={isCompact}
+                     className="w-full h-full flex justify-center items-center relative overflow-hidden bg-black/95" 
+                  />
+               ) : currentSong?.cover ? (
+                  <img src={currentSong.cover} alt="Cover" className="w-full h-full object-cover transition-opacity" />
+               ) : (
+                  <div className="w-full h-full flex items-center justify-center"><Music className={`text-white/20 ${isCompact ? "w-10 h-10" : "w-20 h-20"}`} /></div>
+               )}
+            </div>
+            )}
+
+            {/* Info */}
+            <div className={`w-full px-6 flex flex-col ${isCompact ? 'mb-2.5 text-center' : 'mb-6 text-left'}`}>
+                 <h2 className={`font-bold text-white tracking-tight truncate leading-tight w-full drop-shadow-sm transition-all ${isCompact ? 'text-[15px]' : 'text-[20px] md:text-[24px]'}`}>{fileName || "Unknown Track"}</h2>
+                 <p className={`font-medium tracking-wide truncate break-all w-full transition-all ${isCompact ? 'text-[11px] text-white/50 mt-0.5' : 'text-[14px] text-white/70 mt-1'}`}>{currentSong?.author || "Unknown Artist"}</p>
+            </div>
+
+            {/* Time / Progress */}
+            <div className={`w-full px-6 ${isCompact ? 'mb-2.5' : 'mb-6'}`}>
+                 <div 
+                     className="h-1.5 w-full bg-black/30 backdrop-blur-md border border-white/10 rounded-full cursor-pointer relative group transition-all shadow-inner"
+                     onClick={(e) => {
+                       if (audioRef.current && duration) {
+                         const rect = e.currentTarget.getBoundingClientRect();
+                         const pos = (e.clientX - rect.left) / rect.width;
+                         audioRef.current.currentTime = pos * audioRef.current.duration;
+                       }
+                     }}
+                 >
+                    <div ref={progressBarRef1} className="h-full bg-white/90 rounded-full pointer-events-none transition-none shadow-[0_0_12px_rgba(255,255,255,0.6)] relative">
+                       <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-3.5 h-3.5 bg-white rounded-full shadow-[0_2px_10px_rgba(0,0,0,0.5)] opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100" />
+                    </div>
+                 </div>
+                 <div className="flex justify-between text-[10px] font-bold text-white/50 tracking-widest mt-1.5 px-0.5">
+                    <span ref={currentTimeRef}>0:00</span>
+                    <span>{formatDurationDisplay(duration)}</span>
+                 </div>
+            </div>
+
+            {/* Controls */}
+            <div className="flex flex-col items-center justify-center w-full px-6 mb-1">
+                {/* Main Playback Controls */}
+                <div className={`flex items-center justify-between w-full relative ${isCompact ? 'px-0 mb-3' : 'px-4 mb-6'}`}>
+                  {/* Left: Repeat Button */}
+                  <div className="flex justify-center w-12 border-none">
+                    <button 
+                      onClick={() => {
+                        setRepeatMode(prev => prev === "all" ? "one" : prev === "one" ? "off" : "all");
+                      }} 
+                      className={`active:scale-90 transition-all rounded-full p-2 relative ${repeatMode !== "off" ? 'text-amber-400' : 'text-white/40 hover:text-white/80'}`}
+                      title={repeatMode === "all" ? "Repeat All" : repeatMode === "one" ? "Repeat One" : "Repeat Off"}
+                    >
+                      <Repeat className={isCompact ? 'w-4 h-4' : 'w-5 h-5'} />
+                      {repeatMode === "one" && <span className="absolute top-0 right-0 text-[8px] font-bold bg-amber-500 text-black w-3.5 h-3.5 rounded-full flex items-center justify-center border border-black">1</span>}
+                    </button>
+                  </div>
+
+                  {/* Center: Prev, Play, Next */}
+                  <div className={`flex items-center justify-center flex-1 ${isCompact ? 'gap-4' : 'gap-6 md:gap-10'}`}>
+                    <button onClick={handlePrevSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
+                        <SkipBack className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
+                    </button>
+
+                    <button 
+                        onClick={togglePlay}
+                        className={`rounded-full bg-white/20 backdrop-blur-xl text-white flex items-center justify-center hover:bg-white/30 active:scale-95 transition-all shadow-[0_4px_24px_rgba(0,0,0,0.4)] border border-white/20 ${
+                          isCompact ? 'w-[52px] h-[52px]' : 'w-[72px] h-[72px] md:w-[88px] md:h-[88px]'
+                        }`}
+                    >
+                        {isPlaying 
+                          ? <Pause className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8 md:w-10 md:h-10'} fill-current`} /> 
+                          : <Play className={`${isCompact ? 'w-5 h-5 ml-0.5' : 'w-8 h-8 md:w-10 md:h-10 ml-1'} fill-current`} />
+                        }
+                    </button>
+
+                    <button onClick={handleNextSong} className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-4'}`}>
+                        <SkipForward className={`${isCompact ? 'w-5 h-5' : 'w-8 h-8'} fill-current`} />
+                    </button>
+                  </div>
+
+                  {/* Empty Right container to balance flex space */}
+                  <div className="relative flex justify-center w-12 border-none">
+                  </div>
+                </div>
+
+                {/* Utility Controls */}
+                <div className="flex items-center gap-5 justify-center w-full">
+                  <button 
+                    onClick={handleToggleHD} 
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${isSignatureSound ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Toggle Lossless HD Audio"
+                  >
+                      <span className="font-black text-[13px] tracking-widest uppercase">HD</span>
+                  </button>
+
+                  <button 
+                    onClick={toggleBgBypass} 
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${bgPlayBypass ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Toggle Background / iOS Lockscreen Playback"
+                  >
+                      <span className="font-black text-[11px] tracking-widest uppercase">BG PLAY</span>
+                  </button>
+
+                  <button 
+                    onClick={cycleVisualizer}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showVisualizer ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Visualizer Mode"
+                  >
+                      <AudioWaveform className="w-5 h-5" />
+                  </button>
+                  
+                  <button 
+                    onClick={handleSeparateStems}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showStemmix ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="Separate Audio Stems (Stemmix)"
+                  >
+                      <span className="font-black text-[11px] tracking-widest uppercase">STEMS</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setShowTuning(!showTuning)}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showTuning ? 'text-white drop-shadow-[0_0_10px_rgba(255,255,255,0.5)]' : 'text-white/40 hover:text-white/70'}`}
+                    title="EQ & Settings"
+                  >
+                      <SlidersHorizontal className="w-5 h-5" />
+                  </button>
+
+                  <button 
+                    onClick={() => setUiLayoutMode(prev => prev === "full" ? "compact" : prev === "compact" ? "hidden" : "full")}
+                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${uiLayoutMode !== "full" ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    title={uiLayoutMode === "full" ? "Compact Layout" : uiLayoutMode === "compact" ? "Hidden Visualizer" : "Full Layout"}
+                  >
+                      {uiLayoutMode === "full" ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
+                  </button>
+                </div>
+            </div>
+
+            {/* EQ Panel (Inline) */}
+            {showTuning && (
+               <div className={`w-full mt-2 flex flex-col gap-4 bg-black/20 backdrop-blur-md rounded-[24px] border border-white/5 p-5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-top-2 fade-in z-50 ${isCompact ? 'overflow-y-auto max-h-[35vh] scrollbar-thin scrollbar-thumb-white/10' : 'overflow-hidden'}`}>
+                   
+                   {/* HD Master & iOS BG Mode Toggles Grid */}
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 shrink-0">
+                      
+                      {/* HD Master Toggle */}
+                      <div 
+                         className={`p-3.5 rounded-[18px] border transition-all duration-500 flex justify-between items-center relative overflow-hidden ${isSignatureSound ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/5 border-amber-500/40 shadow-[inset_0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/40 border-white/5'}`}
+                      >
+                         <div className="relative z-10 flex flex-col pr-2">
+                            <h3 className={`font-black text-[13px] tracking-widest uppercase flex items-center gap-2 transition-colors ${isSignatureSound ? 'text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'text-white'}`}>
+                                HD
+                            </h3>
+                            <p className={`text-[10px] mt-0.5 font-medium transition-colors ${isSignatureSound ? 'text-amber-300/80' : 'text-white/40'}`}>Lossless Upscaling</p>
+                         </div>
+                         <button 
+                               onClick={handleToggleHD} 
+                               className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-all duration-300 shadow-inner z-10 border border-black/30 ${isSignatureSound ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.6)]' : 'bg-white/10'}`}
+                            >
+                               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-300 shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${isSignatureSound ? 'translate-x-6' : 'translate-x-1'}`} />
+                         </button>
+                      </div>
+
+                      {/* iOS Background Play Fix Toggle */}
+                      <div 
+                         className={`p-3.5 rounded-[18px] border transition-all duration-500 flex justify-between items-center relative overflow-hidden ${bgPlayBypass ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/5 border-amber-500/40 shadow-[inset_0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/40 border-white/5'}`}
+                      >
+                         <div className="relative z-10 flex flex-col pr-2">
+                            <h3 className={`font-black text-[13px] tracking-widest uppercase flex items-center gap-2 transition-colors ${bgPlayBypass ? 'text-amber-400 drop-shadow-[0_0_8px_rgba(251,191,36,0.8)]' : 'text-white'}`}>
+                                iOS BG Mode
+                            </h3>
+                            <p className={`text-[10px] mt-0.5 font-medium transition-colors ${bgPlayBypass ? 'text-amber-300/80' : 'text-white/40'}`}>Background & lockscreen</p>
+                         </div>
+                         <button 
+                               onClick={toggleBgBypass} 
+                               className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-all duration-300 shadow-inner z-10 border border-black/30 ${bgPlayBypass ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.6)]' : 'bg-white/10'}`}
+                            >
+                               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-300 shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${bgPlayBypass ? 'translate-x-6' : 'translate-x-1'}`} />
+                         </button>
+                      </div>
+
+                   </div>
+
+
+
+                   {bgPlayBypass && (
+                     <div className="p-3 bg-amber-500/10 border border-amber-500/10 rounded-[14px] text-amber-300 text-[10.5px] leading-relaxed relative overflow-hidden backdrop-blur-sm shadow-[inset_0_0_12px_rgba(251,191,36,0.03)] select-none animate-in fade-in slide-in-from-top-1 duration-300">
+                        <div className="font-extrabold uppercase tracking-widest text-[9.5px] text-amber-400 mb-0.5 flex items-center gap-1.5">
+                          <span>💡 iOS BG MODE ACTIVE</span>
+                        </div>
+                        <p className="opacity-80">
+                          Web Audio is bypassed to support true lockscreen background play. <strong>Waveforms and HD Lossless upscaling are dynamically simulated in this compatibility mode.</strong>
+                        </p>
+                     </div>
+                   )}
+
+                   {/* Equalizer */}
+                   <div className="flex-1 flex flex-col min-h-0 relative z-10 w-full px-1">
+                      <div className="flex justify-between items-end mb-4 shrink-0">
+                        <h3 className="font-bold text-[12px] uppercase tracking-widest text-white/70">Equalizer</h3>
+                        <button 
+                          onClick={() => {
+                              const newEq = eqSettings.map((b) => ({ ...b, g: 0 }));
+                              setEqSettings(newEq);
+                              newEq.forEach((band, i) => updateEqNode?.(i, "gain", 0));
+                          }}
+                          className="text-[10px] font-bold text-white/40 uppercase tracking-widest hover:text-white transition-colors"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-5 gap-y-2 gap-x-2 relative z-10 w-full pb-2">
+                           {eqSettings.map((band, i) => (
+                              <div key={i} className="flex flex-col items-center justify-between h-[120px] w-full relative group">
+                                <div className={`text-[10px] font-bold tracking-widest px-1 rounded flex items-center justify-center text-center -mb-2 z-10 transition-colors ${band.g !== 0 ? 'text-amber-400 drop-shadow-[0_0_5px_rgba(251,191,36,0.8)]' : 'text-white/30'}`}>
+                                   {band.g > 0 ? '+' : ''}{band.g.toFixed(1)}
+                                </div>
+                                
+                                <div className="flex-1 w-full flex justify-center relative my-3">
+                                    <div className="absolute w-[4px] h-[80px] top-1/2 -translate-y-1/2 bg-black/60 rounded-full drop-shadow-sm border border-white/5" />
+                                    <div className="absolute top-1/2 left-1/2 w-6 h-[2px] bg-white/10 -translate-y-1/2 -translate-x-1/2 rounded" />
+                                    <div 
+                                      className="absolute left-1/2 -translate-x-1/2 bottom-[10px] w-[4px] rounded-full bg-amber-500/50 pointer-events-none transition-all duration-200" 
+                                      style={{ 
+                                        height: `${band.g > 0 ? (band.g / 12) * 50 : 0}%`, 
+                                        bottom: '50%',
+                                        boxShadow: '0 0 10px rgba(245, 158, 11, 0.5)'
+                                      }} 
+                                    />
+                                    <div 
+                                      className="absolute left-1/2 -translate-x-1/2 top-[10px] w-[4px] rounded-full bg-white/20 pointer-events-none transition-all duration-200" 
+                                      style={{ 
+                                        height: `${band.g < 0 ? Math.abs(band.g / 12) * 50 : 0}%`, 
+                                        top: '50%'
+                                      }} 
+                                    />
+                                    
+                                    <input
+                                       type="range"
+                                       min="-12"
+                                       max="12"
+                                       step="0.1"
+                                       value={band.g || 0}
+                                       onChange={(e) => {
+                                         const val = parseFloat(e.target.value);
+                                         const newEq = [...eqSettings];
+                                         newEq[i].g = val;
+                                         setEqSettings(newEq);
+                                         updateEqNode?.(i, "gain", val);
+                                       }}
+                                       className="w-full h-full bg-transparent appearance-none cursor-grab active:cursor-grabbing absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 !origin-center -rotate-90 slider-vertical-glass"
+                                       style={{ width: '80px', height: '32px' }}
+                                    />
+                                </div>
+
+                                <div className={`text-[10px] font-bold tracking-widest h-4 flex items-center justify-center text-center leading-tight transition-colors ${band.g !== 0 ? 'text-amber-400/80' : 'text-white/40'}`}>
+                                   {band.name.replace('Hz','').replace('kHz','k')}
+                                </div>
+                              </div>
+                           ))}
+                         </div>
+                   </div>
+               </div>
+            )}
+              {/* Stemmix Panel Loading/Error */}
+            {showStemmix && stemmixStatus !== "ready" && (
+               <div className={`w-full mt-2 flex flex-col gap-4 bg-[#0A0A0C]/90 backdrop-blur-xl rounded-[24px] border border-white/10 p-5 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-top-2 fade-in z-50`}>
+                  <div className="flex items-center justify-between">
+                     <h3 className="font-black text-[14px] tracking-widest text-amber-400 uppercase flex items-center gap-2">
+                         <AudioWaveform className="w-4 h-4" /> Stem Studio
+                     </h3>
+                     <button onClick={() => setShowStemmix(false)} className="text-white/40 hover:text-white/80 p-1">
+                         <X className="w-5 h-5" />
+                     </button>
+                  </div>
+                  
+                  {stemmixStatus === "loading" && (
+                    <div className="flex flex-col items-center justify-center py-6 text-white/50">
+                        <div className="w-6 h-6 border-2 border-amber-400 rounded-full border-t-transparent animate-spin mb-3" />
+                        <span className="text-xs tracking-widest uppercase font-bold">AI Processing Stems...</span>
+                        <span className="text-[10px] mt-1 text-white/30 text-center max-w-xs">Connecting to advanced computing node. This may take up to 2 minutes...</span>
+                    </div>
+                  )}
+                  {stemmixStatus === "error" && (
+                    <div className="flex flex-col items-center justify-center py-4 text-red-400 text-center">
+                        <p className="text-xs mb-2">Error: {stemmixError}</p>
+                        <button onClick={handleSeparateStems} className="text-[10px] tracking-widest uppercase font-bold border border-red-400/30 px-3 py-1 rounded-full hover:bg-red-400/10">Retry</button>
+                    </div>
+                  )}
+               </div>
+            )}
+            
+            {/* Stemmix Mobile Panel Ready */}
+            {isCompact && showStemmix && stemmixStatus === "ready" && stemUrls && (
+               <div className="w-full mt-2 flex flex-col h-[50dvh] bg-[#0A0A0C]/95 backdrop-blur-xl rounded-[24px] border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-top-2 fade-in z-50 overflow-hidden">
+                  <StemStudio 
+                    stemUrls={stemUrls} 
+                    songTitle={currentSong?.title || "Untitled Track"}
+                    originalDuration={duration || 0}
+                    onClose={() => setShowStemmix(false)}
+                    isEmbedded={true}
+                    isCompactUI={true}
+                  />
+               </div>
+            )}
+          </div>
+          </div>
+
+        {(!isCompact || !showStemmix || stemmixStatus !== "ready") && (
+        <div className={`w-full max-w-lg mx-auto flex flex-col min-h-0 px-2 ${
+          isCompact 
