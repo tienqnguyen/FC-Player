@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
-  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List, X, Volume2
+  Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, MonitorPlay, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List, X, Volume2,
+  PictureInPicture
 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
 import StemStudio from "./components/StemStudio";
@@ -36,9 +37,23 @@ const FallbackImage = ({ src, alt, className, title }: any) => {
   const [error, setError] = useState(false);
   
   if (!src || error) {
+    // Determine initials
+    let initials = "♫";
+    if (alt && alt !== "cov") {
+      const cleanTitle = alt.replace(/\[.*\]/g, '').replace(/\(.*\)/g, '').trim();
+      const words = cleanTitle.split(' ').filter(Boolean);
+      if (words.length > 1) {
+          initials = (words[0][0] + words[1][0]).toUpperCase();
+      } else if (words.length === 1) {
+          initials = words[0].substring(0, 2).toUpperCase();
+      }
+    }
+
     return (
-      <div className={`flex items-center justify-center bg-white/[0.03] border border-white/5 ${className}`} title={title}>
-        <span className="text-[10px] font-bold text-white/30 truncate px-1">{alt || "No Cover"}</span>
+      <div className={`flex flex-col items-center justify-center bg-gradient-to-br from-white/10 to-transparent border border-white/5 shadow-inner ${className}`} title={title || alt}>
+        <span className={`font-black text-white/40 tracking-widest uppercase drop-shadow-md ${className && className.includes('w-8') ? 'text-[10px]' : 'text-xl md:text-3xl'}`}>
+          {initials}
+        </span>
       </div>
     );
   }
@@ -3269,6 +3284,7 @@ export default function App() {
           title: songTitle,
           originalUrl: urlToUse,
           audioUrl: urlToFetch,
+          videoUrl: data.data.play || null,
           cover: oembedData.thumbnail_url || data.data.cover || data.data.origin_cover,
           author: oembedData.author_name || data.data.author?.nickname,
           timestamp: Date.now()
@@ -3306,7 +3322,7 @@ export default function App() {
 
   const getYouTubeEmbedUrl = (url: string) => {
     if (!url) return null;
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const regExp = /^.*(youtu\.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|shorts\/)([^#\&\?]*).*/;
     const match = url.match(regExp);
     if (match && match[2].length === 11) {
       return `https://www.youtube.com/embed/${match[2]}?autoplay=1&mute=0&enablejsapi=1`;
@@ -3323,9 +3339,10 @@ export default function App() {
     return null;
   };
 
-  const isVideoIframePlaying = currentSong && !showVisualizer && (getYouTubeEmbedUrl(currentSong.originalUrl) || getTikTokEmbedUrl(currentSong.originalUrl));
+  
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const shouldAutoPlayRef = useRef<boolean>(false);
   const progressBarRef1 = useRef<HTMLDivElement>(null);
   const progressBarRef2 = useRef<HTMLDivElement>(null);
@@ -3382,6 +3399,7 @@ export default function App() {
 
   const isCompact = uiLayoutMode === "compact" || uiLayoutMode === "hidden";
 
+  const [showVideoIframe, setShowVideoIframe] = useState(false);
   const [bgPlayBypass, setBgPlayBypass] = useState(() => {
     try {
       const saved = localStorage.getItem("acoustic_presence_bg_bypass");
@@ -3420,49 +3438,23 @@ export default function App() {
     if (completionTimeoutRef.current) clearTimeout(completionTimeoutRef.current);
     if (fadeTimeoutRef.current) clearTimeout(fadeTimeoutRef.current);
 
-    setCountdown({
-      type,
-      targetValue,
-      secondsLeft: 3,
-      isCompleting: false,
-      visible: true
-    });
+    setCountdown(null);
 
-    let currentSeconds = 3;
-    countdownIntervalRef.current = setInterval(() => {
-      currentSeconds -= 1;
-      
-      if (currentSeconds === 1 && audioRef.current) {
-        // Start a smooth fade out 1s before the trigger
-        let currentVol = audioRef.current.volume;
-        const volumeStep = currentVol / 20; // 20 steps over 1 second (50ms interval)
-        
-        fadeTimeoutRef.current = setInterval(() => {
-          if (audioRef.current) {
-            currentVol = Math.max(0, currentVol - volumeStep);
-            audioRef.current.volume = currentVol;
-          }
-          if (masterGainRef.current) {
-            masterGainRef.current.gain.value = currentVol;
-          }
-          if (currentVol <= 0 && fadeTimeoutRef.current) {
-            clearInterval(fadeTimeoutRef.current);
-          }
-        }, 50);
+    let currentVol = audioRef.current ? audioRef.current.volume : 1;
+    const volumeStep = currentVol / 2;
+    
+    fadeTimeoutRef.current = setInterval(() => {
+      if (audioRef.current) {
+        currentVol = Math.max(0, currentVol - volumeStep);
+        audioRef.current.volume = currentVol;
       }
-
-      if (currentSeconds >= 0) {
-        setCountdown({
-          type,
-          targetValue,
-          secondsLeft: currentSeconds,
-          isCompleting: false,
-          visible: true
-        });
-      } else {
-        if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      if (masterGainRef.current) {
+        masterGainRef.current.gain.value = currentVol;
       }
-    }, 1000);
+      if (currentVol <= 0 && fadeTimeoutRef.current) {
+        clearInterval(fadeTimeoutRef.current);
+      }
+    }, 25);
 
     countdownTimeoutRef.current = setTimeout(() => {
       if (type === "HD") {
@@ -3491,31 +3483,14 @@ export default function App() {
               });
             }
           }
-        }, 150);
+        }, 50);
 
         if (targetValue) {
           toggleSignatureSound(false);
           setShowVisualizer(false);
         }
       }
-
-      setCountdown({
-        type,
-        targetValue,
-        secondsLeft: 0,
-        isCompleting: true,
-        visible: true
-      });
-
-      completionTimeoutRef.current = setTimeout(() => {
-        setCountdown(prev => prev ? { ...prev, visible: false } : null);
-
-        fadeTimeoutRef.current = setTimeout(() => {
-          setCountdown(null);
-        }, 1000);
-      }, 1200);
-
-    }, 3000);
+    }, 50);
   };
 
   useEffect(() => {
@@ -4119,7 +4094,7 @@ export default function App() {
               ? "h-full max-h-[100dvh] overflow-hidden flex flex-col lg:grid lg:grid-cols-3 px-1 lg:px-4 pt-1 pb-1 flex-1 lg:gap-6"
               : "h-full max-h-[100dvh] overflow-hidden flex flex-col px-1 lg:px-4 pt-1 pb-1 flex-1" 
             : showStemmix
-              ? "w-full max-w-[1500px] flex-1 overflow-hidden h-full pb-10 grid grid-cols-3 px-4 pt-2 gap-6"
+              ? "w-full max-w-[1500px] flex-1 lg:overflow-hidden overflow-y-auto h-full pb-10 flex flex-col lg:grid lg:grid-cols-3 px-4 pt-2 gap-6"
               : "w-full max-w-[1500px] flex-1 overflow-hidden h-full pb-10 flex flex-row px-4 pt-2 gap-6 justify-center"
         }`}
       >
@@ -4127,8 +4102,8 @@ export default function App() {
         <div className={`w-full flex flex-col ${
           !isCompact 
             ? (showStemmix
-                ? "col-span-1 h-full overflow-y-auto custom-scrollbar pr-2 gap-4" 
-                : "w-[500px] shrink-0 h-full overflow-y-auto custom-scrollbar pr-2 gap-4 mx-auto")
+                ? "lg:col-span-1 min-h-[80vh] lg:min-h-0 lg:h-full lg:overflow-y-auto custom-scrollbar pr-2 gap-4 shrink-0" 
+                : "w-full max-w-[500px] shrink-0 h-full overflow-y-auto custom-scrollbar pr-2 gap-4 mx-auto")
             : showStemmix
               ? "max-w-screen-md mx-auto flex-1 min-h-0 lg:col-span-1 lg:h-full lg:overflow-y-auto lg:custom-scrollbar lg:pr-2 lg:gap-4"
               : "max-w-screen-md mx-auto flex-1 min-h-0"
@@ -4151,18 +4126,20 @@ export default function App() {
             <div className="absolute inset-0 -z-10 bg-[#0A0B10]/50 backdrop-blur-[40px]" />
             
             {/* Cover Art / Visualizer */}
-            {uiLayoutMode !== "hidden" && (
+            {uiLayoutMode !== "hidden" && (() => {
+               const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;
+               return (
             <div 
-               onClick={!showVisualizer ? cycleVisualizer : undefined}
+               onClick={!showVisualizer && !showVideoIframe ? cycleVisualizer : undefined}
                className={`transition-all duration-500 ease-out bg-black/40 overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.5)] border shrink-0 relative ${
                  isCompact
-                   ? (showVisualizer && isVisualizerExpanded 
-                       ? 'w-[calc(100%-2.5rem)] h-[110px] md:h-[130px] rounded-[1rem] border-white/10 select-none mb-3' 
+                   ? ((showVisualizer && isVisualizerExpanded) || showVideoIframe
+                       ? 'w-full h-[140px] md:h-[160px] border-x-0 rounded-none border-white/10 select-none mb-3' 
                        : `w-[110px] h-[110px] md:w-[130px] md:h-[130px] rounded-[1.25rem] mb-3 ${showVisualizer ? 'border-white/10 select-none' : 'border-white/5 cursor-pointer hover:border-white/20'}`)
-                   : (showVisualizer && isVisualizerExpanded 
-                       ? 'w-[calc(100%-2.5rem)] h-[240px] md:h-[320px] rounded-[1.5rem] border-white/10 select-none mb-6' 
+                   : ((showVisualizer && isVisualizerExpanded) || showVideoIframe
+                       ? 'w-full h-[280px] md:h-[360px] border-x-0 rounded-none border-white/10 select-none mb-6' 
                        : `w-[220px] h-[220px] md:w-[280px] md:h-[280px] rounded-[2rem] mb-6 ${showVisualizer ? 'border-white/10 select-none' : 'border-white/5 cursor-pointer hover:border-white/20'}`)
-               } ${isPlaying && !showVisualizer ? 'scale-100' : 'scale-[0.98]'}`}
+               } ${isPlaying && !showVisualizer && !showVideoIframe ? 'scale-100' : 'scale-[1.0]'}`}
             >
                {showVisualizer ? (
                   <Visualizer 
@@ -4184,39 +4161,34 @@ export default function App() {
                      isCompact={isCompact}
                      className="w-full h-full flex justify-center items-center relative overflow-hidden bg-black/95" 
                   />
-               ) : (() => {
-                 const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;
-                 const ttUrl = currentSong ? getTikTokEmbedUrl(currentSong.originalUrl) : null;
-                 if (ytUrl && isPlaying) {
-                   return (
-                     <iframe 
-                       src={ytUrl} 
-                       title="YouTube Video Player"
-                       className="w-full h-full border-none absolute inset-0"
-                       allow="autoplay; clipboard-write; encrypted-media; picture-in-picture"
-                       allowFullScreen
-                     />
-                   );
-                 }
-                 if (ttUrl && isPlaying) {
-                   return (
-                     <iframe 
-                       src={ttUrl} 
-                       title="TikTok Video Player"
-                       className="w-full h-full border-none absolute inset-0"
-                       allow="autoplay; clipboard-write; encrypted-media; picture-in-picture"
-                       allowFullScreen
-                     />
-                   );
-                 }
-                 return currentSong?.cover ? (
-                  <img src={currentSong.cover} alt="Cover" className="w-full h-full object-cover transition-opacity" />
+               ) : showVideoIframe && ytUrl ? (
+                  <iframe 
+                    src={ytUrl} 
+                    title="Video Player"
+                    className="w-full h-full border-none absolute inset-0 bg-black"
+                    allow="autoplay; clipboard-write; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                  />
+               ) : showVideoIframe && !!currentSong?.videoUrl ? (
+                  <video 
+                    ref={videoRef}
+                    src={currentSong.videoUrl || currentSong.audioUrl} 
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-contain absolute inset-0 bg-black"
+                  />
+               ) : currentSong?.cover ? (
+                  <>
+                    <FallbackImage src={currentSong.cover} alt={currentSong.title} className="w-full h-full object-cover transition-opacity" />
+                  </>
                ) : (
                   <div className="w-full h-full flex items-center justify-center"><Music className={`text-white/20 ${isCompact ? "w-10 h-10" : "w-20 h-20"}`} /></div>
-               );
-              })()}
+               )}
             </div>
-            )}
+            );})()}
 
             {/* Info */}
             <div className={`w-full px-6 flex flex-col ${isCompact ? 'mb-2.5 text-center' : 'mb-6 text-left'}`}>
@@ -4289,6 +4261,24 @@ export default function App() {
 
                   {/* Empty Right container to balance flex space */}
                   <div className="relative flex justify-center w-12 border-none">
+                    {(() => {
+                      const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;
+                      const isTikTokVideo = !!currentSong?.videoUrl && currentSong.videoUrl !== currentSong.audioUrl && !ytUrl;
+                      const hasVideo = !!(ytUrl || isTikTokVideo);
+                      return hasVideo && (
+                        <button 
+                          onClick={() => {
+                          const nextState = !showVideoIframe;
+                          setShowVideoIframe(nextState);
+                          if (nextState) setShowVisualizer(false);
+                        }}
+                          className={`text-white hover:text-white/80 active:scale-90 transition-all rounded-full hover:bg-white/10 ${isCompact ? 'p-2' : 'p-3'} ${showVideoIframe ? 'text-amber-400 bg-amber-400/10' : ''}`}
+                          title="Watch Video"
+                        >
+                          <MonitorPlay className={`${isCompact ? 'w-4 h-4' : 'w-5 h-5'} fill-current`} />
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -4301,23 +4291,56 @@ export default function App() {
                   >
                       <span className="font-black text-[13px] tracking-widest uppercase">HD</span>
                   </button>
-
-                  <button 
-                    onClick={toggleBgBypass} 
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${bgPlayBypass ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
-                    title="Toggle Background / iOS Lockscreen Playback"
-                  >
-                      <span className="font-black text-[11px] tracking-widest uppercase">BG PLAY</span>
-                  </button>
-
-                  <button 
-                    onClick={cycleVisualizer}
+                  {(() => {
+                    const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;
+                    const isTikTokVideo = !!currentSong?.videoUrl && currentSong.videoUrl !== currentSong.audioUrl && !ytUrl;
+                    
+                    return (showVideoIframe && (isTikTokVideo || ytUrl)) ? (
+                      <button 
+                        onClick={async () => {
+                          const videoEl = videoRef.current;
+                          if (isTikTokVideo && videoEl && document.pictureInPictureEnabled) {
+                            try {
+                              if (document.pictureInPictureElement) {
+                                await document.exitPictureInPicture();
+                              } else {
+                                await videoEl.requestPictureInPicture();
+                              }
+                            } catch (e) {
+                              console.warn("PIP failed", e);
+                            }
+                          } else if (ytUrl) {
+                              // Fallback for YouTube: Toggle video mode since we can't natively PIP an iframe easily
+                              setShowVideoIframe(!showVideoIframe);
+                          } else if (!showVideoIframe) {
+                            setShowVideoIframe(true);
+                          }
+                        }} 
+                        className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${document.pictureInPictureElement ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                        title="Picture-in-Picture"
+                      >
+                          <PictureInPicture className="w-5 h-5 mb-0.5" />
+                          <span className="font-black text-[9px] sm:text-[10px] whitespace-nowrap tracking-wider uppercase">PIP</span>
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={toggleBgBypass} 
+                        className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${bgPlayBypass ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                        title="Toggle Background / iOS Lockscreen Playback"
+                      >
+                          <span className="font-black text-[9px] sm:text-[10px] whitespace-nowrap tracking-wider uppercase text-center">BG PLAY</span>
+                      </button>
+                    );
+                  })()}
+                  {!showVideoIframe && (
+                    <button 
+                      onClick={cycleVisualizer}
                     className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showVisualizer ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
                     title="Visualizer Mode"
                   >
                       <AudioWaveform className="w-5 h-5" />
-                  </button>
-                  
+                    </button>
+                  )}
                   <button 
                     onClick={handleSeparateStems}
                     className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showStemmix ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
@@ -4481,16 +4504,16 @@ export default function App() {
           
           {/* Header tabs row */}
           <div className="flex items-center justify-between border-b border-white/5 pb-3 mb-4 px-3 col-span-full">
-            <div className="flex gap-4 sm:gap-6 overflow-x-auto scrollbar-none max-w-full">
+            <div className="flex gap-2 sm:gap-6 overflow-x-auto scrollbar-none max-w-full">
               <button
                 onClick={() => setPlaylistTab("upnext")}
-                className={`text-[10px] sm:text-[12px] font-bold tracking-widest uppercase transition-all pb-1 relative flex-shrink-0 ${
+                className={`text-[9px] sm:text-[12px] tracking-widest sm:font-bold font-semibold uppercase transition-all pb-1 relative flex-shrink-0 ${
                   playlistTab === "upnext" 
                     ? "text-white" 
                     : "text-white/40 hover:text-white/70"
                 }`}
               >
-                Songs {recentSongs.length > 0 && `(${recentSongs.length})`}
+                Songs<span className="hidden sm:inline"> {recentSongs.length > 0 && `(${recentSongs.length})`}</span>
                 {playlistTab === "upnext" && (
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
                 )}
@@ -4498,7 +4521,7 @@ export default function App() {
               
               <button
                 onClick={() => setPlaylistTab("albums")}
-                className={`text-[10px] sm:text-[12px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 flex-shrink-0 ${
+                className={`text-[9px] sm:text-[12px] tracking-widest sm:font-bold font-semibold uppercase transition-all pb-1 relative flex items-center gap-1 sm:gap-1.5 flex-shrink-0 ${
                   playlistTab === "albums" 
                     ? "text-white" 
                     : "text-white/40 hover:text-white/70"
@@ -4512,7 +4535,7 @@ export default function App() {
 
               <button
                 onClick={() => setPlaylistTab("search")}
-                className={`text-[10px] sm:text-[12px] font-bold tracking-widest uppercase transition-all pb-1 relative flex items-center gap-1.5 flex-shrink-0 ${
+                className={`text-[9px] sm:text-[12px] tracking-widest sm:font-bold font-semibold uppercase transition-all pb-1 relative flex items-center gap-1 sm:gap-1.5 flex-shrink-0 ${
                   playlistTab === "search" 
                     ? "text-white" 
                     : "text-white/40 hover:text-white/70"
@@ -4533,7 +4556,7 @@ export default function App() {
                 }`}
                 title="Community"
               >
-                <Share2 className="w-4 h-4 text-amber-400 animate-pulse" />
+                <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400 animate-pulse" />
                 {playlistTab === "community" && (
                   <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
                 )}
@@ -5069,7 +5092,7 @@ export default function App() {
               {/* Search Header */}
               <div className="flex flex-col gap-3 mb-4 shrink-0">
                 <form onSubmit={handleTiktokSearch} className="flex flex-col gap-2.5">
-                  <div className="flex w-full sm:w-fit self-center gap-1.5 p-1 bg-black/40 rounded-xl border border-white/5 shrink-0 justify-between sm:justify-start">
+                  <div className="flex w-full sm:w-fit self-center gap-1 p-1 bg-black/40 rounded-xl border border-white/5 shrink-0 justify-between sm:justify-start overflow-x-auto scrollbar-hide">
                     <button
                       type="button"
                       onClick={() => {
@@ -5081,7 +5104,7 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "sound"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
@@ -5101,14 +5124,14 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "video"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
                       }`}
                     >
                       <Film className="w-3 h-3" />
-                      TikTok Video
+                      <span className="hidden sm:inline">TikTok </span>Video
                     </button>
                     <button
                       type="button"
@@ -5121,14 +5144,14 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "youtube"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
                       }`}
                     >
                       <span className="text-[8px] bg-red-500/20 border border-red-500/35 text-red-400 px-1 py-0.2 rounded font-black">YT</span>
-                      YouTube
+                      <span className="hidden sm:inline">YouTube</span>
                     </button>
                     <button
                       type="button"
@@ -5141,14 +5164,14 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-3 py-2 rounded-lg transition-all flex items-center gap-1.5 flex-1 sm:flex-initial justify-center ${
+                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "nhaccuatui"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
                       }`}
                     >
                       <span className="text-[8px] bg-blue-500/20 border border-blue-500/35 text-blue-400 px-1 py-0.2 rounded font-black">NCT</span>
-                      Audio (NCT)
+                      Audio <span className="hidden sm:inline">(NCT)</span>
                     </button>
                   </div>
 
@@ -5300,11 +5323,22 @@ export default function App() {
                       </span>
                     </div>
 
-                    {tiktokSearchResults.map((song: any) => {
-                      const isActive = currentSong?.originalUrl === song.url || currentSong?.id === song.id;
+                    {tiktokSearchResults.map((song: any, index: number) => {
+                      let isActive = false;
+                      if (currentSong) {
+                        if (tiktokSearchType === "youtube") {
+                          isActive = (song.url && currentSong.originalUrl === song.url) || (song.id && currentSong.id === song.id);
+                        } else if (tiktokSearchType === "nhaccuatui") {
+                          isActive = currentSong.id === ("nct_" + song.id);
+                        } else {
+                          const songId = song.id || song.video_id || song.url || `search-result-${index}`;
+                          const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
+                          isActive = (songId && currentSong.id === songId) || (oembedUrl && currentSong.originalUrl === oembedUrl);
+                        }
+                      }
                       return (
                         <div
-                          key={song.id || song.url}
+                          key={song.id || song.video_id || song.url || `search-result-${index}`}
                           onClick={() => {
                             if (tiktokSearchType === "youtube") {
                               const streamUrl = `/api/stream?url=${encodeURIComponent(song.url)}`;
@@ -5345,7 +5379,7 @@ export default function App() {
                               playRecentSong(newSong);
                             } else {
                               // TikTok type
-                              const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.id}`;
+                              const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
                               const streamUrl = song.audioUrl || song.music || (song.music_info && song.music_info.play) || song.play;
                               const songTitle = song.title || song.desc || "TikTok Audio";
                               const coverArt = song.cover || song.origin_cover || (song.music_info && song.music_info.cover);
@@ -5362,18 +5396,20 @@ export default function App() {
                                 return;
                               }
 
+                              const songId = song.id || song.video_id || song.url || `search-result-${index}`;
                               const newSong = {
-                                id: song.id,
+                                id: songId,
                                 title: songTitle,
                                 originalUrl: oembedUrl,
                                 audioUrl: streamUrl,
+                                videoUrl: song.play || (song.video_info && song.video_info.play) || null,
                                 cover: coverArt,
                                 author: creator,
                                 duration: song.duration,
                                 timestamp: Date.now()
                               };
                               setRecentSongs(prev => {
-                                const filtered = prev.filter(s => s.originalUrl !== oembedUrl && s.id !== song.id);
+                                const filtered = prev.filter(s => s.originalUrl !== oembedUrl && s.id !== songId);
                                 return [newSong, ...filtered].slice(0, 50);
                               });
                               playRecentSong(newSong);
@@ -5901,7 +5937,7 @@ export default function App() {
         {showStemmix && (
           <div className={`flex flex-col ${
             !isCompact 
-              ? "col-span-2 h-full" 
+              ? "lg:col-span-2 h-[80vh] lg:h-full shrink-0 lg:shrink" 
               : "w-full mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
           } bg-[#0A0A0C]/95 backdrop-blur-xl rounded-[24px] border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
             <StemStudio 
@@ -6130,7 +6166,7 @@ export default function App() {
           src={audioUrl || undefined}
           autoPlay
           playsInline
-          muted={!!isVideoIframePlaying}
+          muted={!!(showVideoIframe && currentSong && getYouTubeEmbedUrl(currentSong.originalUrl))}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           onError={(e) => {

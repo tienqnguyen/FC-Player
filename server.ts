@@ -444,23 +444,37 @@ async function startServer() {
       // Sequential candidate spaces to try for AI separation
       const spaces = ["PeachJed/Stemmix", "tienqnguyen95/Stemmix", "sociallyclever/demucs"];
 
-      for (const space of spaces) {
-        try {
-          console.log(`[Stemmix] Attempting to load Hugging Face Space: ${space}`);
-          hfApp = await client(space);
-          result = await hfApp.predict("/separate_stems", {
-            audio_file: handle_file(blob),
-          }) as any;
-          
-          if (result && result.data) {
-            success = true;
-            console.log(`[Stemmix] Successfully separated stems using Space: ${space}`);
-            break;
+      const runSeparation = async () => {
+        for (const space of spaces) {
+          try {
+            console.log(`[Stemmix] Attempting to load Hugging Face Space: ${space}`);
+            const hfApp = await client(space);
+            const res = await hfApp.predict("/separate_stems", {
+              audio_file: handle_file(blob),
+            }) as any;
+            
+            if (res && res.data) {
+              console.log(`[Stemmix] Successfully separated stems using Space: ${space}`);
+              return res;
+            }
+          } catch (e: any) {
+            console.warn(`[Stemmix] Failed using Space ${space}:`, e.message);
+            errorMsg = e.message || String(e);
           }
-        } catch (e: any) {
-          console.warn(`[Stemmix] Failed using Space ${space}:`, e.message);
-          errorMsg = e.message || String(e);
         }
+        return null;
+      };
+
+      try {
+         result = await Promise.race([
+             runSeparation(),
+             new Promise((_, reject) => setTimeout(() => reject(new Error("AI Cloud processing took too long. Falling back to local DSP.")), 45000))
+         ]);
+         if (result && result.data) {
+             success = true;
+         }
+      } catch (timeoutErr: any) {
+         console.warn("[Stemmix] Timeout:", timeoutErr.message);
       }
 
       if (success && result && result.data) {
