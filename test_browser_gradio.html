@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<body>
+<script type="module">
+import { Client } from "https://cdn.jsdelivr.net/npm/@gradio/client/dist/index.min.js";
+async function run() {
+    console.log("start");
+    const client = await Client.connect("CohereLabs/cohere-transcribe-03-2026");
+    console.log(await client.view_api());
+}
+run();
+</script>
+</body>
+</html>

@@ -1053,6 +1053,121 @@ async function startServer() {
     }
   });
 
+  // API to retrieve metadata of YouTube, Facebook, SoundCloud, etc.
+  app.get("/api/metadata", async (req, res) => {
+    try {
+      let url = req.query.url as string;
+      if (!url) {
+        return res.status(400).json({ error: "URL parameter is required" });
+      }
+      url = await resolveFacebookRedirect(url);
+      console.log(`[Metadata API] Resolving metadata for URL: ${url}`);
+      
+      const ytdlOptions: any = {
+        dumpSingleJson: true,
+        noWarnings: true,
+        noPlaylist: true,
+        f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+        jsRuntimes: "node",
+        noCheckCertificates: true,
+      };
+
+      if (await hasYoutubeCookies()) {
+        ytdlOptions.cookies = getCookiesFilePath();
+      }
+
+      const info = (await youtubedl(url, ytdlOptions)) as any;
+      if (!info) {
+        return res.status(400).json({ error: "Could not extract metadata from URL" });
+      }
+
+      const responseData = {
+        title: info.title || "Shared Audio Track",
+        cover: info.thumbnail || info.thumbnails?.[0]?.url || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300",
+        author: info.uploader || info.artist || "Web Audio",
+        duration: info.duration || 0,
+      };
+
+      res.json(responseData);
+    } catch (error: any) {
+      console.error("[Metadata API Error]", error);
+      res.status(500).json({ error: error.message || "Failed to extract metadata" });
+    }
+  });
+
+  // API to download and proxy audio files from url with proper content type and attachment headers
+  app.get("/api/download", async (req, res) => {
+    try {
+      const url = req.query.url as string;
+      const title = (req.query.title as string) || "audio";
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+      
+      console.log(`[Download API] Downloading and proxying: ${url}`);
+      
+      const headers: Record<string, string> = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      };
+      
+      if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
+        headers["Referer"] = "https://www.nhaccuatui.com/";
+        headers["Origin"] = "https://www.nhaccuatui.com";
+      }
+
+      let finalUrl = url;
+      if (!url.startsWith("http")) {
+        finalUrl = `http://localhost:3000${url}`;
+      }
+
+      const isDirect = finalUrl.toLowerCase().includes(".mp3") || finalUrl.toLowerCase().includes(".m4a") || finalUrl.toLowerCase().includes(".flac") || finalUrl.toLowerCase().includes(".wav");
+      if (!isDirect && (finalUrl.includes("youtube.com") || finalUrl.includes("youtu.be") || finalUrl.includes("soundcloud.com") || finalUrl.includes("facebook.com") || finalUrl.includes("fb.watch"))) {
+        try {
+          finalUrl = await getDirectMediaUrl(finalUrl);
+        } catch (err: any) {
+          console.error(`[Download API] Failed to get direct media url:`, err.message);
+        }
+      }
+
+      const response = await fetch(finalUrl, { headers });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch media from source. Status: ${response.status}`);
+      }
+
+      let contentType = response.headers.get("content-type") || "audio/mpeg";
+      let extension = "mp3";
+      if (contentType.includes("m4a") || finalUrl.includes(".m4a")) {
+        extension = "m4a";
+      } else if (contentType.includes("flac") || finalUrl.toLowerCase().includes(".flac")) {
+        extension = "flac";
+        contentType = "audio/flac";
+      } else if (contentType.includes("wav") || finalUrl.toLowerCase().includes(".wav")) {
+        extension = "wav";
+        contentType = "audio/wav";
+      }
+
+      const safeTitle = title.replace(/[^a-zA-Z0-9\s-_]/g, "").trim() || "audio";
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`);
+      res.setHeader("Content-Type", contentType);
+
+      const contentLength = response.headers.get("content-length");
+      if (contentLength) res.setHeader("Content-Length", contentLength);
+
+      if (response.body) {
+        const nodeStream = Readable.fromWeb(response.body as any);
+        nodeStream.pipe(res);
+        res.on("close", () => nodeStream.destroy());
+      } else {
+        res.status(500).json({ error: "No body in audio stream source." });
+      }
+    } catch (error: any) {
+      console.error(`[Download API Error]`, error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message || "Failed to download media." });
+      }
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -1063,7 +1178,7 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*all", (req, res) => {
+    app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

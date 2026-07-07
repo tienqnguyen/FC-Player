@@ -6191,6 +6191,7 @@ export default function App() {
               : "w-full mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
           } bg-[#0A0B10]/40 backdrop-blur-[40px] rounded-[24px] border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
             <StemStudio 
+               originalAudioUrl={stemSongInfo?.url || currentSong?.url || audioUrl}
                stemUrls={stemUrls} 
                songTitle={stemSongInfo?.title || currentSong?.title || "Untitled Track"}
                coverUrl={stemSongInfo?.cover || currentSong?.cover}

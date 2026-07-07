@@ -1,6 +1,6 @@
 import WaveSurfer from "wavesurfer.js";
 import JSZip from 'jszip';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import audioBufferToWav from 'audiobuffer-to-wav';
 import lamejs from 'lamejs';
 
@@ -30,9 +30,13 @@ function audioBufferToMp3(buffer: AudioBuffer): Blob {
   }
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
-import { Play, Pause, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw } from 'lucide-react';
+import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type } from 'lucide-react';
+import { transcribeWithCohere } from '../utils/cohereTranscriber';
+import { transcribeWithRNNT } from '../utils/rnntTranscriber';
+import { Copy, FileText, Edit2, Save } from 'lucide-react';
 
 interface StemStudioProps {
+  originalAudioUrl?: string | null;
   stemUrls?: { vocals?: string | null; drums?: string | null; bass?: string | null; guitar?: string | null; piano?: string | null; other?: string | null } | null;
   songTitle: string;
   coverUrl?: string | null;
@@ -49,6 +53,95 @@ interface StemStudioProps {
   onSetSeparationMode?: (mode: "webgpu" | "onnx" | "ai") => void;
   newSongTitle?: string | null;
   onExtractNewSong?: () => void;
+}
+
+function textToLrc(rawText: string, totalDuration: number): string {
+  if (!rawText) return "";
+  
+  // If the text already has LRC format timestamps like [01:23.45], return it as-is
+  const lrcLineRegex = /^\[\d{2,}:\d{2}(?:\.\d{1,3})?\]/;
+  const lines = rawText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length > 0 && lines.every(line => lrcLineRegex.test(line))) {
+    return rawText;
+  }
+  
+  // Otherwise, split the raw text into logical lines/segments
+  const rawSegments = rawText.split(/\n+/).filter(s => s.trim().length > 0);
+  const processedSegments: string[] = [];
+  
+  for (const seg of rawSegments) {
+    const clauses = seg.split(/(?<=[.?!,])\s+/).filter(c => c.trim().length > 0);
+    for (const clause of clauses) {
+      const words = clause.split(/\s+/).filter(w => w.length > 0);
+      const wordsPerLine = 8;
+      if (words.length <= 12) {
+        processedSegments.push(clause.trim());
+      } else {
+        for (let i = 0; i < words.length; i += wordsPerLine) {
+          const chunk = words.slice(i, i + wordsPerLine).join(' ');
+          if (chunk.trim()) {
+            processedSegments.push(chunk.trim());
+          }
+        }
+      }
+    }
+  }
+  
+  const totalChars = processedSegments.reduce((acc, s) => acc + s.length, 0);
+  let currTime = 0;
+  
+  const lrcLines = processedSegments.map(seg => {
+    const ratio = seg.length / (totalChars || 1);
+    const dur = ratio * (totalDuration || 60);
+    const start = currTime;
+    currTime += dur;
+    
+    const m = Math.floor(start / 60).toString().padStart(2, '0');
+    const s = Math.floor(start % 60).toString().padStart(2, '0');
+    const hundredths = Math.floor((start % 1) * 100).toString().padStart(2, '0');
+    return `[${m}:${s}.${hundredths}] ${seg}`;
+  });
+  
+  return lrcLines.join("\n");
+}
+
+function parseLrc(lrcText: string, totalDuration: number) {
+  if (!lrcText) return [];
+  const lines = lrcText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+  const lrcLineRegex = /^\[(\d+):(\d+)(?:\.(\d+))?\]\s*(.*)$/;
+  
+  const parsed: { text: string; start: number; end: number }[] = [];
+  
+  for (const line of lines) {
+    const match = line.match(lrcLineRegex);
+    if (match) {
+      const m = parseInt(match[1], 10);
+      const s = parseInt(match[2], 10);
+      const hundredthsStr = match[3] || "00";
+      const hundredths = parseInt(hundredthsStr.padEnd(2, '0').slice(0, 2), 10);
+      const start = m * 60 + s + hundredths / 100;
+      const text = match[4].trim();
+      parsed.push({ text, start, end: start + 2 });
+    } else {
+      parsed.push({ text: line, start: -1, end: -1 });
+    }
+  }
+  
+  for (let i = 0; i < parsed.length; i++) {
+    if (parsed[i].start === -1) {
+      const prevStart = i > 0 ? parsed[i - 1].end : 0;
+      parsed[i].start = prevStart;
+      parsed[i].end = prevStart + 3;
+    } else {
+      if (i < parsed.length - 1 && parsed[i + 1].start !== -1) {
+        parsed[i].end = parsed[i + 1].start;
+      } else {
+        parsed[i].end = Math.max(parsed[i].start + 3, totalDuration || (parsed[i].start + 5));
+      }
+    }
+  }
+  
+  return parsed;
 }
 
 const STEM_COLORS: Record<string, string> = {
@@ -107,6 +200,7 @@ function StemWaveform({ url, color, audioElement }: { url: string, color: string
 }
 
 export default function StemStudio({ 
+  originalAudioUrl,
   stemUrls, 
   songTitle,
   coverUrl, 
@@ -160,6 +254,58 @@ export default function StemStudio({
     vocals: false, drums: false, bass: false, guitar: false, piano: false, other: false
   });
   
+  // Whisper Transcription States
+    const [expandedSections, setExpandedSections] = useState({
+    mixer: true,
+    transcript: true,
+    masterFx: true,
+    masterEq: true,
+    aiCloud: true
+  });
+  const toggleSection = (section) => {
+    setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
+  };
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionStatus, setTranscriptionStatus] = useState('');
+  const [subtitles, setSubtitles] = useState<any[] | null>(null);
+  const [cohereTranscript, setCohereTranscript] = useState<string | null>(null);
+  const [isEditingTranscript, setIsEditingTranscript] = useState(false);
+  const [editingLineIdx, setEditingLineIdx] = useState<number | null>(null);
+  const [editingLineText, setEditingLineText] = useState("");
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(originalDuration || 0);
+
+  // Clear old song Vocal transcript when a new song/stems load
+  useEffect(() => {
+    setCohereTranscript(null);
+    setSubtitles(null);
+    setIsEditingTranscript(false);
+    setEditingLineIdx(null);
+    setEditingLineText("");
+  }, [originalAudioUrl, stemUrls]);
+
+  const transcriptLines = useMemo(() => {
+    return parseLrc(cohereTranscript || "", duration || 0);
+  }, [cohereTranscript, duration]);
+
+  const handleSaveInlineLine = (idx: number, text: string) => {
+    if (text.trim() === "") return;
+    const lines = cohereTranscript ? cohereTranscript.split("\n").filter(l => l.trim().length > 0) : [];
+    const newLines = lines.map((line, i) => {
+      if (i === idx) {
+        // Keep the timestamp if it exists, replace the text
+        const match = line.match(/^\[\d{2,}:\d{2}(?:\.\d{1,3})?\]/);
+        if (match) {
+          return `${match[0]} ${text.trim()}`;
+        }
+        return text.trim();
+      }
+      return line;
+    });
+    setCohereTranscript(newLines.join("\n"));
+    setEditingLineIdx(null);
+  };
+  
   // EQ states (-12 to 12 dB)
   const [eqs, setEqs] = useState<Record<string, {low: number, mid: number, high: number}>>({
     vocals: {...defaultEq}, drums: {...defaultEq}, bass: {...defaultEq}, 
@@ -186,8 +332,6 @@ export default function StemStudio({
   
   const [activeTab, setActiveTab] = useState<'mixer' | 'eq'>('mixer');
 
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(originalDuration || 0);
   const [logs, setLogs] = useState<string[]>([]);
   const [customSpaceUrl, setCustomSpaceUrl] = useState(() => {
     try {
@@ -916,6 +1060,82 @@ export default function StemStudio({
       a.click();
     }
   };
+  const handleRNNTTranscribe = async () => {
+    const audioUrlToTranscribe = originalAudioUrl || (stemUrls && stemUrls["vocals"]);
+    if (!audioUrlToTranscribe) return;
+    try {
+      setIsTranscribing(true);
+      setTranscriptionStatus('Uploading to RNN-T API...');
+      
+      const text = await transcribeWithRNNT(audioUrlToTranscribe);
+      setCohereTranscript(textToLrc(text, duration || 0));
+      setTranscriptionStatus('Done!');
+    } catch (e: any) {
+      console.error('RNN-T error', e);
+      setTranscriptionStatus(`Error: ${e.message}`);
+    } finally {
+      setTimeout(() => {
+        setIsTranscribing(false);
+        setTranscriptionStatus('');
+      }, 5000);
+    }
+  };
+  const handleCohereTranscribe = async () => {
+    const audioUrlToTranscribe = originalAudioUrl || (stemUrls && stemUrls["vocals"]);
+    if (!audioUrlToTranscribe) return;
+
+    try {
+      setIsTranscribing(true);
+      setTranscriptionStatus('Uploading to Cohere ASR...');
+      
+      const text = await transcribeWithCohere(audioUrlToTranscribe, "vi");
+      setCohereTranscript(textToLrc(text, duration || 0));
+      setTranscriptionStatus('Done!');
+    } catch (e: any) {
+      console.error('Cohere error', e);
+      setTranscriptionStatus(`Error: ${e.message}`);
+    } finally {
+      setTimeout(() => {
+        setIsTranscribing(false);
+        setTranscriptionStatus('');
+      }, 5000);
+    }
+  };
+  
+  const handleCopyTranscript = () => {
+      if (cohereTranscript) navigator.clipboard.writeText(cohereTranscript);
+  };
+  
+  const handleExportSRT = () => {
+      if (!cohereTranscript) return;
+      
+      // Simple pseudo-SRT generation since we don't have timestamps from Cohere
+      const lines = cohereTranscript.split(/(?<=[.?!])\s+/).filter(l => l.trim().length > 0);
+      let srtContent = "";
+      let startTime = 0;
+      const durationPerLine = (duration || 60) / (lines.length || 1);
+      
+      const formatTime = (secs: number) => {
+          const h = Math.floor(secs / 3600).toString().padStart(2, '0');
+          const m = Math.floor((secs % 3600) / 60).toString().padStart(2, '0');
+          const s = Math.floor(secs % 60).toString().padStart(2, '0');
+          const ms = Math.floor((secs % 1) * 1000).toString().padStart(3, '0');
+          return `${h}:${m}:${s},${ms}`;
+      };
+      
+      lines.forEach((line, i) => {
+          srtContent += `${i + 1}\n`;
+          srtContent += `${formatTime(startTime)} --> ${formatTime(startTime + durationPerLine)}\n`;
+          srtContent += `${line}\n\n`;
+          startTime += durationPerLine;
+      });
+      
+      const blob = new Blob([srtContent], { type: 'text/srt' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${songTitle || 'transcript'}.srt`;
+      a.click();
+  };
 
   const handleExportMix = async () => {
     if (!audioContextRef.current || !stemUrls) return;
@@ -1103,11 +1323,11 @@ export default function StemStudio({
         {/* Slider Track Wrapper */}
         <div className="relative w-6 h-[72px] flex items-center justify-center my-1">
             {/* Background Line */}
-            <div className="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-[2px] bg-black/60 rounded-full border border-white/5 shadow-[inset_0_1px_3px_rgba(0,0,0,1)]" />
+            <div className="absolute left-1/2 -translate-x-1/2 top-0 bottom-0 w-[2px] bg-white/25 rounded-full border border-white/10 shadow-[inset_0_1px_2px_rgba(255,255,255,0.1)]" />
             
             {/* Active Positive Fill Indicator */}
             <div 
-              className="absolute left-1/2 -translate-x-1/2 w-[4px] rounded-full bg-amber-400/80 shadow-[0_0_6px_rgba(251,191,36,0.5)] pointer-events-none transition-all duration-200"
+              className="absolute left-1/2 -translate-x-1/2 w-[4px] rounded-full bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.7)] pointer-events-none transition-all duration-200"
                style={{
                  height: `${band.g > 0 ? (band.g / 12) * 50 : 0}%`,
                  bottom: '50%'
@@ -1115,7 +1335,7 @@ export default function StemStudio({
              />
             {/* Active Negative Fill Indicator */}
             <div 
-              className="absolute left-1/2 -translate-x-1/2 w-[4px] rounded-full bg-white/10 pointer-events-none transition-all duration-200"
+              className="absolute left-1/2 -translate-x-1/2 w-[4px] rounded-full bg-white/40 pointer-events-none transition-all duration-200"
                style={{
                  height: `${band.g < 0 ? Math.abs(band.g / 12) * 50 : 0}%`,
                  top: '50%'
@@ -1339,7 +1559,7 @@ export default function StemStudio({
                       </div>
                    </div>
                 ) : (
-                   <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
+                   <div className="flex flex-col items-center justify-center py-8 px-4 text-center max-w-xl mx-auto">
                       <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center text-red-400 mb-4">
                          <X className="w-6 h-6" />
                       </div>
@@ -1347,15 +1567,104 @@ export default function StemStudio({
                       <p className="text-[11px] sm:text-xs text-white/40 text-center max-w-sm leading-relaxed mb-6 font-sans">
                          {stemmixError || "An unexpected error occurred during processing."}
                       </p>
-                      {onRetrySeparate && (
-                         <button 
-                            type="button"
-                            onClick={onRetrySeparate} 
-                            className="text-[10px] tracking-widest uppercase font-black border-2 border-amber-400 text-amber-400 bg-amber-400/5 px-6 py-2 rounded-full hover:bg-amber-400 hover:text-black transition-all active:scale-95 shadow-lg shadow-amber-400/5"
-                         >
-                            Retry Separation
-                         </button>
+
+                      {separationMode === "ai" && (
+                         <div className="w-full bg-[#0E1015]/90 border border-amber-400/20 rounded-2xl p-4 mb-6 text-left shadow-lg">
+                            <div className="flex items-center gap-2 text-amber-400 font-bold text-xs mb-2">
+                               <Cloud className="w-4 h-4 shrink-0" />
+                               <span>Get Your Own Free AI Separation Cloud:</span>
+                            </div>
+                            <p className="text-[11px] text-white/70 leading-relaxed font-sans mb-3">
+                               Public servers are busy or rate-limited. You can duplicate the space to run on your own free Hugging Face hardware:
+                            </p>
+                            
+                            <div className="flex flex-col gap-2.5 bg-black/40 p-3 rounded-xl border border-white/5 text-[10px] text-white/60 mb-3.5">
+                               <div className="flex items-start gap-1.5">
+                                  <span className="w-4 h-4 rounded-full bg-amber-400/10 flex items-center justify-center text-[9px] font-black text-amber-400 shrink-0">1</span>
+                                  <div>
+                                     <span>Go to the official space: </span>
+                                     <a 
+                                        href="https://huggingface.co/spaces/tienqnguyen95/Stemmix" 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        className="text-amber-400 hover:underline break-all font-mono font-bold inline-flex items-center gap-0.5"
+                                     >
+                                        tienqnguyen95/Stemmix ↗
+                                     </a>
+                                  </div>
+                               </div>
+                               <div className="flex items-start gap-1.5">
+                                  <span className="w-4 h-4 rounded-full bg-amber-400/10 flex items-center justify-center text-[9px] font-black text-amber-400 shrink-0">2</span>
+                                  <div>
+                                     Click the three dots <strong className="text-white font-mono">...</strong> in the top-right corner, then click <strong className="text-white">"Duplicate this Space"</strong>. Set visibility to <strong className="text-amber-400">Public</strong> (runs on free CPU).
+                                  </div>
+                               </div>
+                               <div className="flex items-start gap-1.5">
+                                  <span className="w-4 h-4 rounded-full bg-amber-400/10 flex items-center justify-center text-[9px] font-black text-amber-400 shrink-0">3</span>
+                                  <div>
+                                     Paste your cloned Space ID (e.g., <span className="font-mono text-amber-300 font-bold">your-username/Stemmix</span>) below:
+                                  </div>
+                               </div>
+                            </div>
+
+                            <div className="flex gap-2">
+                               <input
+                                  type="text"
+                                  placeholder="e.g. your-username/Stemmix"
+                                  value={customSpaceUrl}
+                                  onChange={(e) => {
+                                     const val = e.target.value.trim();
+                                     setCustomSpaceUrl(val);
+                                     try {
+                                        localStorage.setItem("stemmix_custom_space_url", val);
+                                     } catch {}
+                                  }}
+                                  className="flex-1 bg-black/60 border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-400/40 focus:ring-1 focus:ring-amber-400/15"
+                               />
+                               {customSpaceUrl && (
+                                  <button
+                                     type="button"
+                                     onClick={() => {
+                                        setCustomSpaceUrl("");
+                                        try {
+                                           localStorage.removeItem("stemmix_custom_space_url");
+                                        } catch {}
+                                     }}
+                                     className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase rounded-xl transition-all border border-white/5"
+                                  >
+                                     Clear
+                                  </button>
+                               )}
+                            </div>
+                            {customSpaceUrl && (
+                               <div className="text-[9px] text-emerald-400 flex items-center gap-1 font-mono mt-2">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  Connected: Your Space will be prioritized for retry/separation!
+                                </div>
+                            )}
+                         </div>
                       )}
+
+                      <div className="flex gap-3 items-center justify-center">
+                         {onRetrySeparate && (
+                            <button 
+                               type="button"
+                               onClick={onRetrySeparate} 
+                               className="text-[10px] tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-6 py-2.5 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-lg shadow-amber-400/10"
+                            >
+                               Retry Separation
+                            </button>
+                         )}
+                         {separationMode === "ai" && (
+                            <button
+                               type="button"
+                               onClick={() => onSetSeparationMode?.("webgpu")}
+                               className="text-[10px] tracking-widest uppercase font-black border border-white/10 text-white/60 hover:text-white bg-white/5 px-6 py-2.5 rounded-full hover:bg-white/10 transition-all active:scale-95"
+                            >
+                               Switch to WebGPU
+                            </button>
+                         )}
+                      </div>
                    </div>
                 )}
              </div>
@@ -1519,16 +1828,67 @@ export default function StemStudio({
                        <span>{formatTime(duration)}</span>
                     </div>
                  </div>
+                 
+                 {/* Right: Transcription Tools */}
+                 <div className="flex items-center gap-2 w-full md:w-auto shrink-0 bg-black/20 p-2 rounded-xl border border-white/5 h-16 sm:h-20 justify-center">
+                    <div className="flex flex-col items-center gap-1 w-full text-center">
+                       <span className="text-[9px] font-bold tracking-[0.1em] text-white/40 uppercase mb-0.5">Subtitles</span>
+                       <div className="flex gap-1.5">
+
+                           <button
+                               onClick={handleCohereTranscribe}
+                               className="h-8 px-3 rounded-lg flex items-center justify-center text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-black/40 border-white/5 text-amber-400/80 hover:text-amber-400 hover:bg-amber-400/10 hover:border-amber-400/30"
+                               title="Transcribe with Cohere (WebGPU Demo)"
+                           >
+                               {isTranscribing ? <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 mr-1.5" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                               Cohere WebGPU
+                           </button>
+                       </div>
+                    </div>
+                 </div>
               </div>
            </div>
 
+          {/* GLOBAL COLLAPSE / EXPAND CONTROL */}
+          <div className="flex justify-end items-center gap-2 mb-1 shrink-0">
+             <button
+                onClick={() => {
+                   const allExpanded = Object.values(expandedSections).every(v => v);
+                   setExpandedSections({
+                      mixer: !allExpanded,
+                      transcript: !allExpanded,
+                      masterFx: !allExpanded,
+                      masterEq: !allExpanded,
+                      aiCloud: !allExpanded
+                   });
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 hover:border-white/10 text-[9px] font-black uppercase tracking-widest text-white/50 hover:text-white transition-all duration-300 active:scale-95 shadow-sm"
+             >
+                {Object.values(expandedSections).every(v => v) ? (
+                   <>
+                      <ChevronUp className="w-3.5 h-3.5 text-amber-400" />
+                      Collapse All Sections
+                   </>
+                ) : (
+                   <>
+                      <ChevronDown className="w-3.5 h-3.5 text-amber-400" />
+                      Expand All Sections
+                   </>
+                )}
+             </button>
+          </div>
+
           {/* STEM VOLUMES MIXER */}
           <div className="flex flex-col gap-3">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
-                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 uppercase"><Sliders className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Mixer</h3>
-                <span className="text-[9px] font-mono font-medium text-white/30">{stemsList.length} <span className="hidden sm:inline">Tracks Loaded</span></span>
+             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('mixer')}>
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Sliders className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Mixer</h3>
+                <div className="flex items-center gap-2">
+                   <span className="text-[9px] font-mono font-medium text-white/30">{stemsList.length} <span className="hidden sm:inline">Tracks Loaded</span></span>
+                   {expandedSections.mixer ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                </div>
              </div>
              
+             {expandedSections.mixer && (
              <div className="flex flex-col gap-2.5">
                 {stemsList.map(stem => (
                    <div key={stem} className="w-full bg-black/30 border border-white/5 hover:border-white/10 hover:bg-black/50 rounded-2xl p-3 flex flex-col md:flex-row md:items-center gap-4 transition-all duration-300 group">
@@ -1594,6 +1954,7 @@ export default function StemStudio({
                              >
                                 <Download className="w-3.5 h-3.5" />
                              </button>
+
                          </div>
                       </div>
 
@@ -1640,14 +2001,102 @@ export default function StemStudio({
                    </div>
                 ))}
              </div>
+             )}
           </div>
-
-          
-          {/* MASTER FX */}
-          <div className="flex flex-col gap-3.5 border-t border-white/5 pt-4">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5">
-                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 uppercase"><Settings2 className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Master FX</h3>
+                                      {/* SUBTITLES UI */}
+          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('transcript')}>
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Vocal Transcript</h3>
+                <div className="flex items-center gap-2">
+                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                       {cohereTranscript && !isEditingTranscript && (
+                           <>
+                               <button onClick={() => setIsEditingTranscript(true)} className="text-white/40 hover:text-white text-[10px] uppercase font-bold flex items-center gap-1"><Edit2 className="w-3 h-3" /> Edit</button>
+                               <button onClick={handleCopyTranscript} className="text-white/40 hover:text-white text-[10px] uppercase font-bold flex items-center gap-1"><Copy className="w-3 h-3" /> Copy</button>
+                               <button onClick={handleExportSRT} className="text-amber-400/70 hover:text-amber-400 text-[10px] uppercase font-bold flex items-center gap-1"><FileText className="w-3 h-3" /> Export SRT</button>
+                           </>
+                       )}
+                       {cohereTranscript && isEditingTranscript && (
+                           <button onClick={() => setIsEditingTranscript(false)} className="text-amber-400 hover:text-amber-300 text-[10px] uppercase font-bold flex items-center gap-1"><Save className="w-3 h-3" /> Save</button>
+                       )}
+                       {isTranscribing && <span className="text-[9px] font-mono font-medium text-amber-400 animate-pulse">{transcriptionStatus}</span>}
+                   </div>
+                   {expandedSections.transcript ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                </div>
              </div>
+             
+             {expandedSections.transcript && (
+               <div className="flex flex-col gap-2.5">
+                {cohereTranscript && isEditingTranscript && (
+                    <textarea 
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[200px]"
+                        value={cohereTranscript}
+                        onChange={(e) => setCohereTranscript(e.target.value)}
+                    />
+                )}
+                
+                {cohereTranscript && !isEditingTranscript && (
+                    <div className="bg-black/20 border border-white/5 p-4 rounded-xl flex flex-col gap-3 max-h-80 overflow-y-auto custom-scrollbar shadow-inner text-left scroll-smooth">
+                        {transcriptLines.map((line, idx) => {
+                           const isActive = currentTime >= line.start && currentTime < line.end;
+                           const isPast = currentTime >= line.end;
+                           return (
+                             <div 
+                               key={idx} 
+                               className={`text-sm leading-relaxed transition-colors duration-300 flex items-center gap-3 ${isActive ? 'text-amber-400 font-bold scale-[1.01] origin-left' : isPast ? 'text-white/60' : 'text-white/30'} group/item`}
+                             >
+                               <span 
+                                 className="text-[9px] font-mono opacity-50 shrink-0 w-12 hover:opacity-100 hover:text-amber-400 cursor-pointer transition-colors"
+                                 onClick={() => handleSeek({ target: { value: line.start } })}
+                                 title="Seek to this time"
+                               >
+                                 {Math.floor(line.start / 60)}:{(Math.floor(line.start % 60)).toString().padStart(2, '0')}
+                               </span>
+                               
+                               {editingLineIdx === idx ? (
+                                 <input
+                                   type="text"
+                                   value={editingLineText}
+                                   onChange={(e) => setEditingLineText(e.target.value)}
+                                   onBlur={() => handleSaveInlineLine(idx, editingLineText)}
+                                   onKeyDown={(e) => {
+                                     if (e.key === 'Enter') {
+                                       handleSaveInlineLine(idx, editingLineText);
+                                     } else if (e.key === 'Escape') {
+                                       setEditingLineIdx(null);
+                                     }
+                                   }}
+                                   autoFocus
+                                   className="flex-1 bg-white/5 border border-amber-400/30 rounded-lg px-2.5 py-1 text-white focus:outline-none focus:border-amber-400/80 font-normal text-sm"
+                                 />
+                                ) : (
+                                  <span 
+                                    className="flex-1 cursor-pointer hover:text-amber-300 hover:underline transition-all"
+                                    onClick={() => {
+                                      setEditingLineIdx(idx);
+                                      setEditingLineText(line.text);
+                                    }}
+                                    title="Click to edit text"
+                                  >
+                                    {line.text}
+                                  </span>
+                                )}
+                             </div>
+                           );
+                        })}
+                    </div>
+                )}
+               </div>
+             )}
+          </div>
+          {/* MASTER FX */}
+          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('masterFx')}>
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Settings2 className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Master FX</h3>
+                {expandedSections.masterFx ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+             </div>
+             {expandedSections.masterFx && (
+               <div className="flex flex-col gap-3.5">
              <div className="grid grid-cols-2 gap-4">
                 <div className="bg-black/20 border border-white/5 p-3 rounded-xl flex flex-col gap-2">
                    <div className="flex items-center justify-between">
@@ -1675,45 +2124,52 @@ export default function StemStudio({
                        type="range" min="0" max="1" step="0.01" value={reverb}
                        onChange={(e) => setReverb(parseFloat(e.target.value))}
                        className="w-full h-1.5 rounded-lg appearance-none bg-white/10 accent-purple-400"
-                   />
-                </div>
-             </div>
-          </div>
-          {/* EQUALIZER */}
-          <div className="flex flex-col gap-3.5 border-t border-white/5 pt-4">
-             <div className="flex justify-between items-center border-b border-white/5 pb-1.5">
-                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 uppercase"><Sliders className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Master EQ</h3>
-                <button 
-                   onClick={() => {
-                      const newEq = masterEq.map((b) => ({ ...b, g: 0 }));
-                      setMasterEq(newEq);
-                   }}
-                   className="text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white/80 active:scale-95 transition-all bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg"
-                >
-                   Reset
-                </button>
-             </div>
-             
-             {/* 3 Rows of 5 Bands Grid */}
-             <div className="flex flex-col gap-4 py-1.5">
-                {/* Row 1: Deep Sub, Sub, Low Bass, Bass, Upper Bass */}
-                <div className="grid grid-cols-5 gap-2.5 place-items-center">
-                   {masterEq.slice(0, 5).map((band, i) => renderEqBand(band, i))}
-                </div>
-                
-                {/* Row 2: Low Mid, Mid, Upper Mid, High Mid, Presence */}
-                <div className="grid grid-cols-5 gap-2.5 place-items-center">
-                   {masterEq.slice(5, 10).map((band, i) => renderEqBand(band, i + 5))}
-                </div>
-                
-                {/* Row 3: Up Pres., Clarity, Highs, Air, Sparkle */}
-                <div className="grid grid-cols-5 gap-2.5 place-items-center">
-                   {masterEq.slice(10, 15).map((band, i) => renderEqBand(band, i + 10))}
-                </div>
-             </div>
-          </div>
+                    />
+                 </div>
+              </div>
+           </div>
+              )}
+           </div>
+                                                                                     {/* EQUALIZER */}
+           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+              <div className="flex justify-between items-center border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('masterEq')}>
+                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Sliders className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Master EQ</h3>
+                 <div className="flex items-center gap-2">
+                    <button 
+                       onClick={(e) => {
+                          e.stopPropagation();
+                          const newEq = masterEq.map((b) => ({ ...b, g: 0 }));
+                          setMasterEq(newEq);
+                       }}
+                       className="text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white/80 active:scale-95 transition-all bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg"
+                    >
+                       Reset
+                    </button>
+                    {expandedSections.masterEq ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                 </div>
+              </div>
+              
+              {expandedSections.masterEq && (
+                 <div className="flex flex-col gap-4 py-1.5">
+                    {/* Row 1: Deep Sub, Sub, Low Bass, Bass, Upper Bass */}
+                    <div className="grid grid-cols-5 gap-2.5 place-items-center">
+                       {masterEq.slice(0, 5).map((band, i) => renderEqBand(band, i))}
+                    </div>
+                    
+                    {/* Row 2: Low Mid, Mid, Upper Mid, High Mid, Presence */}
+                    <div className="grid grid-cols-5 gap-2.5 place-items-center">
+                       {masterEq.slice(5, 10).map((band, i) => renderEqBand(band, i + 5))}
+                    </div>
+                    
+                    {/* Row 3: Up Pres., Clarity, Highs, Air, Sparkle */}
+                    <div className="grid grid-cols-5 gap-2.5 place-items-center">
+                       {masterEq.slice(10, 15).map((band, i) => renderEqBand(band, i + 10))}
+                    </div>
+                 </div>
+              )}
+           </div>
 
-          {/* CUSTOM SERVER CONFIG / HF CLONE INSTRUCTIONS */}
+{/* CUSTOM SERVER CONFIG / HF CLONE INSTRUCTIONS */}
           <div className="flex flex-col gap-3.5 border-t border-white/5 pt-5 pb-3">
              <div className="flex justify-between items-center border-b border-white/5 pb-1.5">
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 uppercase flex items-center gap-1">
@@ -1789,5 +2245,5 @@ export default function StemStudio({
        </div>
 
     </div>
-  );
+   );
 }
