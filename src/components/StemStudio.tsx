@@ -1396,11 +1396,7 @@ export default function StemStudio({
              <span className="text-[9px] font-black tracking-[0.15em] text-amber-400 uppercase bg-amber-400/5 px-2 py-0.5 rounded border border-amber-400/10 hidden xs:inline-block">
                 Stem Studio
              </span>
-             <div className="min-w-0">
-                <h2 className="text-xs sm:text-sm font-black text-white truncate max-w-[140px] sm:max-w-[280px] leading-none" title={songTitle}>
-                   {songTitle}
-                </h2>
-             </div>
+ 
              {newSongTitle && onExtractNewSong && (
                 <button
                     onClick={onExtractNewSong}
