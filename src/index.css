@@ -173,3 +173,13 @@ body {
 .slider-vertical-glass-sm::-moz-range-track {
   background: transparent;
 }
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

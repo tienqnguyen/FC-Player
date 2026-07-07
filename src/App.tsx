@@ -1,14 +1,33 @@
 import React, { useState, useRef, useEffect } from "react";
 import {
   Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, MonitorPlay, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List, X, Volume2,
-  PictureInPicture
+  PictureInPicture, Lightbulb, Rocket
 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
 import StemStudio from "./components/StemStudio";
 import { separateStemsWithWebGpu, isWebGpuSupported } from "./utils/webgpuDsp";
+import { separateStemsWithONNX } from "./utils/onnxSeparation";
 import audioBufferToWav from "audiobuffer-to-wav";
 import { db, auth, initAuth, handleFirestoreError, OperationType } from "./firebase";
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
+
+
+function safeDecodeAudioData(ctx: AudioContext, audioData: ArrayBuffer): Promise<AudioBuffer> {
+  return new Promise((resolve, reject) => {
+    try {
+      const promise = ctx.decodeAudioData(
+        audioData,
+        (buffer) => resolve(buffer),
+        (err) => reject(err || new Error("decodeAudioData callback error"))
+      );
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch((err) => reject(err || new Error("decodeAudioData promise error")));
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
 const VISUALIZER_PALETTES = {
   gold: {
@@ -2083,6 +2102,7 @@ const DEFAULT_SPATIAL = {
 export default function App() {
   const [currentSong, setCurrentSong] = useState<any>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [repeatMode, setRepeatMode] = useState<"off" | "all" | "one">("all");
@@ -2091,8 +2111,10 @@ export default function App() {
   
   // Stemmix states
   const [stemmixStatus, setStemmixStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const [separationMode, setSeparationMode] = useState<"webgpu" | "ai">("webgpu");
+  const [stemmixProgress, setStemmixProgress] = useState(0);
+  const [separationMode, setSeparationMode] = useState<"webgpu" | "onnx" | "ai">("webgpu");
   const [stemUrls, setStemUrls] = useState<{ vocals: string | null; drums: string | null; bass: string | null; guitar: string | null; piano: string | null; other: string | null } | null>(null);
+  const [stemSongInfo, setStemSongInfo] = useState<{title: string, duration: number, cover?: string, audioUrl?: string} | null>(null);
   const [stemmixError, setStemmixError] = useState("");
   const [showStemmix, setShowStemmix] = useState(true);
   // Audio elements for playback of stems
@@ -2276,8 +2298,15 @@ export default function App() {
         },
         body: JSON.stringify({ cookiesText: textToSave })
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      let data;
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          if (!res.ok) throw new Error("Stemmix server returned invalid response (Status " + res.status + ")");
+          throw new Error("Failed to parse JSON response");
+        }
+        if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to update cookies");
       }
       setSaveCookiesMessage(data.message);
@@ -2316,6 +2345,9 @@ export default function App() {
     localStorage.setItem("acoustic_presence_recent_tiktok", JSON.stringify(recentSongs));
   }, [recentSongs]);
 
+  const [webgpuQuality, setWebgpuQuality] = useState<'fast' | 'high' | 'ultra' | 'pro'>(() => {
+    return (localStorage.getItem("stemmix_webgpu_quality") as any) || "ultra";
+  });
   const [defaultPlaylistInput, setDefaultPlaylistInput] = useState("");
   const [isSavingDefaultPlaylist, setIsSavingDefaultPlaylist] = useState(false);
   const [saveDefaultMsg, setSaveDefaultMsg] = useState("");
@@ -2351,6 +2383,18 @@ export default function App() {
     const saved = localStorage.getItem("acoustic_presence_recent_tiktok");
     if (!saved || JSON.parse(saved).length === 0) {
       handleLoadDefaultPlaylist();
+    } else {
+      const parsed = JSON.parse(saved);
+      if (parsed && parsed.length > 0) {
+        const firstSong = parsed[0];
+        setCurrentSong(firstSong);
+        let playUrl = firstSong.audioUrl;
+        if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
+          playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
+        }
+        setAudioUrl(playUrl);
+        setFileName(firstSong.title || "Default Song");
+      }
     }
   }, []);
 
@@ -2363,8 +2407,15 @@ export default function App() {
         },
         body: JSON.stringify({ songs: recentSongs })
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      let data;
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          if (!res.ok) throw new Error("Stemmix server returned invalid response (Status " + res.status + ")");
+          throw new Error("Failed to parse JSON response");
+        }
+        if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to save playlist");
       }
       setSaveQueueSuccess(true);
@@ -2386,8 +2437,15 @@ export default function App() {
         },
         body: JSON.stringify({ url: defaultPlaylistInput })
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      let data;
+        const text = await res.text();
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          if (!res.ok) throw new Error("Stemmix server returned invalid response (Status " + res.status + ")");
+          throw new Error("Failed to parse JSON response");
+        }
+        if (!res.ok || !data.success) {
         throw new Error(data.error || "Failed to parse or save playlist");
       }
       setSaveDefaultMsg(`Successfully set! Default playlist saved; loaded ${data.songs?.length || 0} songs.`);
@@ -2746,9 +2804,32 @@ export default function App() {
 
   const activePreloadUrlRef = useRef<string | null>(null);
 
-  const playRecentSong = (song: any) => {
+  const playRecentSong = async (song: any) => {
     // Determine target URL
     let playUrl = song.audioUrl;
+    
+    // TKaraoke lazy fetch
+    if (song.isTKaraokePlaylistTrack && song.originalUrl) {
+      try {
+        setIsFetchingTiktok(true);
+        const resDetails = await fetch(`/api/tkaraoke/song?url=${encodeURIComponent(song.originalUrl)}`);
+        const detailsJson = await resDetails.json();
+        if (detailsJson.success && detailsJson.data.mp3Versions.length > 0) {
+           playUrl = `/api/proxy-stream?url=${encodeURIComponent(detailsJson.data.mp3Versions[0].url)}`;
+           song.audioUrl = playUrl; // cache it
+           song.author = detailsJson.data.mp3Versions[0].name;
+        }
+      } catch (err) {
+        console.error("Failed to fetch tkaraoke mp3", err);
+      } finally {
+        setIsFetchingTiktok(false);
+      }
+    }
+
+    const isLocal = song.id?.startsWith("local_") || (playUrl && playUrl.startsWith("blob:"));
+    if (!isLocal) {
+      setUploadedFile(null);
+    }
     if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
       playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
     }
@@ -3002,6 +3083,38 @@ export default function App() {
     }
   };
 
+  const handleLocalAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadedFile(file);
+
+    // Create a local object URL for the file
+    const url = URL.createObjectURL(file);
+    const newSong = {
+      id: `local_${Date.now()}`,
+      title: file.name.replace(/.[^/.]+$/, ""),
+      author: "Local File",
+      audioUrl: url,
+      coverUrl: "https://images.unsplash.com/photo-1614113489855-66422ad300a4?w=500&q=80&auto=format&fit=crop",
+      timestamp: Date.now()
+    };
+
+    setRecentSongs(prev => {
+      const existingIds = new Set(prev.map(s => s.id));
+      if (!existingIds.has(newSong.id)) {
+        return [newSong, ...prev].slice(0, 50);
+      }
+      return prev;
+    });
+
+    setCurrentSong(newSong);
+    setAudioUrl(newSong.audioUrl);
+    setFileName(newSong.title);
+    setIsPlaying(true);
+    setShowAddAlbum(false);
+  };
+
   const handleAddAlbumSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     let val = newAlbumInput.trim();
@@ -3012,6 +3125,7 @@ export default function App() {
                          val.includes("youtu.be") || 
                          val.includes("nhaccuatui.com") ||
                          val.includes("nct.vn") ||
+                         val.includes("tkaraoke.com") ||
                          val.startsWith("[") ||
                          val.includes("__NUXT_DATA__") ||
                          val.includes("/video/") || 
@@ -3074,8 +3188,9 @@ export default function App() {
     // Robust general URL fetching (supports YouTube, Facebook, SoundCloud, Twitch, Vimeo, Twitter/X, etc. via yt-dlp)
     const isTikTokUrl = urlToUse.includes("tiktok.com") || (urlToUse.includes("@") && !urlToUse.includes("://"));
     const isNctUrl = urlToUse.includes("nhaccuatui.com") || urlToUse.includes("nct.vn") || urlToUse.startsWith("[") || urlToUse.includes("__NUXT_DATA__");
+    const isTKaraokeUrl = urlToUse.includes("tkaraoke.com");
 
-    if (!isTikTokUrl && !isNctUrl) {
+    if (!isTikTokUrl && !isNctUrl && !isTKaraokeUrl) {
       try {
         const metadataRes = await fetch(`/api/metadata?url=${encodeURIComponent(urlToUse)}`);
         let data;
@@ -3188,6 +3303,70 @@ export default function App() {
       return;
     }
 
+    if (isTKaraokeUrl) {
+      try {
+        const isSong = urlToUse.includes("/song/") || (urlToUse.match(/\.html$/) && !urlToUse.includes("playlist"));
+        if (isSong) {
+            const res = await fetch(`/api/tkaraoke/song?url=${encodeURIComponent(urlToUse)}`);
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json.error || "Failed to process TKaraoke link");
+            const details = json.data;
+            if (details.mp3Versions && details.mp3Versions.length > 0) {
+              const bestVersion = details.mp3Versions[0];
+              const streamUrl = `/api/proxy-stream?url=${encodeURIComponent(bestVersion.url)}`;
+              const newSong = {
+                  id: "tkar_" + Date.now().toString(),
+                  title: urlToUse.split('/').pop()?.replace('.html', '') || "TKaraoke Track",
+                  originalUrl: urlToUse,
+                  audioUrl: streamUrl,
+                  cover: "https://images.unsplash.com/photo-1516280440502-127db8e0586e?q=80&w=300",
+                  author: bestVersion.name || "TKaraoke",
+                  timestamp: Date.now()
+              };
+              setRecentSongs((prev) => {
+                  const filtered = prev.filter((s) => s.originalUrl !== urlToUse);
+                  return [newSong, ...filtered].slice(0, 50);
+              });
+              playRecentSong(newSong);
+              setTiktokUrl("");
+              setTiktokError("");
+            } else {
+              throw new Error("No playable mp3 version found for this song.");
+            }
+        } else {
+            const res = await fetch(`/api/tkaraoke/playlist?url=${encodeURIComponent(urlToUse)}`);
+            const json = await res.json();
+            if (!res.ok || !json.success) throw new Error(json.error || "Failed to process TKaraoke playlist");
+            const songsList = json.data.songs;
+            if (!songsList || songsList.length === 0) throw new Error("No play-ready audio tracks found in this TKaraoke link.");
+            
+            // Map the tkaraoke playlist to recentSongs format
+            const mappedSongs = songsList.map((s: any, idx: number) => ({
+                id: "tkar_" + idx + "_" + Date.now().toString(),
+                title: s.title || "TKaraoke Track",
+                originalUrl: s.url,
+                audioUrl: s.url, 
+                cover: "https://images.unsplash.com/photo-1516280440502-127db8e0586e?q=80&w=300",
+                author: "TKaraoke",
+                timestamp: Date.now(),
+                isTKaraokePlaylistTrack: true 
+            }));
+            
+            setRecentSongs(mappedSongs);
+            shouldAutoPlayRef.current = true;
+            playRecentSong(mappedSongs[0]);
+            
+            setTiktokUrl("");
+            setTiktokError("");
+        }
+      } catch (err: any) {
+         setTiktokError(err.message || "Failed to fetch TKaraoke source.");
+      } finally {
+         setIsFetchingTiktok(false);
+      }
+      return;
+    }
+
     let isUserLink = false;
     let username = "";
     
@@ -3229,6 +3408,7 @@ export default function App() {
           title: v.title || v.desc || "TikTok Audio",
           originalUrl: "https://www.tiktok.com/@" + username + "/video/" + (v.video_id || v.id),
           audioUrl: v.music || v.play || v.music_info?.play,
+          videoUrl: v.play || null,
           cover: v.cover || v.origin_cover || v.music_info?.cover,
           author: v.author?.nickname || "@" + username,
           timestamp: Date.now()
@@ -3440,57 +3620,57 @@ export default function App() {
 
     setCountdown(null);
 
-    let currentVol = audioRef.current ? audioRef.current.volume : 1;
-    const volumeStep = currentVol / 2;
+    const wasPlaying = isPlaying || (audioRef.current && !audioRef.current.paused);
+    const currentTime = audioRef.current ? audioRef.current.currentTime : 0;
     
-    fadeTimeoutRef.current = setInterval(() => {
-      if (audioRef.current) {
-        currentVol = Math.max(0, currentVol - volumeStep);
-        audioRef.current.volume = currentVol;
-      }
-      if (masterGainRef.current) {
-        masterGainRef.current.gain.value = currentVol;
-      }
-      if (currentVol <= 0 && fadeTimeoutRef.current) {
-        clearInterval(fadeTimeoutRef.current);
-      }
-    }, 25);
+    let needsRestore = false;
 
-    countdownTimeoutRef.current = setTimeout(() => {
-      if (type === "HD") {
-        resumeContext();
-        if (targetValue) {
+    if (type === "HD") {
+      resumeContext();
+      if (targetValue) {
+        if (bgPlayBypass !== false) {
           setBgPlayBypass(false);
-          toggleSignatureSound(true);
-        } else {
-          toggleSignatureSound(false);
+          needsRestore = true;
         }
-      } else if (type === "BG") {
-        const wasPlaying = isPlaying;
-        const currentTime = audioRef.current ? audioRef.current.currentTime : 0;
-
-        setBgPlayBypass(targetValue);
-        
-        setTimeout(() => {
-          if (audioRef.current && audioUrl) {
-            audioRef.current.currentTime = currentTime;
-            if (wasPlaying) {
-              audioRef.current.play().then(() => {
-                setIsPlaying(true);
-              }).catch((e) => {
-                console.warn("Playback resume blocked:", e);
-                setIsPlaying(false);
-              });
-            }
-          }
-        }, 50);
-
-        if (targetValue) {
-          toggleSignatureSound(false);
-          setShowVisualizer(false);
-        }
+        toggleSignatureSound(true);
+      } else {
+        toggleSignatureSound(false);
       }
-    }, 50);
+    } else if (type === "BG") {
+      if (bgPlayBypass !== targetValue) {
+        setBgPlayBypass(targetValue);
+        needsRestore = true;
+      }
+      if (targetValue) {
+        toggleSignatureSound(false);
+        setShowVisualizer(false);
+      }
+    }
+
+    if (needsRestore) {
+      let attempts = 0;
+      const restoreTime = () => {
+        if (audioRef.current && audioRef.current.readyState >= 1) {
+          audioRef.current.currentTime = currentTime;
+          if (wasPlaying) {
+            audioRef.current.play().then(() => {
+              setIsPlaying(true);
+            }).catch((e) => {
+              console.warn("Playback resume blocked:", e);
+              setIsPlaying(false);
+            });
+          }
+        } else if (attempts < 20) {
+          attempts++;
+          setTimeout(restoreTime, 50);
+        }
+      };
+      setTimeout(restoreTime, 10);
+    } else {
+      if (wasPlaying && audioRef.current) {
+         audioRef.current.play().catch(e => console.warn(e));
+      }
+    }
   };
 
   useEffect(() => {
@@ -3657,7 +3837,16 @@ export default function App() {
         setIsPlaying(false);
       }
     }
-  }, [audioUrl, bgPlayBypass]);
+  }, [audioUrl]);
+
+  useEffect(() => {
+    if (audioRef.current && audioUrl && !bgPlayBypass) {
+      initAudio(audioRef.current);
+      setTimeout(() => {
+        toggleSignatureSound(isSignatureSoundRef.current);
+      }, 100);
+    }
+  }, [bgPlayBypass]);
 
   const handleTimeUpdate = () => {
     if (audioRef.current && !isNaN(audioRef.current.duration)) {
@@ -3729,6 +3918,13 @@ export default function App() {
     const fetchAndDecodeMetadata = async () => {
       try {
         const response = await fetch(audioUrl);
+        if (!response.ok) {
+           throw new Error(`Failed to fetch audio: ${response.statusText}`);
+        }
+        const contentType = response.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+           throw new Error("Received JSON error instead of audio stream. Upstream might be blocked.");
+        }
         const arrayBuffer = await response.arrayBuffer();
         
         if (!active) return;
@@ -3737,7 +3933,7 @@ export default function App() {
         if (!CtxClass) return;
         
         const tempCtx = new CtxClass();
-        const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+        const audioBuffer = await safeDecodeAudioData(tempCtx as any, arrayBuffer);
         
         if (!active) {
           tempCtx.close();
@@ -3824,18 +4020,28 @@ export default function App() {
     };
   };
 
-  const handleSeparateStems = async (forceEngine?: "webgpu" | "ai") => {
+  const handleSeparateStems = async (forceEngine?: "webgpu" | "onnx" | "ai") => {
     if (!audioUrl) return;
     setShowStemmix(true);
     if (audioRef.current && !audioRef.current.paused) {
         audioRef.current.pause();
         setIsPlaying(false);
     }
+    if (stemsPlaying) {
+      setStemsPlaying(false);
+    }
+    Object.values(stemsAudioRefs.current).forEach((a: any) => {
+      a.pause();
+      a.removeAttribute('src');
+    });
+    stemsAudioRefs.current = {};
+    
     setStemUrls(null);
+    setStemSongInfo({ title: currentSong?.title || "Untitled Track", duration: duration || 0, cover: currentSong?.cover, audioUrl: audioUrl });
     setStemmixStatus("loading");
     setStemmixError("");
 
-    const activeEngine = forceEngine || separationMode;
+    const activeEngine = (typeof forceEngine === "string" ? forceEngine : null) || separationMode;
     console.log(`[Stemmix] Starting separation using engine: ${activeEngine}`);
 
     if (activeEngine === "webgpu") {
@@ -3851,10 +4057,11 @@ export default function App() {
 
         console.log("[WebGPU] Decoding audio binary data...");
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
+        const decodedBuffer = await safeDecodeAudioData(ctx as any, arrayBuffer);
 
         console.log("[WebGPU] Executing 31-tap FIR filters & dynamic enhancers...");
-        const processedStems = await separateStemsWithWebGpu(decodedBuffer, ctx);
+        
+        const processedStems = await separateStemsWithWebGpu(decodedBuffer, ctx, undefined, webgpuQuality);
 
         console.log("[WebGPU] Conversion to playable WAV stems in progress...");
         const stemUrlsObj: any = {};
@@ -3875,6 +4082,7 @@ export default function App() {
         }
 
         console.log("[WebGPU] Stems fully compiled client-side!");
+        stemUrlsObj.isDspFallback = true;
         setStemUrls(stemUrlsObj);
         setStemmixStatus("ready");
       } catch (err: any) {
@@ -3882,41 +4090,84 @@ export default function App() {
         setStemmixError(err.message || "WebGPU separation failed. Try selecting AI Cloud mode.");
         setStemmixStatus("error");
       }
-    } else {
+    } else if (activeEngine === "ai") {
       try {
-        const res = await fetch("/api/stemmix", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audioUrl })
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || "Failed to separate stems");
+        console.log("[AI Cloud] Sending to remote server for separation...");
+        const formData = new FormData();
+        if (uploadedFile && audioUrl && audioUrl.startsWith("blob:")) {
+          formData.append("audio_file", uploadedFile);
+        } else {
+          formData.append("audioUrl", audioUrl || "");
         }
-        setStemUrls(data.stems);
+        
+        let customSpace = "";
+        try {
+          customSpace = localStorage.getItem("stemmix_custom_space_url") || "";
+        } catch {}
+        if (customSpace) {
+          formData.append("customSpace", customSpace);
+        }
+
+        const res = await fetch("/api/stemmix", {
+            method: "POST",
+            body: formData
+        });
+        if (!res.ok) throw new Error("AI Cloud request failed");
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        
+        console.log("[AI Cloud] Stems successfully separated remotely!");
+        setStemUrls({
+            vocals: data.stems?.vocals,
+            drums: data.stems?.drums,
+            bass: data.stems?.bass,
+            guitar: data.stems?.guitar || data.stems?.other,
+            piano: data.stems?.piano || data.stems?.other,
+            other: data.stems?.other,
+            isDspFallback: false
+        } as any);
+        setStemmixStatus("ready");
+      } catch (err: any) {
+         console.error("[AI Cloud error]", err);
+         setStemmixError(err.message || "AI Cloud separation failed.");
+         setStemmixStatus("error");
+      }
+    } else if (activeEngine === "onnx") {
+      try {
+        console.log("[ONNX] Initializing ONNX Runtime Web session...");
+        const response = await fetch(audioUrl);
+        const arrayBuffer = await response.arrayBuffer();
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const decodedBuffer = await safeDecodeAudioData(ctx as any, arrayBuffer);
+        
+        console.log("[ONNX] Executing ONNX neural network inference...");
+        const processedStems = await separateStemsWithONNX(decodedBuffer, ctx, (prog) => {
+           setStemmixProgress(Math.floor(prog * 100));
+        });
+        
+        console.log("[ONNX] Converting ONNX output tensors to playable WAV stems...");
+        const stemUrlsObj: any = {};
+        const keys = ["vocals", "bass", "drums", "other"] as const;
+        for (const key of keys) {
+          const buffer = processedStems[key];
+          const wavBuffer = audioBufferToWav(buffer);
+          const wavBlob = new Blob([wavBuffer], { type: "audio/wav" });
+          const blobUrl = URL.createObjectURL(wavBlob);
+          stemUrlsObj[key] = blobUrl;
+        }
+        console.log("[ONNX] Stems extracted successfully client-side!");
+        stemUrlsObj.isDspFallback = true;
+        setStemUrls(stemUrlsObj);
         setStemmixStatus("ready");
       } catch (err: any) {
         console.error(err);
-        setStemmixError(err.message);
+        setStemmixError(err.message || "ONNX Separation failed. Try checking your browser's WebAssembly support.");
         setStemmixStatus("error");
       }
     }
   };
 
-  useEffect(() => {
-    // Reset stems when song changes
-    setStemUrls(null);
-    setStemmixStatus("idle");
-    setShowStemmix(false);
-    if (stemsPlaying) {
-      setStemsPlaying(false);
-    }
-    Object.values(stemsAudioRefs.current).forEach((a: any) => {
-      a.pause();
-      a.removeAttribute('src');
-    });
-    stemsAudioRefs.current = {};
-  }, [audioUrl]);
+
 
   const handleTouchEnd = (e: React.TouchEvent) => {
     if (touchStartRef.current === null) return;
@@ -4088,25 +4339,17 @@ export default function App() {
       
 {/* Main Single Page Layout Container */}
       <div 
-        className={`w-full mx-auto relative z-20 ${
-          isCompact 
-            ? showStemmix
-              ? "h-full max-h-[100dvh] overflow-hidden flex flex-col lg:grid lg:grid-cols-3 px-1 lg:px-4 pt-1 pb-1 flex-1 lg:gap-6"
-              : "h-full max-h-[100dvh] overflow-hidden flex flex-col px-1 lg:px-4 pt-1 pb-1 flex-1" 
-            : showStemmix
-              ? "w-full max-w-[1500px] flex-1 lg:overflow-hidden overflow-y-auto h-full pb-10 flex flex-col lg:grid lg:grid-cols-3 px-4 pt-2 gap-6"
-              : "w-full max-w-[1500px] flex-1 overflow-hidden h-full pb-10 flex flex-row px-4 pt-2 gap-6 justify-center"
+        className={`w-full mx-auto relative z-20 h-full max-h-[100dvh] overflow-hidden flex flex-col ${
+          showStemmix 
+            ? "lg:grid lg:grid-cols-3 px-1 lg:px-4 pt-1 pb-1 flex-1 lg:gap-6" 
+            : "px-1 lg:px-4 pt-1 pb-1 flex-1"
         }`}
       >
         {/* Column 1 (Left Column) - Player & Playlist */}
         <div className={`w-full flex flex-col ${
-          !isCompact 
-            ? (showStemmix
-                ? "lg:col-span-1 min-h-[80vh] lg:min-h-0 lg:h-full lg:overflow-y-auto custom-scrollbar pr-2 gap-4 shrink-0" 
-                : "w-full max-w-[500px] shrink-0 h-full overflow-y-auto custom-scrollbar pr-2 gap-4 mx-auto")
-            : showStemmix
-              ? "max-w-screen-md mx-auto flex-1 min-h-0 lg:col-span-1 lg:h-full lg:overflow-y-auto lg:custom-scrollbar lg:pr-2 lg:gap-4"
-              : "max-w-screen-md mx-auto flex-1 min-h-0"
+          showStemmix
+            ? "max-w-screen-md mx-auto flex-1 min-h-0 lg:col-span-1 lg:h-full lg:overflow-y-auto lg:custom-scrollbar lg:pr-2 lg:gap-4 shrink-0"
+            : "max-w-screen-md mx-auto flex-1 min-h-0"
         }`}>
           
           {/* Player Section */}
@@ -4263,7 +4506,7 @@ export default function App() {
                   <div className="relative flex justify-center w-12 border-none">
                     {(() => {
                       const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;
-                      const isTikTokVideo = !!currentSong?.videoUrl && currentSong.videoUrl !== currentSong.audioUrl && !ytUrl;
+                      const isTikTokVideo = !!currentSong?.videoUrl && !ytUrl;
                       const hasVideo = !!(ytUrl || isTikTokVideo);
                       return hasVideo && (
                         <button 
@@ -4293,7 +4536,7 @@ export default function App() {
                   </button>
                   {(() => {
                     const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;
-                    const isTikTokVideo = !!currentSong?.videoUrl && currentSong.videoUrl !== currentSong.audioUrl && !ytUrl;
+                    const isTikTokVideo = !!currentSong?.videoUrl && !ytUrl;
                     
                     return (showVideoIframe && (isTikTokVideo || ytUrl)) ? (
                       <button 
@@ -4316,10 +4559,10 @@ export default function App() {
                             setShowVideoIframe(true);
                           }
                         }} 
-                        className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${document.pictureInPictureElement ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                        className={`flex flex-row items-center justify-center gap-1.5 p-2 rounded-xl transition-all active:scale-95 ${document.pictureInPictureElement ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
                         title="Picture-in-Picture"
                       >
-                          <PictureInPicture className="w-5 h-5 mb-0.5" />
+                          <PictureInPicture className="w-5 h-5" />
                           <span className="font-black text-[9px] sm:text-[10px] whitespace-nowrap tracking-wider uppercase">PIP</span>
                       </button>
                     ) : (
@@ -4342,7 +4585,7 @@ export default function App() {
                     </button>
                   )}
                   <button 
-                    onClick={handleSeparateStems}
+                    onClick={() => setShowStemmix(!showStemmix)}
                     className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showStemmix ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
                     title="Separate Audio Stems (Stemmix)"
                   >
@@ -4417,7 +4660,7 @@ export default function App() {
                    {bgPlayBypass && (
                      <div className="p-3 bg-amber-500/10 border border-amber-500/10 rounded-[14px] text-amber-300 text-[10.5px] leading-relaxed relative overflow-hidden backdrop-blur-sm shadow-[inset_0_0_12px_rgba(251,191,36,0.03)] select-none animate-in fade-in slide-in-from-top-1 duration-300">
                         <div className="font-extrabold uppercase tracking-widest text-[9.5px] text-amber-400 mb-0.5 flex items-center gap-1.5">
-                          <span>💡 iOS BG MODE ACTIVE</span>
+                          <span className="flex items-center gap-1.5"><Lightbulb className="w-3.5 h-3.5" /> iOS BG MODE ACTIVE</span>
                         </div>
                         <p className="opacity-80">
                           Web Audio is bypassed to support true lockscreen background play. <strong>Waveforms and HD Lossless upscaling are dynamically simulated in this compatibility mode.</strong>
@@ -4634,10 +4877,13 @@ export default function App() {
               <div className="text-[11px] font-bold tracking-wider text-amber-400 uppercase mb-2.5">
                 Add Creator or Track
               </div>
+              <p className="text-[11px] text-white/50 mb-3">
+                Paste a link from <strong>TikTok, YouTube, Facebook, NCT, or TKaraoke</strong>.
+              </p>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="e.g. @bellapoarch, TikTok, or YouTube link..."
+                  placeholder="Paste URL here..."
                   value={newAlbumInput}
                   onChange={(e) => setNewAlbumInput(e.target.value)}
                   className="flex-1 bg-black/40 border border-white/5 rounded-xl px-3.5 py-2.5 text-[16px] md:text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/20"
@@ -4652,8 +4898,20 @@ export default function App() {
                   Add
                 </button>
               </div>
+              <div className="flex gap-2 mt-2">
+                <label className="flex-1 bg-white/10 hover:bg-white/15 cursor-pointer border border-white/10 rounded-xl px-3.5 py-2.5 text-center transition-all flex items-center justify-center gap-2">
+                   <Upload className="w-4 h-4 text-white/70" />
+                   <span className="text-[11px] font-bold tracking-wider text-white/70 uppercase">Import Local Audio</span>
+                   <input 
+                      type="file" 
+                      accept="audio/*,.mp3,.wav,.m4a,.aac" 
+                      className="hidden" 
+                      onChange={handleLocalAudioUpload} 
+                   />
+                </label>
+              </div>
               <p className="text-[10px] text-white/40 mt-1.5 px-1 leading-normal">
-                Type any creator username like `@khaby.lame` to load posts as dynamic albums, or paste video URLs to pull songs.
+                Type any creator username like `@khaby.lame` to load posts as dynamic albums, paste video URLs, or import local files.
               </p>
             </form>
           )}
@@ -4680,7 +4938,7 @@ export default function App() {
 
           {/* Tab 1: Up Next */}
           {playlistTab === "upnext" && (
-            <div className={`z-10 relative flex flex-col min-h-0 ${isCompact ? "flex-1 overflow-hidden" : ""}`}>
+            <div className={`z-10 relative flex flex-col min-h-0 flex-1 overflow-hidden`}>
               {recentSongs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 px-4 bg-white/[0.02] border border-white/[0.04] rounded-3xl text-center">
                   <Music className="w-8 h-8 text-white/10 mb-3" />
@@ -4717,9 +4975,7 @@ export default function App() {
                       Play Random
                     </button>
                   </div>
-                  <div className={`flex flex-col gap-1 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent ${
-                    isCompact ? "flex-1 overflow-y-auto" : "max-h-[350px] overflow-y-auto"
-                  }`}>
+                  <div className={`flex flex-col gap-1 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent flex-1 overflow-y-auto`}>
                     {recentSongs.map((song) => {
                       const isActive = currentSong?.id === song.id;
                       return (
@@ -4844,7 +5100,7 @@ export default function App() {
               </div>
 
               {/* Layout constraint wrapper so Albums and Other Tracks scroll together */}
-              <div className={`flex flex-col pb-4 ${isCompact ? "flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10" : "flex-1 min-h-0"}`}>
+              <div className={`flex flex-col pb-4 flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10`}>
                 <div className="grid grid-cols-2 gap-3 items-start content-start">
               {allAlbums.map((alb) => {
                 const normalizedUser = alb.username.toLowerCase();
@@ -5088,7 +5344,7 @@ export default function App() {
           )}
 
           {playlistTab === "search" && (
-            <div className={`z-10 relative flex flex-col min-h-0 ${isCompact ? "flex-1 overflow-hidden" : ""}`}>
+            <div className={`z-10 relative flex flex-col min-h-0 flex-1 overflow-hidden`}>
               {/* Search Header */}
               <div className="flex flex-col gap-3 mb-4 shrink-0">
                 <form onSubmit={handleTiktokSearch} className="flex flex-col gap-2.5">
@@ -5233,7 +5489,7 @@ export default function App() {
                       <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900/95 border border-white/10 rounded-xl shadow-2xl z-[80] overflow-hidden backdrop-blur-md">
                         {suggestions.map((sug, i) => (
                           <div
-                            key={i}
+                            key={`sug_${sug}_${i}`}
                             onClick={() => {
                               setTiktokSearchQuery(sug);
                               setShowSuggestions(false);
@@ -5255,7 +5511,7 @@ export default function App() {
                   <div className="flex items-center gap-2 flex-wrap px-0.5">
                     <span className="text-[9px] font-bold text-white/30 uppercase tracking-wider">Recent:</span>
                     {recentSearches.map((term, idx) => (
-                      <div key={idx} className="flex items-center gap-1 bg-white/5 hover:bg-white/10 border border-white/[0.02] rounded-md pl-2 pr-1 py-0.5 text-[9px] text-white/70 transition-colors">
+                      <div key={`search_${term}_${idx}`} className="flex items-center gap-1 bg-white/5 hover:bg-white/10 border border-white/[0.02] rounded-md pl-2 pr-1 py-0.5 text-[9px] text-white/70 transition-colors">
                         <span
                           className="cursor-pointer font-medium hover:text-amber-400"
                           onClick={() => {
@@ -5294,9 +5550,7 @@ export default function App() {
               )}
 
               {/* Search Results */}
-              <div className={`flex flex-col gap-2 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent flex-1 overflow-y-auto ${
-                isCompact ? "" : "max-h-[350px]"
-              }`}>
+              <div className={`flex flex-col gap-2 pr-1 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent flex-1 overflow-y-auto`}>
                 {isSearchingTiktok && tiktokSearchResults.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-white/50 bg-white/[0.01] border border-white/5 rounded-3xl">
                     <div className="w-6 h-6 border-2 border-amber-400 rounded-full border-t-transparent animate-spin mb-3" />
@@ -5744,11 +5998,7 @@ export default function App() {
 
           {/* Tab 3: Help Guide & PWA installation */}
           {playlistTab === "guide" && (
-            <div className={`flex flex-col gap-5 text-white/90 pb-8 ${
-              isCompact 
-                ? "flex-1 overflow-y-auto pr-1 min-h-0 scrollbar-thin scrollbar-thumb-white/10" 
-                : "h-auto w-full"
-            }`}>
+            <div className={`flex flex-col gap-5 text-white/90 pb-8 flex-1 overflow-y-auto pr-1 min-h-0 scrollbar-thin scrollbar-thumb-white/10`}>
               
               {/* Introduction Card */}
               <div className="bg-white/[0.02] border border-white/5 rounded-3xl p-5 sm:p-6 relative backdrop-blur-sm">
@@ -5919,7 +6169,7 @@ export default function App() {
               {/* iOS Background Play tip */}
               <div className="bg-amber-400/5 border border-amber-400/10 rounded-2xl p-4 text-[10px] sm:text-[11px] leading-relaxed relative select-none">
                 <div className="font-extrabold uppercase tracking-widest text-[9px] text-amber-400 mb-1 flex items-center gap-1.5">
-                  <span>💡 PRO-TIP FOR CONTINUOUS BACKGROUND PLAYBACK</span>
+                  <span className="flex items-center gap-1.5"><Lightbulb className="w-3.5 h-3.5" /> PRO-TIP FOR CONTINUOUS BACKGROUND PLAYBACK</span>
                 </div>
                 <p className="opacity-80">
                   Toggle on <strong>"BG PLAY"</strong> (or <strong>"iOS BG Mode"</strong> in EQ panels) to prevent Apple iOS from pausing media when your screen lock automatically engages.
@@ -5939,22 +6189,31 @@ export default function App() {
             !isCompact 
               ? "lg:col-span-2 h-[80vh] lg:h-full shrink-0 lg:shrink" 
               : "w-full mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
-          } bg-[#0A0A0C]/95 backdrop-blur-xl rounded-[24px] border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
+          } bg-[#0A0B10]/40 backdrop-blur-[40px] rounded-[24px] border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
             <StemStudio 
                stemUrls={stemUrls} 
-               songTitle={currentSong?.title || "Untitled Track"}
-               originalDuration={duration || 0}
+               songTitle={stemSongInfo?.title || currentSong?.title || "Untitled Track"}
+               coverUrl={stemSongInfo?.cover || currentSong?.cover}
+               originalDuration={stemSongInfo?.duration || duration || 0}
                onClose={() => setShowStemmix(false)}
                isEmbedded={true}
                isCompactUI={isCompact}
                stemmixStatus={stemmixStatus}
+               progress={stemmixProgress}
                stemmixError={stemmixError}
-               onRetrySeparate={handleSeparateStems}
+               onRetrySeparate={() => handleSeparateStems()}
                separationMode={separationMode}
+               onStemLoadError={(stem, err) => { setStemmixError(`Failed to load stem ${stem}: ${err}`); setStemmixStatus("error"); }}
                onSetSeparationMode={(mode) => {
                  setSeparationMode(mode);
                  handleSeparateStems(mode);
                }}
+               newSongTitle={
+                 audioUrl && audioUrl !== stemSongInfo?.audioUrl && stemmixStatus !== "loading"
+                   ? currentSong?.title || "Untitled Track" 
+                   : null
+               }
+               onExtractNewSong={() => handleSeparateStems()}
             />
           </div>
         )}
@@ -5988,6 +6247,37 @@ export default function App() {
                 >
                   ✕
                 </button>
+              </div>
+
+              
+              {/* WebGPU Settings */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[10px] font-black tracking-wider text-amber-400 uppercase flex items-center gap-1.5">
+                    <Settings className="w-3.5 h-3.5" />
+                    WebGPU Separation Quality
+                  </h3>
+                  <span className="text-[8px] bg-purple-500/15 border border-purple-500/30 text-purple-400 px-1.5 py-0.5 rounded font-black font-mono">LOCAL SETTING</span>
+                </div>
+                <p className="text-[10px] text-white/50 leading-relaxed font-sans">
+                  Adjust the FIR filter resolution (taps) for local stem separation. Higher values yield better isolation but take longer to process.
+                </p>
+                <div className="flex gap-2 items-center">
+                  <select
+                    value={webgpuQuality}
+                    onChange={(e) => {
+                      const val = e.target.value as 'fast' | 'high' | 'ultra' | 'pro';
+                      setWebgpuQuality(val);
+                      localStorage.setItem("stemmix_webgpu_quality", val);
+                    }}
+                    className="flex-1 bg-black/50 border border-white/5 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400/40 focus:ring-1 focus:ring-amber-400/15"
+                  >
+                    <option value="fast">Fast (255 taps) - Low Quality</option>
+                    <option value="high">High (1023 taps) - Good Quality</option>
+                    <option value="ultra">Ultra (4095 taps) - Professional</option>
+                    <option value="pro">Max Pro (8191 taps) - Audiophile</option>
+                  </select>
+                </div>
               </div>
 
               {/* Section A: App Default Playlist (NhacCuaTui) */}
@@ -6102,7 +6392,7 @@ export default function App() {
                 {/* Info / Tips */}
                 <div className="text-[10px] text-white/50 leading-relaxed bg-black/20 rounded-xl p-3 border border-white/5 select-none flex flex-col gap-2">
                   <p>
-                    <strong className="text-white">🚀 Instruction:</strong> Install the{" "}
+                    <strong className="text-white flex items-center gap-1"><Rocket className="w-3.5 h-3.5 inline" /> Instruction:</strong> Install the{" "}
                     <a href="https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm" target="_blank" rel="noreferrer" className="text-amber-400 hover:text-amber-300 hover:underline inline-flex items-center gap-0.5 font-bold">
                       "Get cookies Editor" <ExternalLink className="w-2.5 h-2.5" />
                     </a>{" "}

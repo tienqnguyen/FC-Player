@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<body>
+<script type="module">
+  import audioBufferToWav from 'https://cdn.jsdelivr.net/npm/audiobuffer-to-wav@1.0.0/+esm';
+  
+  const ctx = new AudioContext();
+  const buffer = ctx.createBuffer(2, 44100 * 3, 44100); // 3 seconds of silence
+  const wav = audioBufferToWav(buffer);
+  
+  const blob = new Blob([wav], { type: 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  
+  const audio = new Audio(url);
+  audio.oncanplay = () => console.log("Wav decodable!");
+  audio.onerror = () => console.error("Wav error:", audio.error.code, audio.error.message);
+  document.body.appendChild(audio);
+  audio.controls = true;
+</script>
+</body>
+</html>

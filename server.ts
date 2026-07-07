@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import youtubedl from "youtube-dl-exec";
+import multer from "multer";
 import cors from "cors";
 import path from "path";
 import fs from "fs/promises";
@@ -10,6 +11,7 @@ import { spawn } from "child_process";
 import ytSearch from "yt-search";
 import axios from "axios";
 import { fetchNctPlaylistWithProxyRace, parseNctHtml } from "./server/nctParser";
+import { fetchTKaraokePlaylist, fetchTKaraokeSongDetails } from "./server/tkaraokeParser";
 import { hasYoutubeCookies, getCookiesFilePath, saveYoutubeCookies, getYoutubeCookiesStatus } from "./server/youtubeCookieHelper";
 import { getCachedData, setCachedData, invalidateCache } from "./server/cacheHelper";
 
@@ -103,235 +105,50 @@ async function startServer() {
         res.status(400).json({ error: "Invalid stream URL" });
         return;
       }
-
       url = await resolveFacebookRedirect(url);
-
-      // Attempt high-performance Range-proxying using direct CDN URL extraction
+      
       try {
         const directUrl = await getDirectMediaUrl(url);
         console.log(`[Stream Range Proxy] Streaming direct URL: ${directUrl.substring(0, 80)}...`);
-
         const headers: Record<string, string> = {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         };
-
-        if (req.headers.range) {
-          headers["Range"] = req.headers.range;
-        }
-
+        if (req.headers.range) headers["Range"] = req.headers.range;
         const response = await fetch(directUrl, { headers });
-
-        if (response.status !== 200 && response.status !== 206) {
-          console.warn(`[Stream Range Proxy] Upstream returned non-success status ${response.status} for URL. Evicting cache.`);
-          directStreamMemoryCache.delete(url);
-          throw new Error(`Upstream returned non-success status: ${response.status}`);
-        }
-
         res.status(response.status);
-
         let contentType = response.headers.get("content-type");
-        if (contentType) {
-          // Normalize video/mp4 (e.g. from Facebook) to audio/mp4 so mobile browsers and HTML5 <audio> handle it reliably
-          if (contentType.startsWith("video/")) {
-            contentType = contentType.replace("video/", "audio/");
-          }
-          res.setHeader("Content-Type", contentType);
-        } else {
-          res.setHeader("Content-Type", "audio/mp4");
-        }
-
+        if (contentType) res.setHeader("Content-Type", contentType);
         const contentLength = response.headers.get("content-length");
         if (contentLength) res.setHeader("Content-Length", contentLength);
-
         const contentRange = response.headers.get("content-range");
         if (contentRange) res.setHeader("Content-Range", contentRange);
-
-        const acceptRanges = response.headers.get("accept-ranges");
-        if (acceptRanges) {
-          res.setHeader("Accept-Ranges", acceptRanges);
-        } else {
-          res.setHeader("Accept-Ranges", "bytes");
-        }
-
+        res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
-
         if (response.body) {
-          const nodeStream = Readable.fromWeb(response.body as any);
-          nodeStream.pipe(res);
-          res.on("close", () => {
-            nodeStream.destroy();
-          });
-          return;
+            const nodeStream = Readable.fromWeb(response.body as any);
+            nodeStream.pipe(res);
+            res.on("close", () => nodeStream.destroy());
+            return;
         }
-      } catch (proxyError: any) {
-        console.warn(`[Stream Range Proxy] Failed to extract/stream direct URL, falling back to live spawned pipeline:`, proxyError.message || proxyError);
+      } catch(err) {
+         console.warn("[Stream Proxy] direct url failed, falling back to yt-dlp");
       }
 
-      // FALLBACK: Spawned live yt-dlp pipeline (No native Range support, but streams directly)
-      res.header("Content-Type", "audio/mp4");
-      res.header("Accept-Ranges", "bytes");
-      res.header(
-        "Content-Disposition",
-        `inline; filename="audio.m4a"`,
-      );
-
-      const ytdlOptions: any = {
-        o: "-",
-        f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
-        noPlaylist: true,
-        jsRuntimes: "node",
-        noCheckCertificates: true,
-      };
-      
-      if (await hasYoutubeCookies()) {
-        ytdlOptions.cookies = getCookiesFilePath();
-      }
-
-      const subprocess = youtubedl.exec(url, ytdlOptions, { stdio: ["ignore", "pipe", "ignore"] });
-
-      subprocess.catch((err: any) => {
-        console.error("yt-dlp child process error:", err.stderr || err.message);
-        if (!res.headersSent) {
-          res.status(500).end();
-        }
-      });
-
+      const ytDlpArgs = ["-f", "bestaudio", "-o", "-", url];
+      const subprocess = spawn("yt-dlp", ytDlpArgs);
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Transfer-Encoding", "chunked");
       if (subprocess.stdout) {
-        subprocess.stdout.pipe(res);
-      } else {
-        res.status(500).json({ error: "Failed to create audio stream" });
-      }
-    } catch (error: any) {
-      console.error(error);
-      res
-        .status(500)
-        .json({ error: error.message || "Failed to stream media URL" });
-    }
-  });
-
-  // API to get general metadata (supported sites: YouTube, Facebook, SoundCloud, Twitter, etc.)
-  app.get("/api/metadata", async (req, res) => {
-    try {
-      let url = req.query.url as string;
-      if (!url) {
-        res.status(400).json({ error: "Invalid URL" });
-        return;
-      }
-      
-      url = await resolveFacebookRedirect(url);
-      
-      const ytdlOptions: any = {
-        dumpSingleJson: true,
-        noWarnings: true,
-        noPlaylist: true,
-        f: "all",
-        jsRuntimes: "node",
-        noCheckCertificates: true,
-      };
-      
-      if (await hasYoutubeCookies()) {
-        ytdlOptions.cookies = getCookiesFilePath();
-      }
-
-      const info = (await youtubedl(url, ytdlOptions)) as any;
-      
-      res.json({ 
-        title: info.title || "Shared Audio Track",
-        cover: info.thumbnail || info.thumbnails?.[0]?.url || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300",
-        author: info.uploader || info.artist || "Web Audio",
-        duration: info.duration || 180
-      });
-    } catch (error: any) {
-      console.error(error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // API to proxy and download audio as attachment
-  app.get("/api/download", async (req, res) => {
-    try {
-      let url = req.query.url as string;
-      const title = (req.query.title as string) || "audio";
-      
-      if (!url) {
-        res.status(400).json({ error: "Invalid URL" });
-        return;
-      }
-
-      url = await resolveFacebookRedirect(url);
-
-      res.header("Content-Type", "audio/mp4");
-      res.header(
-        "Content-Disposition",
-        `attachment; filename="${encodeURIComponent(title)}.m4a"`
-      );
-
-      // If it's a YouTube / Facebook / SoundCloud etc. URL, we use youtubedl
-      const isDirectTikTokAudio = url.includes("tikwm.com") || url.includes("tiktokcdn") || url.includes("tiktok.com");
-      const isNctAudio = url.includes("nct.vn") || url.includes("nhaccuatui.com");
-      
-      if (!isDirectTikTokAudio && !isNctAudio && (url.includes("://") || url.startsWith("http"))) {
-        const ytdlOptions: any = {
-          o: "-",
-          f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
-          jsRuntimes: "node",
-          noCheckCertificates: true,
-        };
-        
-        if (await hasYoutubeCookies()) {
-          ytdlOptions.cookies = getCookiesFilePath();
-        }
-
-        const subprocess = youtubedl.exec(url, ytdlOptions, { stdio: ["ignore", "pipe", "ignore"] });
-
-        subprocess.catch((err: any) => {
-          console.error("yt-dlp child process error:", err.stderr || err.message);
-          if (!res.headersSent) {
-            res.status(500).end();
-          }
-        });
-
-        if (subprocess.stdout) {
           subprocess.stdout.pipe(res);
-        } else {
-          res.status(500).json({ error: "Failed to create audio stream" });
-        }
       } else {
-        // Otherwise, it's a direct url (like tiktok audio), fetch and pipe it
-        const response = await fetch(url);
-        if (!response.ok) throw new Error("Failed to fetch audio from source");
-        if (response.body) {
-          // fetch API stream to node stream compatibility
-          const reader = response.body.getReader();
-          const pumper = async () => {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              res.write(value);
-            }
-            res.end();
-          };
-          pumper().catch(err => {
-            console.error(err);
-            if (!res.writableEnded) res.end();
-          });
-        } else {
-          res.status(500).json({ error: "No body in audio response" });
-        }
+          res.status(500).json({ error: "Failed to create audio stream" });
       }
     } catch (error: any) {
-      console.error(error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: error.message || "Failed to download audio" });
-      } else if (!res.writableEnded) {
-        res.end();
-      }
+       res.status(500).json({ error: error.message });
     }
   });
-
-  // API to proxy and stream direct audio URLs (bypassing CORS & Geo-blocking) with range support
 
   app.get("/api/proxy-stream", async (req, res) => {
     try {
@@ -339,59 +156,41 @@ async function startServer() {
       if (!url) {
         return res.status(400).json({ error: "URL is required" });
       }
-
       const headers: Record<string, string> = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": "https://www.nhaccuatui.com/",
-        "Origin": "https://www.nhaccuatui.com"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
       };
-
-      // Support Range requests from the browser audio tag (necessary for seek & buffer in Chrome/Safari)
+      if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
+        headers["Referer"] = "https://www.nhaccuatui.com/";
+        headers["Origin"] = "https://www.nhaccuatui.com";
+      }
       if (req.headers.range) {
         headers["Range"] = req.headers.range;
       }
-
-      console.log(`[Proxy Stream] Fetching direct stream from source: ${url.substring(0, 80)}...`);
       const response = await fetch(url, { headers });
-
-      // Forward headers from upstream to client
-      res.status(response.status);
-      
-      let contentType = response.headers.get("content-type");
-      if (url.toLowerCase().includes(".flac")) {
-        contentType = "audio/flac";
+      if (!response.ok) {
+        console.error(`[Proxy Stream] HTTP error fetching ${url}: ${response.status} ${response.statusText}`);
       }
+      res.status(response.status);
+      let contentType = response.headers.get("content-type");
+      if (url.toLowerCase().includes(".flac")) contentType = "audio/flac";
       if (contentType) res.setHeader("Content-Type", contentType);
-      
       const contentLength = response.headers.get("content-length");
       if (contentLength) res.setHeader("Content-Length", contentLength);
-      
       const contentRange = response.headers.get("content-range");
       if (contentRange) res.setHeader("Content-Range", contentRange);
-
-      const acceptRanges = response.headers.get("accept-ranges");
-      if (acceptRanges) {
-        res.setHeader("Accept-Ranges", acceptRanges);
-      } else {
-        res.setHeader("Accept-Ranges", "bytes");
-      }
-
-      // Add CORS headers so Web Audio API & audio components can decode natively
+      res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
-
       if (response.body) {
         const nodeStream = Readable.fromWeb(response.body as any);
         nodeStream.pipe(res);
-        res.on("close", () => {
-          nodeStream.destroy();
-        });
+        res.on("close", () => nodeStream.destroy());
       } else {
         res.status(500).json({ error: "No body in audio stream source." });
       }
     } catch (error: any) {
-      console.error("[Proxy Stream Error]", error.message);
+      console.error(`[Proxy Stream] Exception fetching ${req.query.url}:`, error);
       if (!res.headersSent) {
         res.status(500).json({ error: error.message || "Failed to proxy stream." });
       } else if (!res.writableEnded) {
@@ -400,152 +199,180 @@ async function startServer() {
     }
   });
 
-  // API to separate stems using Gradio space
-  app.post("/api/stemmix", async (req, res) => {
+  const upload = multer({ storage: multer.memoryStorage() });
+  app.post("/api/stemmix", upload.single('audio_file'), async (req, res) => {
     try {
-      const { audioUrl } = req.body;
-      if (!audioUrl) {
-        return res.status(400).json({ error: "No audio URL provided" });
-      }
-
-      console.log(`[Stemmix] Separating stems for: ${audioUrl}`);
-      
-      // We must fetch the audio ourselves to bypass any CORS/Referer blocks 
-      // and provide it directly as a Blob to the HF space.
+      let audioUrl = req.body.audioUrl;
       let targetUrl = audioUrl;
-      const headers: Record<string, string> = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      };
+      let blob;
 
-      if (targetUrl.includes("/api/proxy-stream?url=")) {
-        targetUrl = decodeURIComponent(targetUrl.split("url=")[1]);
-        headers["Referer"] = "https://www.nhaccuatui.com/";
-        headers["Origin"] = "https://www.nhaccuatui.com";
+      if (req.file) {
+        // Uploaded file
+        blob = new Blob([req.file.buffer]);
+        console.log(`[Stemmix] Received uploaded file: ${req.file.originalname} (${blob.size} bytes)`);
+        targetUrl = "uploaded_file";
+      } else {
+        if (!audioUrl) {
+          return res.status(400).json({ error: "No audio URL or file provided" });
+        }
+        if (targetUrl && targetUrl.startsWith("blob:")) {
+          return res.status(400).json({ error: "Cannot process browser local blob URLs on the server. Please ensure the local file is uploaded." });
+        }
+        console.log(`[Stemmix] Separating stems for: ${audioUrl}`);
+        
+        const headers = {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        };
+        if (targetUrl.includes("/api/proxy-stream?url=")) {
+          targetUrl = decodeURIComponent(targetUrl.split("url=")[1]);
+          headers["Referer"] = "https://www.nhaccuatui.com/";
+          headers["Origin"] = "https://www.nhaccuatui.com";
+        } else if (targetUrl.startsWith("/")) {
+          targetUrl = `http://localhost:3000${targetUrl}`;
+        }
+        console.log(`[Stemmix] Fetching audio from: ${targetUrl}`);
+        const audioResponse = await fetch(targetUrl, { headers });
+        if (!audioResponse.ok) {
+           throw new Error(`Failed to fetch audio for Stemmix. Status: ${audioResponse.status}`);
+        }
+        const arrayBuffer = await audioResponse.arrayBuffer();
+        blob = new Blob([arrayBuffer]);
+        console.log(`[Stemmix] Downloaded audio blob: ${blob.size} bytes. Initiating HF separation...`);
       }
 
-      console.log(`[Stemmix] Fetching audio from: ${targetUrl}`);
-      const audioResponse = await fetch(targetUrl, { headers });
-      if (!audioResponse.ok) {
-         throw new Error(`Failed to fetch audio for Stemmix. Status: ${audioResponse.status}`);
-      }
-      
-      const arrayBuffer = await audioResponse.arrayBuffer();
-      const blob = new Blob([arrayBuffer]);
-      console.log(`[Stemmix] Downloaded audio blob: ${blob.size} bytes. Initiating HF separation...`);
-
-      // Import dynamically to avoid top-level issues if gradio is not installed yet
       const { client, handle_file } = await import("@gradio/client");
-
       let hfApp;
       let result;
       let success = false;
       let errorMsg = "";
 
-      // Sequential candidate spaces to try for AI separation
-      const spaces = ["PeachJed/Stemmix", "tienqnguyen95/Stemmix", "sociallyclever/demucs"];
-
-      const runSeparation = async () => {
-        for (const space of spaces) {
-          try {
-            console.log(`[Stemmix] Attempting to load Hugging Face Space: ${space}`);
-            const hfApp = await client(space);
-            const res = await hfApp.predict("/separate_stems", {
-              audio_file: handle_file(blob),
-            }) as any;
-            
-            if (res && res.data) {
-              console.log(`[Stemmix] Successfully separated stems using Space: ${space}`);
-              return res;
-            }
-          } catch (e: any) {
-            console.warn(`[Stemmix] Failed using Space ${space}:`, e.message);
-            errorMsg = e.message || String(e);
-          }
+      const spaces = [
+        "sociallyclever/demucs",
+        "PeachJed/Stemmix",
+        "tienqnguyen95/Stemmix",
+        "vumichien/demucs",
+        "akhaliq/demucs",
+        "fabiocarrilho/demucs"
+      ];
+      const customSpace = req.body.customSpace;
+      if (customSpace && typeof customSpace === "string" && customSpace.trim()) {
+        const cleaned = customSpace.trim();
+        if (!spaces.includes(cleaned)) {
+          spaces.unshift(cleaned);
         }
-        return null;
+      }
+
+            const runSeparation = async () => {
+        const promises = spaces.map(async (space) => {
+          console.log(`[Stemmix] Attempting to load Hugging Face Space: ${space}`);
+          const hfApp = await client(space);
+          const res = await hfApp.predict("/separate_stems", {
+            audio_file: handle_file(blob),
+          });
+          if (res && res.data) {
+            console.log(`[Stemmix] Successfully separated stems using Space: ${space}`);
+            return { res, space };
+          }
+          throw new Error("No data");
+        });
+        
+        try {
+          return await Promise.any(promises);
+        } catch (e) {
+          console.log(`[Stemmix] AI models unavailable, switching to WebGPU mode`);
+          return null;
+        }
       };
 
       try {
          result = await Promise.race([
              runSeparation(),
-             new Promise((_, reject) => setTimeout(() => reject(new Error("AI Cloud processing took too long. Falling back to local DSP.")), 45000))
+             new Promise((_, reject) => setTimeout(() => reject(new Error("AI Cloud processing took too long. Falling back to local DSP.")), 180000))
          ]);
-         if (result && result.data) {
+         if (result && result.res && result.res.data) {
              success = true;
          }
-      } catch (timeoutErr: any) {
+      } catch (timeoutErr) {
          console.warn("[Stemmix] Timeout:", timeoutErr.message);
       }
 
-      if (success && result && result.data) {
-        // result.data contains:
-        // 0: { visible: true, __type__: "update" }
-        // 1: status string
-        // 2: drums
-        // 3: bass
-        // 4: other
-        // 5: vocals
-        // 6: guitar
-        // 7: piano
+      if (success && result && result.res && result.res.data) {
+        console.log(`[Stemmix] AI separation result data:`, JSON.stringify(result.res.data, null, 2));
+        const spaceUrl = `https://${result.space.replace('/', '-')}.hf.space`;
+        const getUrl = (item: any) => {
+            if (!item) return null;
+            let u = typeof item === 'string' ? item : (item.url || item.path);
+            if (!u || typeof u !== 'string' || !u.includes('hf.space') && !u.startsWith('http') && !u.startsWith('/')) {
+              return null; // Ignore non-url strings
+            }
+            if (u.startsWith('http://127.0.0.1') || u.startsWith('http://localhost') || u.startsWith('http://0.0.0.0')) {
+              const urlObj = new URL(u);
+              u = `${spaceUrl}${urlObj.pathname}${urlObj.search}`;
+            } else if (u.startsWith('/')) {
+              u = `${spaceUrl}${u}`;
+            }
+            return u;
+        };
+        
+        let vocals, drums, bass, guitar, piano, other;
+        if (Array.isArray(result.res.data)) {
+          for (const item of result.res.data) {
+            if (item && typeof item === 'object' && item.orig_name) {
+              const name = item.orig_name.toLowerCase();
+              const u = getUrl(item);
+              if (!u) continue;
+              
+              if (name.includes('vocal')) vocals = u;
+              else if (name.includes('drum')) drums = u;
+              else if (name.includes('bass')) bass = u;
+              else if (name.includes('guitar')) guitar = u;
+              else if (name.includes('piano')) piano = u;
+              else if (name.includes('other')) other = u;
+            }
+          }
+        }
+        
+        if (!vocals && !drums && !bass && !other && Array.isArray(result.res.data)) {
+          // Fallback if the space doesn't use orig_name or returns strings/simple objects
+          // Assuming typical output order if the first item isn't a string message
+          let offset = 0;
+          if (result.res.data.length > 2 && (typeof result.res.data[0] === 'string' || (result.res.data[0] && result.res.data[0].__type__ === 'update'))) {
+              offset = 2;
+          }
+          vocals = getUrl(result.res.data[offset]);
+          drums = getUrl(result.res.data[offset+1]);
+          bass = getUrl(result.res.data[offset+2]);
+          other = getUrl(result.res.data[offset+3]);
+          guitar = getUrl(result.res.data[offset+4]);
+          piano = getUrl(result.res.data[offset+5]);
+        }
+        
+        const formatProxyUrl = (u?: string) => u ? `/api/proxy-stream?url=${encodeURIComponent(u)}` : null;
+        
         const stems = {
-            drums: result.data[2]?.url || null,
-            bass: result.data[3]?.url || null,
-            other: result.data[4]?.url || null,
-            vocals: result.data[5]?.url || null,
-            guitar: result.data[6]?.url || null,
-            piano: result.data[7]?.url || null,
+            status: "Success",
+            vocals: formatProxyUrl(vocals),
+            drums: formatProxyUrl(drums),
+            bass: formatProxyUrl(bass),
+            guitar: formatProxyUrl(guitar),
+            piano: formatProxyUrl(piano),
+            other: formatProxyUrl(other),
             isDspFallback: false
         };
         return res.json({ success: true, stems });
       }
 
-      // If all HF Spaces are unavailable, gracefully fall back to local Acoustic DSP separation
-      console.log(`[Stemmix] AI separation spaces failed. Activating high-fidelity Local Acoustic DSP Fallback.`);
-      const stems = {
-          drums: audioUrl,
-          bass: audioUrl,
-          other: audioUrl,
-          vocals: audioUrl,
-          guitar: audioUrl,
-          piano: audioUrl,
-          isDspFallback: true
-      };
-      
-      return res.json({ 
-        success: true, 
-        stems, 
-        isDspFallback: true,
-        message: "AI Cloud servers are currently offline. Running in high-fidelity local Acoustic DSP mode."
+      console.log(`[Stemmix] AI separation spaces failed.`);
+      return res.status(400).json({ 
+        success: false, 
+        error: "AI Cloud servers are currently overloaded or offline. Please select the ⚡ WebGPU mode to process it locally." 
       });
-
-    } catch (error: any) {
+    } catch (error) {
       console.error("[Stemmix Error]", error);
-      // Extra safety: Return fallback instead of failing completely
-      try {
-        const { audioUrl } = req.body;
-        if (audioUrl) {
-          const stems = {
-              drums: audioUrl,
-              bass: audioUrl,
-              other: audioUrl,
-              vocals: audioUrl,
-              guitar: audioUrl,
-              piano: audioUrl,
-              isDspFallback: true
-          };
-          return res.json({ 
-            success: true, 
-            stems, 
-            isDspFallback: true,
-            message: "AI Cloud servers are offline. Running in high-fidelity local Acoustic DSP mode."
-          });
-        }
-      } catch (e) {}
       res.status(500).json({ error: error.message || "Failed to separate stems" });
     }
   });
 
-  // API to fetch and parse NhacCuaTui playlist via fast proxy racing to bypass region lock
   app.get("/api/nhaccuatui/playlist", async (req, res) => {
     try {
       const playlistUrl = req.query.url as string;
@@ -957,8 +784,8 @@ async function startServer() {
         },
         // Strategy 3: HTML fetch + proxy via AllOrigins
         async () => {
-           const targetUrl = `https://www.tiktok.com/@${unique_id}`;
-           const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+           const audioUrl = `https://www.tiktok.com/@${unique_id}`;
+           const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(audioUrl)}`;
            const response = await fetch(proxyUrl);
            const data = await response.json();
            const html = data.contents;
@@ -1198,6 +1025,31 @@ async function startServer() {
     } catch (error: any) {
       console.error("[Suggest Error]", error.message);
       res.json([]);
+    }
+  });
+
+  // TKaraoke API endpoints
+  app.get("/api/tkaraoke/playlist", async (req, res) => {
+    try {
+      const url = req.query.url as string;
+      if (!url) return res.status(400).json({ error: "URL is required" });
+      const songs = await fetchTKaraokePlaylist(url);
+      res.json({ success: true, data: { songs } });
+    } catch (error: any) {
+      console.error("[TKaraoke Playlist Error]", error.message);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.get("/api/tkaraoke/song", async (req, res) => {
+    try {
+      const url = req.query.url as string;
+      if (!url) return res.status(400).json({ error: "URL is required" });
+      const details = await fetchTKaraokeSongDetails(url);
+      res.json({ success: true, data: details });
+    } catch (error: any) {
+      console.error("[TKaraoke Song Error]", error.message);
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 

@@ -1,5 +1,23 @@
 import toWav from 'audiobuffer-to-wav';
 
+
+function safeDecodeAudioData(ctx: BaseAudioContext, audioData: ArrayBuffer): Promise<AudioBuffer> {
+  return new Promise((resolve, reject) => {
+    try {
+      const promise = ctx.decodeAudioData(
+        audioData,
+        (buffer) => resolve(buffer),
+        (err) => reject(err || new Error("decodeAudioData callback error"))
+      );
+      if (promise && typeof promise.catch === 'function') {
+        promise.catch((err) => reject(err || new Error("decodeAudioData promise error")));
+      }
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
+
 export const buildImpulseResponse = (ctx: BaseAudioContext, duration: number, decay: number) => {
     const rate = ctx.sampleRate;
     const length = rate * duration;
@@ -381,7 +399,7 @@ export const exportOfflineHD = async (
     onProgress(30);
 
     const acts = new ((window as any).AudioContext || (window as any).webkitAudioContext)();
-    const audioBuffer = await acts.decodeAudioData(audioData);
+    const audioBuffer = await safeDecodeAudioData(acts, audioData);
     onProgress(50);
 
     const offlineCtx = new OfflineAudioContext(audioBuffer.numberOfChannels || 2, audioBuffer.length, audioBuffer.sampleRate);
