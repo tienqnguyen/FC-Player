@@ -1476,17 +1476,6 @@ export default function StemStudio({
                 <Activity className="w-2.5 h-2.5 animate-pulse" /> WebGPU Active
              </div>
              <button 
-                onClick={() => setIsHD(!isHD)}
-                className={`flex items-center justify-center px-3 py-1.5 rounded-full border text-[9px] font-black tracking-widest uppercase transition-all duration-300 active:scale-95 ${
-                  isHD 
-                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.5)]' 
-                    : 'border-white/10 bg-white/5 text-white/40 hover:text-white/70'
-                }`}
-                title="Toggle Lossless HD Audio"
-             >
-                HD
-             </button>
-             <button 
                 onClick={handleExportMix}
                 disabled={stemmixStatus !== "ready" || isExporting}
                 className={`flex items-center gap-1 text-[9px] font-black tracking-widest uppercase px-3.5 py-1.5 rounded-full transition-colors shadow-lg ${
@@ -1771,6 +1760,7 @@ export default function StemStudio({
                        >
                           <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                        </button>
+                       <button onClick={() => setIsHD(!isHD)} className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center border text-[11px] sm:text-[13px] font-black tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 shrink-0 ${isHD ? 'border-amber-400/40 bg-amber-400/10 text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.5)] shadow-[inset_0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/40 hover:bg-black/60 border-white/10 text-white/40 hover:text-white/70 shadow-inner'}`} title="Toggle Lossless HD Audio">HD</button>
                     </div>
                  </div>
 
