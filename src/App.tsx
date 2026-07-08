@@ -12,73 +12,6 @@ import { db, auth, initAuth, handleFirestoreError, OperationType } from "./fireb
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 
 
-// Helper for GenDownload API fallback
-const extractWithGenDownload = async (url: string) => {
-  const response = await fetch("/api/gendownload-extract", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ url })
-  });
-  
-  if (!response.ok) {
-    const errText = await response.text().catch(() => response.statusText);
-    throw new Error(`GenDownload API returned status ${response.status}: ${errText}`);
-  }
-  
-  const data = await response.json();
-  if (!data || !data.formats || data.formats.length === 0) {
-    throw new Error("No playable formats found via GenDownload for this link.");
-  }
-  
-  // Find audio first
-  let targetFormat = data.formats.find((f: any) => f.type === 'audio');
-  // Fallback to video if no audio
-  if (!targetFormat) {
-    targetFormat = data.formats[0];
-  }
-  
-  return {
-    title: data.title || "Shared Media",
-    author: data.author || "Web Media",
-    cover: data.thumbnail || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300",
-    url: targetFormat.url,
-    duration: data.duration || 0
-  };
-};
-
-const fetchChannelWithGenDownload = async (url: string) => {
-  const response = await fetch("/api/gendownload-channel", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ url, limit: 50 })
-  });
-  
-  if (!response.ok) {
-    const errText = await response.text().catch(() => response.statusText);
-    throw new Error(`GenDownload Channel API error: ${response.status} - ${errText}`);
-  }
-  
-  const data = await response.json();
-  if (!data || !data.items || data.items.length === 0) {
-    throw new Error("No items found in this channel/playlist.");
-  }
-  
-  return data.items.map((item: any, idx: number) => ({
-    id: "gd_" + idx + "_" + Date.now(),
-    title: item.title || "Shared Track",
-    originalUrl: item.url,
-    audioUrl: "", // Extract on demand
-    cover: item.thumbnail || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300",
-    author: data.source || "Web Channel",
-    timestamp: Date.now(),
-    isGenDownloadPending: true
-  }));
-};
-
 function safeDecodeAudioData(ctx: AudioContext, audioData: ArrayBuffer): Promise<AudioBuffer> {
   return new Promise((resolve, reject) => {
     try {
@@ -2531,10 +2464,9 @@ export default function App() {
 
   const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search">("upnext");
 
-  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tk">("youtube");
+  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui">("youtube");
   const [tiktokSearchQuery, setTiktokSearchQuery] = useState("");
   const [tiktokSearchResults, setTiktokSearchResults] = useState<any[]>([]);
-  const [searchPage, setSearchPage] = useState(1);
   const [tiktokSearchError, setTiktokSearchError] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -2591,21 +2523,15 @@ export default function App() {
     
     if (!activeQuery) return;
     
-    if (!isLoadMore) setSearchPage(1);
-    const pageToFetch = isLoadMore ? searchPage + 1 : 1;
-
     setIsSearchingTiktok(true);
+    setTiktokSearchError("");
+    setShowSuggestions(false);
     
-    if (!isLoadMore) {
-      setTiktokSearchError("");
-      setShowSuggestions(false);
-      
-      // Add to recent searches
-      setRecentSearches(prev => {
-        const filtered = prev.filter(t => t.toLowerCase() !== activeQuery.toLowerCase());
-        return [activeQuery, ...filtered].slice(0, 8);
-      });
-    }
+    // Add to recent searches
+    setRecentSearches(prev => {
+      const filtered = prev.filter(t => t.toLowerCase() !== activeQuery.toLowerCase());
+      return [activeQuery, ...filtered].slice(0, 8);
+    });
     
     try {
       let endpoint = "";
@@ -2613,8 +2539,6 @@ export default function App() {
         endpoint = `/api/youtube/search?q=${encodeURIComponent(activeQuery)}`;
       } else if (activeType === "nhaccuatui") {
         endpoint = `/api/nct-search?q=${encodeURIComponent(activeQuery)}`;
-      } else if (activeType === "tk") {
-        endpoint = `/api/tk-search?q=${encodeURIComponent(activeQuery)}&p=${pageToFetch}`;
       } else {
         // TikTok search ('sound' or 'video')
         endpoint = `/api/tiktok/search?type=${activeType}&q=${encodeURIComponent(activeQuery)}`;
@@ -2627,18 +2551,10 @@ export default function App() {
       }
       
       const data = await res.json();
-      
-      if (isLoadMore) {
-         setTiktokSearchResults(prev => [...prev, ...(data.videos || [])]);
-         setSearchPage(pageToFetch);
-      } else {
-         setTiktokSearchResults(data.videos || []);
-      }
+      setTiktokSearchResults(data.videos || []);
     } catch (err: any) {
       console.error(err);
-      if (!isLoadMore) {
-        setTiktokSearchError(err.message || "Failed to find search results. Please try another query.");
-      }
+      setTiktokSearchError(err.message || "Failed to find search results. Please try another query.");
     } finally {
       setIsSearchingTiktok(false);
     }
@@ -2910,23 +2826,6 @@ export default function App() {
       }
     }
 
-    // GenDownload lazy fetch
-    if (song.isGenDownloadPending && song.originalUrl) {
-      try {
-        setIsFetchingTiktok(true);
-        const extracted = await extractWithGenDownload(song.originalUrl);
-        playUrl = extracted.url;
-        song.audioUrl = playUrl;
-        song.cover = extracted.cover;
-        song.author = extracted.author;
-        song.isGenDownloadPending = false; // Resolved
-      } catch (err) {
-        console.error("Failed to fetch via GenDownload", err);
-      } finally {
-        setIsFetchingTiktok(false);
-      }
-    }
-
     const isLocal = song.id?.startsWith("local_") || (playUrl && playUrl.startsWith("blob:"));
     if (!isLocal) {
       setUploadedFile(null);
@@ -3081,33 +2980,14 @@ export default function App() {
       const data = await response.json();
       
       if (!response.ok) {
-         console.log("Primary user fetch failed, trying GenDownload channel fallback...");
-         try {
-           const channelUrl = normalizedUsername.includes("http") ? normalizedUsername : `https://www.tiktok.com/@${normalizedUsername}`;
-           const gdSongs = await fetchChannelWithGenDownload(channelUrl);
-           
-           setRecentSongs(gdSongs);
-           setTiktokError("");
-           
-           // Cache it
-           setAlbumsCache(prev => ({
-             ...prev,
-             [normalizedUsername]: { songs: gdSongs, cursor: "0", hasMore: false }
-           }));
-
-           playRecentSong(gdSongs[0]);
-           setIsFetchingTiktok(false);
-           return;
-         } catch (gdErr) {
-            if (data.isCloudflareBlock) {
-              setTiktokError("Due to TikTok's anti-bot protection and proxies being blocked, fetching users failed. Try pacing direct video links instead.");
-            } else {
-              setTiktokError(data.error || "Failed to fetch user posts.");
-            }
-            setIsFetchingTiktok(false);
-            setIsLoadingMore(false);
-            return;
+         if (data.isCloudflareBlock) {
+           setTiktokError("Due to TikTok's anti-bot protection and proxies being blocked, fetching users failed. Try pacing direct video links instead.");
+         } else {
+           setTiktokError(data.error || "Failed to fetch user posts.");
          }
+         setIsFetchingTiktok(false);
+         setIsLoadingMore(false);
+         return;
       }
 
       const videos = data.data?.videos || [];
@@ -3364,36 +3244,7 @@ export default function App() {
         playRecentSong(newSong);
         setTiktokUrl(""); 
       } catch(err: any) {
-        console.log("Metadata API failed, trying GenDownload fallback...", err);
-        try {
-          const gdData = await extractWithGenDownload(urlToUse);
-          
-          shouldAutoPlayRef.current = true;
-          setAudioUrl(gdData.url);
-          setFileName(gdData.title);
-          
-          const newSong = {
-            id: "gd_" + Date.now().toString(),
-            title: gdData.title,
-            originalUrl: urlToUse,
-            audioUrl: gdData.url,
-            cover: gdData.cover,
-            author: gdData.author,
-            timestamp: Date.now()
-          };
-
-          setRecentSongs((prev) => {
-            const filtered = prev.filter((s) => s.originalUrl !== urlToUse);
-            return [newSong, ...filtered].slice(0, 50);
-          });
-          
-          playRecentSong(newSong);
-          setTiktokUrl(""); 
-          setTiktokError("");
-        } catch (gdErr: any) {
-          console.error("GenDownload fallback failed:", gdErr);
-          setTiktokError("This link format is currently unsupported, or the video is restricted/private.");
-        }
+        setTiktokError(err.message || "Failed to fetch media audio. Video/track might be restricted.");
       } finally {
         setIsFetchingTiktok(false);
       }
@@ -3627,35 +3478,10 @@ export default function App() {
         playRecentSong(newSong);
         setTiktokUrl(""); // clear input
       } else {
-        throw new Error(data?.msg || "Could not extract audio from this link. Make sure it's public.");
+        setTiktokError(data?.msg || "Could not extract audio from this link. Make sure it's public.");
       }
     } catch (err: any) {
-      console.log("TikTok primary fetch failed, trying GenDownload fallback...", err);
-      try {
-        const gdData = await extractWithGenDownload(urlToUse);
-        
-        const newSong = {
-          id: "gd_" + Date.now().toString(),
-          title: gdData.title,
-          originalUrl: urlToUse,
-          audioUrl: gdData.url,
-          cover: gdData.cover,
-          author: gdData.author,
-          timestamp: Date.now()
-        };
-
-        setRecentSongs((prev) => {
-          const filtered = prev.filter((s) => s.originalUrl !== urlToUse && s.id !== newSong.id);
-          return [newSong, ...filtered].slice(0, 50);
-        });
-        
-        playRecentSong(newSong);
-        setTiktokUrl(""); 
-        setTiktokError("");
-      } catch (gdErr) {
-        console.error("GenDownload fallback failed:", gdErr);
-        setTiktokError("This link format is currently unsupported, or the video is restricted/private.");
-      }
+      setTiktokError("Network error. The API might be blocked by your browser extensions or adblocker.");
     } finally {
       setIsFetchingTiktok(false);
     }
@@ -3694,8 +3520,6 @@ export default function App() {
   };
 
   
-
-  const getProxyUrl = (url: string) => { if (!url) return url; if (url.includes("gendownload.com") || url.includes("nct.vn") || url.includes("nhaccuatui.com")) return `/api/proxy-stream?url=${encodeURIComponent(url)}`; return url; };
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -4093,7 +3917,7 @@ export default function App() {
 
     const fetchAndDecodeMetadata = async () => {
       try {
-        const response = await fetch(getProxyUrl(audioUrl));
+        const response = await fetch(audioUrl);
         if (!response.ok) {
            throw new Error(`Failed to fetch audio: ${response.statusText}`);
         }
@@ -4228,7 +4052,7 @@ export default function App() {
         }
 
         console.log("[WebGPU] Fetching track buffer:", audioUrl);
-        const response = await fetch(getProxyUrl(audioUrl));
+        const response = await fetch(audioUrl);
         const arrayBuffer = await response.arrayBuffer();
 
         console.log("[WebGPU] Decoding audio binary data...");
@@ -4311,7 +4135,7 @@ export default function App() {
     } else if (activeEngine === "onnx") {
       try {
         console.log("[ONNX] Initializing ONNX Runtime Web session...");
-        const response = await fetch(getProxyUrl(audioUrl));
+        const response = await fetch(audioUrl);
         const arrayBuffer = await response.arrayBuffer();
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const decodedBuffer = await safeDecodeAudioData(ctx as any, arrayBuffer);
@@ -5543,7 +5367,7 @@ export default function App() {
                       }`}
                     >
                       <Music className="w-3 h-3" />
-                      Sound
+                      Sound Only
                     </button>
                     <button
                       type="button"
@@ -5563,7 +5387,7 @@ export default function App() {
                       }`}
                     >
                       <Film className="w-3 h-3" />
-                      Video
+                      <span className="hidden sm:inline">TikTok </span>Video
                     </button>
                     <button
                       type="button"
@@ -5603,30 +5427,8 @@ export default function App() {
                       }`}
                     >
                       <span className="text-[8px] bg-blue-500/20 border border-blue-500/35 text-blue-400 px-1 py-0.2 rounded font-black">NCT</span>
-                      <span className="hidden sm:inline">NCT</span>
+                      Audio <span className="hidden sm:inline">(NCT)</span>
                     </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTiktokSearchType("tk");
-                        if (tiktokSearchQuery.trim()) {
-                          handleTiktokSearch(undefined, false, "tk");
-                        } else {
-                          setTiktokSearchResults([]);
-                          setTiktokSearchError("");
-                        }
-                      }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
-                        tiktokSearchType === "tk"
-                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
-                          : "text-white/40 hover:text-white/75"
-                      }`}
-                    >
-                      <span className="text-[8px] bg-purple-500/20 border border-purple-500/35 text-purple-400 px-1 py-0.2 rounded font-black">TK</span>
-                      <span className="hidden sm:inline">TKaraoke</span>
-                    </button>
-
                   </div>
 
                   <div className="flex gap-2 relative">
@@ -5640,8 +5442,6 @@ export default function App() {
                             ? "Search TikTok videos & post hashtags..."
                             : tiktokSearchType === "nhaccuatui"
                             ? "Search NhacCuaTui Vietnamese songs..."
-                            : tiktokSearchType === "tk"
-                            ? "Search TKaraoke lyrics..."
                             : "Search YouTube songs, covers or creators..."
                         }
                         value={tiktokSearchQuery}
@@ -5784,8 +5584,6 @@ export default function App() {
                           isActive = (song.url && currentSong.originalUrl === song.url) || (song.id && currentSong.id === song.id);
                         } else if (tiktokSearchType === "nhaccuatui") {
                           isActive = currentSong.id === ("nct_" + song.id);
-                        } else if (tiktokSearchType === "tk") {
-                          isActive = currentSong.originalUrl === song.originalUrl;
                         } else {
                           const songId = song.id || song.video_id || song.url || `search-result-${index}`;
                           const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
@@ -5833,12 +5631,6 @@ export default function App() {
                                 return [newSong, ...filtered].slice(0, 50);
                               });
                               playRecentSong(newSong);
-                            } else if (tiktokSearchType === "tk") {
-                              setTiktokUrl(song.originalUrl);
-                              setTimeout(() => {
-                                const fakeForm = { preventDefault: () => {} } as React.FormEvent;
-                                handleTiktokFetch(fakeForm, song.originalUrl);
-                              }, 50);
                             } else {
                               // TikTok type
                               const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
@@ -5850,6 +5642,7 @@ export default function App() {
                               if (!streamUrl) {
                                 // Fallback fetching direct link!
                                 setTiktokUrl(oembedUrl);
+                                setPlaylistTab("upnext");
                                 setTimeout(() => {
                                   const fakeForm = { preventDefault: () => {} } as React.FormEvent;
                                   handleTiktokFetch(fakeForm, oembedUrl);
@@ -5922,8 +5715,6 @@ export default function App() {
                               <span className="text-[8px] font-black tracking-wider text-red-500 bg-red-500/10 border border-red-500/20 px-1 py-0.5 rounded-md uppercase select-none">YT</span>
                             ) : tiktokSearchType === "nhaccuatui" ? (
                               <span className="text-[8px] font-black tracking-wider text-[#2cc0ff] bg-[#2cc0ff]/10 border border-[#2cc0ff]/20 px-1 py-0.5 rounded-md uppercase select-none">NCT</span>
-                            ) : tiktokSearchType === "tk" ? (
-                              <span className="text-[8px] font-black tracking-wider text-purple-400 bg-purple-500/10 border border-purple-500/20 px-1 py-0.5 rounded-md uppercase select-none">TK</span>
                             ) : (
                               <span className="text-[8px] font-black tracking-wider text-white/45 bg-white/5 border border-white/10 px-1 py-0.5 rounded-md uppercase select-none">TT</span>
                             )}
@@ -5935,16 +5726,6 @@ export default function App() {
                         </div>
                       );
                     })}
-                    {tiktokSearchType === "tk" && tiktokSearchResults.length > 0 && !isSearchingTiktok && (
-                      <div className="flex justify-center mt-4 mb-8">
-                        <button
-                          onClick={() => handleTiktokSearch(undefined, true, "tk")}
-                          className="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-6 py-2 rounded-full transition-all"
-                        >
-                          Load More
-                        </button>
-                      </div>
-                    )}
                   </>
                 )}
               </div>
@@ -6673,7 +6454,7 @@ export default function App() {
          <audio
           key={bgPlayBypass ? "audio-bypass" : "audio-processed"}
           ref={audioRef}
-          src={audioUrl ? getProxyUrl(audioUrl) : undefined}
+          src={audioUrl || undefined}
           autoPlay
           playsInline
           muted={!!(showVideoIframe && currentSong && getYouTubeEmbedUrl(currentSong.originalUrl))}
