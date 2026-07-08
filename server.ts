@@ -10,6 +10,7 @@ import { Readable } from "stream";
 import { spawn } from "child_process";
 import ytSearch from "yt-search";
 import axios from "axios";
+import * as cheerio from "cheerio";
 import { fetchNctPlaylistWithProxyRace, parseNctHtml } from "./server/nctParser";
 import { fetchTKaraokePlaylist, fetchTKaraokeSongDetails } from "./server/tkaraokeParser";
 import { hasYoutubeCookies, getCookiesFilePath, saveYoutubeCookies, getYoutubeCookiesStatus } from "./server/youtubeCookieHelper";
@@ -1029,6 +1030,46 @@ async function startServer() {
   });
 
   // TKaraoke API endpoints
+  app.get("/api/tkaraoke/search", async (req, res) => {
+    try {
+      const query = req.query.q as string;
+      const page = req.query.p as string || "1";
+      if (!query) return res.status(400).json({ success: false, error: "No query provided" });
+      
+      const url = `https://lyric.tkaraoke.com/s.tim?q=${encodeURIComponent(query)}&p=${page}`;
+      const response = await fetch(url, {
+          headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          }
+      });
+      const html = await response.text();
+      const $ = cheerio.load(html);
+      
+      const songs: any[] = [];
+      const seenUrls = new Set<string>();
+      
+      $("a").each((_, el) => {
+        const href = $(el).attr("href") || "";
+        if (href.match(/\/\d+\/[\w_]+\.html$/)) {
+            const title = $(el).text().trim();
+            const fullUrl = `https://lyric.tkaraoke.com${href}`;
+            if (!seenUrls.has(fullUrl)) {
+                seenUrls.add(fullUrl);
+                songs.push({
+                    title: title,
+                    url: fullUrl
+                });
+            }
+        }
+      });
+      
+      res.json({ success: true, videos: songs });
+    } catch (error: any) {
+      console.error("[TKaraoke Search Error]", error.message);
+      res.status(500).json({ success: false, error: "Failed to search TKaraoke." });
+    }
+  });
+
   app.get("/api/tkaraoke/playlist", async (req, res) => {
     try {
       const url = req.query.url as string;

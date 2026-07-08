@@ -108,20 +108,33 @@ function textToLrc(rawText: string, totalDuration: number): string {
 function parseLrc(lrcText: string, totalDuration: number) {
   if (!lrcText) return [];
   const lines = lrcText.split("\n").map(l => l.trim()).filter(l => l.length > 0);
-  const lrcLineRegex = /^\[(\d+):(\d+)(?:\.(\d+))?\]\s*(.*)$/;
+  
+  // Supports [MM:SS.xx], [HH:MM:SS.xx], [MM:SS.xx -> MM:SS.xx]
+  const lrcLineRegex = /^\[(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?(?:\s*(?:->|-->|\|)\s*(?:(\d+):)?(\d+):(\d+)(?:\.(\d+))?)?\]\s*(.*)$/;
   
   const parsed: { text: string; start: number; end: number }[] = [];
   
   for (const line of lines) {
     const match = line.match(lrcLineRegex);
     if (match) {
-      const m = parseInt(match[1], 10);
-      const s = parseInt(match[2], 10);
-      const hundredthsStr = match[3] || "00";
-      const hundredths = parseInt(hundredthsStr.padEnd(2, '0').slice(0, 2), 10);
-      const start = m * 60 + s + hundredths / 100;
-      const text = match[4].trim();
-      parsed.push({ text, start, end: start + 2 });
+      const h1 = match[1] ? parseInt(match[1], 10) : 0;
+      const m1 = parseInt(match[2], 10);
+      const s1 = parseInt(match[3], 10);
+      const frac1 = parseFloat(`0.${match[4] || "0"}`);
+      const start = h1 * 3600 + m1 * 60 + s1 + frac1;
+      
+      const text = match[9].trim();
+      let end = start + 2;
+      
+      if (match[6] !== undefined) {
+          const h2 = match[5] ? parseInt(match[5], 10) : 0;
+          const m2 = parseInt(match[6], 10);
+          const s2 = parseInt(match[7], 10);
+          const frac2 = parseFloat(`0.${match[8] || "0"}`);
+          end = h2 * 3600 + m2 * 60 + s2 + frac2;
+      }
+      
+      parsed.push({ text, start, end });
     } else {
       parsed.push({ text: line, start: -1, end: -1 });
     }
@@ -133,10 +146,14 @@ function parseLrc(lrcText: string, totalDuration: number) {
       parsed[i].start = prevStart;
       parsed[i].end = prevStart + 3;
     } else {
-      if (i < parsed.length - 1 && parsed[i + 1].start !== -1) {
-        parsed[i].end = parsed[i + 1].start;
-      } else {
-        parsed[i].end = Math.max(parsed[i].start + 3, totalDuration || (parsed[i].start + 5));
+      // If we don't have an explicit end from the regex (start + 2 was used), 
+      // let's adjust to the next line's start.
+      if (parsed[i].end === parsed[i].start + 2) {
+          if (i < parsed.length - 1 && parsed[i + 1].start !== -1) {
+            parsed[i].end = parsed[i + 1].start;
+          } else {
+            parsed[i].end = Math.max(parsed[i].start + 3, totalDuration || (parsed[i].start + 5));
+          }
       }
     }
   }
@@ -294,7 +311,7 @@ export default function StemStudio({
     const newLines = lines.map((line, i) => {
       if (i === idx) {
         // Keep the timestamp if it exists, replace the text
-        const match = line.match(/^\[\d{2,}:\d{2}(?:\.\d{1,3})?\]/);
+        const match = line.match(/^\[(?:(?:\d+):)?\d+:\d+(?:\.\d+)?(?:\s*(?:->|-->|\|)\s*(?:(?:\d+):)?\d+:\d+(?:\.\d+)?)?\]/);
         if (match) {
           return `${match[0]} ${text.trim()}`;
         }

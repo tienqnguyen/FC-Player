@@ -2464,9 +2464,11 @@ export default function App() {
 
   const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search">("upnext");
 
-  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui">("youtube");
+  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tkaraoke">("youtube");
   const [tiktokSearchQuery, setTiktokSearchQuery] = useState("");
   const [tiktokSearchResults, setTiktokSearchResults] = useState<any[]>([]);
+  const [tiktokSearchPage, setTiktokSearchPage] = useState(1);
+  const [tiktokSearchHasMore, setTiktokSearchHasMore] = useState(false);
   const [tiktokSearchError, setTiktokSearchError] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
@@ -2523,9 +2525,14 @@ export default function App() {
     
     if (!activeQuery) return;
     
+    const page = isLoadMore ? tiktokSearchPage + 1 : 1;
+    
     setIsSearchingTiktok(true);
-    setTiktokSearchError("");
-    setShowSuggestions(false);
+    if (!isLoadMore) {
+      setTiktokSearchError("");
+      setTiktokSearchResults([]);
+      setShowSuggestions(false);
+    }
     
     // Add to recent searches
     setRecentSearches(prev => {
@@ -2539,6 +2546,8 @@ export default function App() {
         endpoint = `/api/youtube/search?q=${encodeURIComponent(activeQuery)}`;
       } else if (activeType === "nhaccuatui") {
         endpoint = `/api/nct-search?q=${encodeURIComponent(activeQuery)}`;
+      } else if (activeType === "tkaraoke") {
+        endpoint = `/api/tkaraoke/search?q=${encodeURIComponent(activeQuery)}&p=${page}`;
       } else {
         // TikTok search ('sound' or 'video')
         endpoint = `/api/tiktok/search?type=${activeType}&q=${encodeURIComponent(activeQuery)}`;
@@ -2551,10 +2560,23 @@ export default function App() {
       }
       
       const data = await res.json();
-      setTiktokSearchResults(data.videos || []);
+      const results = data.videos || [];
+      
+      if (isLoadMore) {
+        setTiktokSearchResults(prev => {
+          const newResults = results.filter((r: any) => !prev.some((p: any) => (p.id || p.video_id || p.url) === (r.id || r.video_id || r.url)));
+          return [...prev, ...newResults];
+        });
+      } else {
+        setTiktokSearchResults(results);
+      }
+      setTiktokSearchPage(page);
+      setTiktokSearchHasMore(activeType === "tkaraoke" && results.length >= 10);
     } catch (err: any) {
       console.error(err);
-      setTiktokSearchError(err.message || "Failed to find search results. Please try another query.");
+      if (!isLoadMore) {
+        setTiktokSearchError(err.message || "Failed to find search results. Please try another query.");
+      }
     } finally {
       setIsSearchingTiktok(false);
     }
@@ -5360,14 +5382,14 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "sound"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
                       }`}
                     >
-                      <Music className="w-3 h-3" />
-                      Sound Only
+                      <Music className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                      Sound
                     </button>
                     <button
                       type="button"
@@ -5380,14 +5402,14 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "video"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
                       }`}
                     >
-                      <Film className="w-3 h-3" />
-                      <span className="hidden sm:inline">TikTok </span>Video
+                      <Film className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                      Video
                     </button>
                     <button
                       type="button"
@@ -5400,13 +5422,13 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "youtube"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
                       }`}
                     >
-                      <span className="text-[8px] bg-red-500/20 border border-red-500/35 text-red-400 px-1 py-0.2 rounded font-black">YT</span>
+                      <span className="text-[7px] sm:text-[8px] bg-red-500/20 border border-red-500/35 text-red-400 px-1 py-0.2 rounded font-black">YT</span>
                       <span className="hidden sm:inline">YouTube</span>
                     </button>
                     <button
@@ -5420,14 +5442,34 @@ export default function App() {
                           setTiktokSearchError("");
                         }
                       }}
-                      className={`text-[9px] font-black tracking-wider uppercase px-2 py-2 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
                         tiktokSearchType === "nhaccuatui"
                           ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
                           : "text-white/40 hover:text-white/75"
                       }`}
                     >
-                      <span className="text-[8px] bg-blue-500/20 border border-blue-500/35 text-blue-400 px-1 py-0.2 rounded font-black">NCT</span>
-                      Audio <span className="hidden sm:inline">(NCT)</span>
+                      <span className="text-[7px] sm:text-[8px] bg-blue-500/20 border border-blue-500/35 text-blue-400 px-1 py-0.2 rounded font-black">NCT</span>
+                      <span className="hidden sm:inline">Audio</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTiktokSearchType("tkaraoke");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "tkaraoke");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                        tiktokSearchType === "tkaraoke"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <span className="text-[7px] sm:text-[8px] bg-pink-500/20 border border-pink-500/35 text-pink-400 px-1 py-0.2 rounded font-black">TK</span>
+                      <span className="hidden sm:inline">Karaoke</span>
                     </button>
                   </div>
 
@@ -5442,6 +5484,8 @@ export default function App() {
                             ? "Search TikTok videos & post hashtags..."
                             : tiktokSearchType === "nhaccuatui"
                             ? "Search NhacCuaTui Vietnamese songs..."
+                            : tiktokSearchType === "tkaraoke"
+                            ? "Search TKaraoke for lyrics and MP3s..."
                             : "Search YouTube songs, covers or creators..."
                         }
                         value={tiktokSearchQuery}
@@ -5584,6 +5628,8 @@ export default function App() {
                           isActive = (song.url && currentSong.originalUrl === song.url) || (song.id && currentSong.id === song.id);
                         } else if (tiktokSearchType === "nhaccuatui") {
                           isActive = currentSong.id === ("nct_" + song.id);
+                        } else if (tiktokSearchType === "tkaraoke") {
+                          isActive = song.url && currentSong.originalUrl === song.url;
                         } else {
                           const songId = song.id || song.video_id || song.url || `search-result-${index}`;
                           const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
@@ -5592,7 +5638,7 @@ export default function App() {
                       }
                       return (
                         <div
-                          key={song.id || song.video_id || song.url || `search-result-${index}`}
+                          key={`${song.id || song.video_id || song.url || 'search-result'}-${index}`}
                           onClick={() => {
                             if (tiktokSearchType === "youtube") {
                               const streamUrl = `/api/stream?url=${encodeURIComponent(song.url)}`;
@@ -5631,6 +5677,13 @@ export default function App() {
                                 return [newSong, ...filtered].slice(0, 50);
                               });
                               playRecentSong(newSong);
+                            } else if (tiktokSearchType === "tkaraoke") {
+                              const oembedUrl = song.url;
+                              setTiktokUrl(oembedUrl);
+                              setTimeout(() => {
+                                const fakeForm = { preventDefault: () => {} } as React.FormEvent;
+                                handleTiktokFetch(fakeForm, oembedUrl);
+                              }, 50);
                             } else {
                               // TikTok type
                               const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
@@ -5642,7 +5695,6 @@ export default function App() {
                               if (!streamUrl) {
                                 // Fallback fetching direct link!
                                 setTiktokUrl(oembedUrl);
-                                setPlaylistTab("upnext");
                                 setTimeout(() => {
                                   const fakeForm = { preventDefault: () => {} } as React.FormEvent;
                                   handleTiktokFetch(fakeForm, oembedUrl);
@@ -5705,7 +5757,7 @@ export default function App() {
                               {song.title || song.desc}
                             </h4>
                             <p className="text-[10px] text-white/40 truncate mt-0.5">
-                              {song.author?.nickname || song.author || "TikTok Creator"}
+                              {tiktokSearchType === "tkaraoke" ? "TKaraoke" : (song.author?.nickname || song.author || "TikTok Creator")}
                             </p>
                           </div>
 
@@ -5715,6 +5767,8 @@ export default function App() {
                               <span className="text-[8px] font-black tracking-wider text-red-500 bg-red-500/10 border border-red-500/20 px-1 py-0.5 rounded-md uppercase select-none">YT</span>
                             ) : tiktokSearchType === "nhaccuatui" ? (
                               <span className="text-[8px] font-black tracking-wider text-[#2cc0ff] bg-[#2cc0ff]/10 border border-[#2cc0ff]/20 px-1 py-0.5 rounded-md uppercase select-none">NCT</span>
+                            ) : tiktokSearchType === "tkaraoke" ? (
+                              <span className="text-[8px] font-black tracking-wider text-pink-400 bg-pink-400/10 border border-pink-400/20 px-1 py-0.5 rounded-md uppercase select-none">TK</span>
                             ) : (
                               <span className="text-[8px] font-black tracking-wider text-white/45 bg-white/5 border border-white/10 px-1 py-0.5 rounded-md uppercase select-none">TT</span>
                             )}
@@ -5726,6 +5780,19 @@ export default function App() {
                         </div>
                       );
                     })}
+                    
+                    {tiktokSearchHasMore && tiktokSearchResults.length > 0 && (
+                      <div className="flex justify-center mt-2 mb-4">
+                        <button
+                          type="button"
+                          onClick={(e) => handleTiktokSearch(e, true)}
+                          disabled={isSearchingTiktok}
+                          className="bg-white/5 hover:bg-white/10 text-white/70 hover:text-white px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all disabled:opacity-50"
+                        >
+                          {isSearchingTiktok ? "Loading..." : "Load More"}
+                        </button>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
