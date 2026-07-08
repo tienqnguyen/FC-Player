@@ -1,4 +1,5 @@
 import express from "express";
+import * as cheerio from "cheerio";
 import { createServer as createViteServer } from "vite";
 import youtubedl from "youtube-dl-exec";
 import multer from "multer";
@@ -122,7 +123,8 @@ async function startServer() {
         if (contentLength) res.setHeader("Content-Length", contentLength);
         const contentRange = response.headers.get("content-range");
         if (contentRange) res.setHeader("Content-Range", contentRange);
-        res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
+        const acceptRanges = response.headers.get("accept-ranges");
+      if (acceptRanges) res.setHeader("Accept-Ranges", acceptRanges);
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
@@ -178,7 +180,8 @@ async function startServer() {
       if (contentLength) res.setHeader("Content-Length", contentLength);
       const contentRange = response.headers.get("content-range");
       if (contentRange) res.setHeader("Content-Range", contentRange);
-      res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
+      const acceptRanges = response.headers.get("accept-ranges");
+      if (acceptRanges) res.setHeader("Accept-Ranges", acceptRanges);
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
@@ -915,6 +918,52 @@ async function startServer() {
   });
 
   // 3. Real NCT (Nhaccuatui) Proxy Search 
+  
+  app.get('/api/tk-search', async (req, res) => {
+    try {
+      const { q, p = 1 } = req.query;
+      if (!q || typeof q !== 'string') {
+        return res.status(400).json({ error: "Query 'q' is required" });
+      }
+      
+      const url = `https://lyric.tkaraoke.com/s.tim?q=${encodeURIComponent(q)}&t=11&p=${p}`;
+      const response = await axios.get(url, {
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0'
+        }
+      });
+      
+      
+      const $ = cheerio.load(response.data);
+      
+      const videos: any[] = [];
+      $('.div-result-item').each((i: number, el: any) => {
+        const titleEl = $(el).find('.h4-title-song a');
+        const title = titleEl.text().trim();
+        const tkLink = 'https://lyric.tkaraoke.com' + titleEl.attr('href');
+        const id = titleEl.attr('href')?.split('/')[1] || `tk-${i}`;
+        
+        const author = $(el).find('.p-author a').text().trim();
+        const singer = $(el).find('.p-singer a').text().trim() || "Unknown";
+        
+        videos.push({
+          id,
+          title,
+          author: singer + (author ? ` (Composer: ${author})` : ''),
+          originalUrl: tkLink,
+          duration: 0,
+          cover: "https://lyric.tkaraoke.com/resources/images/fblogo.jpg"
+        });
+      });
+      
+      return res.json({ videos });
+    } catch (error: any) {
+      console.error("[TK Search Error]", error.message);
+      return res.status(500).json({ error: "Failed to fetch TK search results" });
+    }
+  });
+
   app.get('/api/nct-search', async (req, res) => {
     try {
       const { q, pageindex = 1, pagesize = 50 } = req.query;
@@ -1053,6 +1102,59 @@ async function startServer() {
     }
   });
 
+  app.post("/api/gendownload-extract", async (req, res) => {
+    try {
+      const url = req.body.url;
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+
+      const response = await fetch("https://gendownload.com/api/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+        body: JSON.stringify({ url })
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        console.error(`[GenDownload Extract Error] Status ${response.status}: ${text}`);
+        return res.status(response.status).send(text);
+      }
+
+      res.status(200).send(text);
+    } catch (error: any) {
+      console.error("[GenDownload Extract Exception]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/gendownload-channel", async (req, res) => {
+    try {
+      const url = req.body.url;
+      const limit = req.body.limit || 50;
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+
+      const response = await fetch("https://gendownload.com/api/channel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+        body: JSON.stringify({ url, limit })
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        console.error(`[GenDownload Channel Error] Status ${response.status}: ${text}`);
+        return res.status(response.status).send(text);
+      }
+
+      res.status(200).send(text);
+    } catch (error: any) {
+      console.error("[GenDownload Channel Exception]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // API to retrieve metadata of YouTube, Facebook, SoundCloud, etc.
   app.get("/api/metadata", async (req, res) => {
     try {
@@ -1090,8 +1192,13 @@ async function startServer() {
 
       res.json(responseData);
     } catch (error: any) {
-      console.error("[Metadata API Error]", error);
-      res.status(500).json({ error: error.message || "Failed to extract metadata" });
+      let errorMsg = error.message || "Failed to extract metadata";
+      if (errorMsg.includes("Python version 3.10 has been deprecated")) {
+        const parts = errorMsg.split("\n");
+        errorMsg = parts.find((p: string) => p.includes("ERROR:")) || parts[parts.length - 1] || "Unsupported or restricted URL";
+      }
+      console.warn("[Metadata API Error]", errorMsg);
+      res.status(400).json({ error: errorMsg });
     }
   });
 

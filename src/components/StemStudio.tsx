@@ -1685,10 +1685,10 @@ export default function StemStudio({
                     <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0C] via-black/20 to-transparent z-20 pointer-events-none" />
                     <div className="absolute bottom-4 left-5 z-30 pointer-events-none">
                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] sm:text-[10px] font-black text-black bg-amber-400 px-2 py-0.5 rounded uppercase tracking-widest shadow-md shadow-amber-400/20">StemMix V2 HD</span>
+                          <span className="text-[9px] sm:text-[10px] font-black text-black bg-amber-400 px-2 py-0.5 rounded uppercase tracking-widest shadow-md shadow-amber-400/20">V2 HD</span>
                           <span className="text-[9px] text-white/60 font-mono tracking-widest flex items-center gap-1.5 bg-black/50 px-2 py-0.5 rounded backdrop-blur-sm border border-white/10">
                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                             LIVE MASTER FEED
+                             LIVE FEED
                           </span>
                        </div>
                     </div>
@@ -1725,54 +1725,45 @@ export default function StemStudio({
                        </h3>
                     </div>
                  </div>
-              </div>
-
-              {/* Player Controls */}
-              <div className="p-3 sm:px-6 sm:py-4 flex flex-col md:flex-row md:items-center gap-4 bg-black/30 border-t border-white/5 shadow-inner z-20 relative w-full">
+              </div>              {/* Player Controls */}
+              <div className="p-4 sm:px-6 sm:py-4 flex flex-col md:flex-row md:items-center gap-4 bg-black/40 border-t border-white/5 shadow-inner z-20 relative w-full">
                  
-                 {/* Left: Playback controls container mirroring the mixer left column */}
-                 <div className="flex items-center justify-between md:justify-start gap-4 w-full md:w-auto shrink-0">
-                    <div className="flex items-center gap-3 w-40">
+                 {/* Left: Playback controls container */}
+                 <div className="flex items-center justify-center md:justify-start gap-3 w-full md:w-auto shrink-0">
+                    <div className="flex items-center gap-3">
                        <button 
                           disabled={isLoadingAudio || isExporting}
                           onClick={togglePlay}
-                          className="w-14 h-14 bg-gradient-to-tr from-amber-400 to-amber-300 text-black rounded-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_0_25px_rgba(251,191,36,0.25)] hover:shadow-[0_0_35px_rgba(251,191,36,0.4)] shrink-0 border border-white/20"
+                          className="w-11 h-11 sm:w-14 sm:h-14 bg-gradient-to-tr from-amber-400 to-amber-300 text-black rounded-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_0_25px_rgba(251,191,36,0.25)] hover:shadow-[0_0_35px_rgba(251,191,36,0.4)] shrink-0 border border-white/20"
                           title={isPlaying ? "Pause" : "Play"}
                        >
                           {isLoadingAudio ? (
-                             <Loader2 className="w-6 h-6 animate-spin text-black" />
+                             <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-black" />
                           ) : isPlaying ? (
-                             <Pause className="w-6 h-6 text-black fill-black" />
+                             <Pause className="w-5 h-5 sm:w-6 sm:h-6 text-black fill-black" />
                           ) : (
-                             <Play className="w-6 h-6 text-black fill-black ml-1" />
+                             <Play className="w-5 h-5 sm:w-6 sm:h-6 text-black fill-black ml-0.5 sm:ml-1" />
                           )}
                        </button>
                        
                        <button
                           disabled={isLoadingAudio || isExporting}
                           onClick={handleRestart}
-                          className="w-12 h-12 bg-black/40 hover:bg-black/60 text-white border border-white/10 hover:border-white/20 rounded-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-inner shrink-0"
+                          className="w-11 h-11 sm:w-14 sm:h-14 bg-black/40 hover:bg-black/60 text-white border border-white/10 hover:border-white/20 rounded-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-inner shrink-0"
                           title="Restart from beginning"
                        >
-                          <RotateCcw className="w-5 h-5 text-white" />
+                          <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                        </button>
-                    </div>
-
-                    {/* Empty placeholder to match Mute/Solo button width (78px) */}
-                    <div className="flex gap-1.5 p-1 w-[78px]">
-                       <div className="w-8 h-8"></div>
-                       <div className="w-8 h-8"></div>
                     </div>
                  </div>
 
-                 {/* Middle: Seeker */}
-                 <div className="flex-1 h-16 sm:h-20 bg-black/50 border border-white/5 rounded-xl overflow-hidden relative group-hover:border-white/15 transition-colors shadow-inner flex flex-col justify-center shrink-0">
+                 {/* Middle: Seeker (Waveform & Timer) */}
+                 <div className="flex-1 w-full h-14 sm:h-20 bg-black/60 border border-white/5 rounded-xl overflow-hidden relative group-hover:border-white/15 transition-colors shadow-inner flex flex-col justify-center min-h-[56px]">
                     
                     {/* Simulated Waveform Background */}
-                    <div className="absolute inset-0 flex items-center justify-between gap-[2px] opacity-40 pointer-events-none overflow-hidden px-1">
+                    <div className="absolute inset-0 flex items-center justify-between gap-[1px] sm:gap-[2px] opacity-40 pointer-events-none overflow-hidden px-1">
                        {Array.from({ length: 100 }).map((_, i) => {
                           const isPlayed = i / 100 < (currentTime / (duration || 1));
-                          // Deterministic pseudo-random height to prevent jumping on re-renders
                           const pseudoRand = Math.abs(Math.sin(i * 13.5) * Math.cos(i * 4.2));
                           const h = 15 + pseudoRand * 70;
                           return (
@@ -1789,7 +1780,7 @@ export default function StemStudio({
                        })}
                     </div>
                     
-                    {/* Decorative Grid Lines (Match Mixer) */}
+                    {/* Decorative Grid Lines */}
                     <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:20px_20px]" />
                     <div className="absolute inset-0 pointer-events-none shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]" />
 
@@ -1813,31 +1804,30 @@ export default function StemStudio({
                        }}
                     >
                        <div className="w-full h-full relative">
-                          <div className="absolute top-0 bottom-0 left-0 bg-amber-400/10 border-r border-amber-400/50 shadow-[4px_0_15px_rgba(251,191,36,0.2)] transition-all duration-75" style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}>
+                          <div className="absolute top-0 bottom-0 left-0 bg-amber-400/15 border-r border-amber-400/50 shadow-[4px_0_15px_rgba(251,191,36,0.2)] transition-all duration-75" style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}>
                               <div className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 w-1.5 h-full bg-amber-400 rounded-full shadow-[0_0_10px_rgba(251,191,36,1)] opacity-0 group-hover:opacity-100 transition-opacity" />
                           </div>
                        </div>
                     </div>
                     
-                    <div className="absolute bottom-1 left-2 right-2 flex justify-between text-[9px] font-bold text-white/70 tracking-widest px-1 z-10 pointer-events-none drop-shadow-md">
-                       <span>{formatTime(currentTime)}</span>
-                       <span>{formatTime(duration)}</span>
+                    <div className="absolute bottom-1 left-2 right-2 flex justify-between text-[9px] sm:text-[10px] font-black text-white tracking-widest px-1 z-20 pointer-events-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">
+                       <span className="bg-black/40 px-1.5 py-0.5 rounded backdrop-blur-sm">{formatTime(currentTime)}</span>
+                       <span className="bg-black/40 px-1.5 py-0.5 rounded backdrop-blur-sm">{formatTime(duration)}</span>
                     </div>
                  </div>
                  
                  {/* Right: Transcription Tools */}
-                 <div className="flex items-center gap-2 w-full md:w-auto shrink-0 bg-black/20 p-2 rounded-xl border border-white/5 h-16 sm:h-20 justify-center">
+                 <div className="flex items-center gap-2 w-full md:w-auto shrink-0 bg-black/20 p-2 rounded-xl border border-white/5 h-14 sm:h-20 justify-center">
                     <div className="flex flex-col items-center gap-1 w-full text-center">
-                       <span className="text-[9px] font-bold tracking-[0.1em] text-white/40 uppercase mb-0.5">Subtitles</span>
+                       <span className="text-[9px] font-bold tracking-[0.1em] text-white/40 uppercase mb-0.5 hidden xs:block">Subtitles</span>
                        <div className="flex gap-1.5">
-
                            <button
-                               onClick={handleCohereTranscribe}
-                               className="h-8 px-3 rounded-lg flex items-center justify-center text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-black/40 border-white/5 text-amber-400/80 hover:text-amber-400 hover:bg-amber-400/10 hover:border-amber-400/30"
-                               title="Transcribe with Cohere (WebGPU Demo)"
+                                onClick={handleCohereTranscribe}
+                                className="h-9 px-4 sm:h-8 sm:px-3 rounded-lg flex items-center justify-center text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-black/40 border-white/5 text-amber-400/80 hover:text-amber-400 hover:bg-amber-400/10 hover:border-amber-400/30"
+                                title="Transcribe with Cohere (WebGPU Demo)"
                            >
-                               {isTranscribing ? <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 mr-1.5" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
-                               Cohere WebGPU
+                                {isTranscribing ? <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 mr-1.5" /> : <Sparkles className="w-3.5 h-3.5 mr-1.5" />}
+                                <span className="xs:inline">AI Transcript</span>
                            </button>
                        </div>
                     </div>
