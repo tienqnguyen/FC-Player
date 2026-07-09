@@ -2,35 +2,81 @@ import WaveSurfer from "wavesurfer.js";
 import JSZip from 'jszip';
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import audioBufferToWav from 'audiobuffer-to-wav';
-import lamejs from 'lamejs';
+
+function normalizeAudioBuffer(buffer: AudioBuffer) {
+  let maxVal = 0;
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < data.length; i++) {
+      if (Math.abs(data[i]) > maxVal) {
+        maxVal = Math.abs(data[i]);
+      }
+    }
+  }
+  if (maxVal > 1.0) {
+    const ratio = 0.99 / maxVal;
+    for (let c = 0; c < buffer.numberOfChannels; c++) {
+      const data = buffer.getChannelData(c);
+      for (let i = 0; i < data.length; i++) {
+        data[i] *= ratio;
+      }
+    }
+  }
+}
 
 function audioBufferToMp3(buffer: AudioBuffer): Blob {
-  const mp3encoder = new lamejs.Mp3Encoder(buffer.numberOfChannels, buffer.sampleRate, 192);
+  const channels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const globalLame = (window as any).lamejs;
+  if (!globalLame) {
+    throw new Error("LAME MP3 library could not be loaded from CDN. Please check your internet connection.");
+  }
+  const EncoderClass = globalLame.Mp3Encoder;
+  if (!EncoderClass) {
+    throw new Error("LAME MP3 encoder constructor was not found inside lamejs library.");
+  }
+  const mp3encoder = new EncoderClass(channels, sampleRate, 192);
   const mp3Data: any[] = [];
   const left = buffer.getChannelData(0);
-  const right = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : left;
+  const right = channels > 1 ? buffer.getChannelData(1) : left;
   const sampleBlockSize = 1152;
-  const leftInt16 = new Int16Array(left.length);
-  const rightInt16 = new Int16Array(right.length);
-  for (let i = 0; i < left.length; i++) {
-    leftInt16[i] = Math.max(-1, Math.min(1, left[i])) * 0x7FFF;
-    rightInt16[i] = Math.max(-1, Math.min(1, right[i])) * 0x7FFF;
-  }
-  for (let i = 0; i < leftInt16.length; i += sampleBlockSize) {
-    const leftChunk = leftInt16.subarray(i, i + sampleBlockSize);
-    const rightChunk = rightInt16.subarray(i, i + sampleBlockSize);
-    const mp3buf = mp3encoder.encodeBuffer(leftChunk, rightChunk);
+  
+  const leftChunk = new Int16Array(sampleBlockSize);
+  const rightChunk = new Int16Array(sampleBlockSize);
+
+  for (let i = 0; i < left.length; i += sampleBlockSize) {
+    const end = Math.min(left.length, i + sampleBlockSize);
+    const chunkLength = end - i;
+    
+    const lChunk = chunkLength === sampleBlockSize ? leftChunk : new Int16Array(chunkLength);
+    const rChunk = chunkLength === sampleBlockSize ? rightChunk : new Int16Array(chunkLength);
+
+    for (let j = 0; j < chunkLength; j++) {
+      lChunk[j] = Math.max(-1, Math.min(1, left[i + j])) * 0x7FFF;
+      if (channels > 1) {
+        rChunk[j] = Math.max(-1, Math.min(1, right[i + j])) * 0x7FFF;
+      }
+    }
+
+    let mp3buf;
+    if (channels === 1) {
+      mp3buf = mp3encoder.encodeBuffer(lChunk);
+    } else {
+      mp3buf = mp3encoder.encodeBuffer(lChunk, rChunk);
+    }
+
     if (mp3buf.length > 0) {
       mp3Data.push(mp3buf);
     }
   }
+  
   const mp3buf = mp3encoder.flush();
   if (mp3buf.length > 0) {
     mp3Data.push(new Int8Array(mp3buf));
   }
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
-import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type } from 'lucide-react';
+import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check } from 'lucide-react';
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
 import { Copy, FileText, Edit2, Save } from 'lucide-react';
@@ -238,6 +284,22 @@ export default function StemStudio({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportFormat, setExportFormat] = useState<"wav" | "mp3">("mp3");
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [downloadLink, setDownloadLink] = useState<{ url: string; filename: string } | null>(null);
+
+  // To avoid memory leaks, revoke old URL when setting a new one or unmounting
+  useEffect(() => {
+    return () => {
+      if (downloadLink) {
+        try {
+          URL.revokeObjectURL(downloadLink.url);
+        } catch {}
+      }
+    };
+  }, [downloadLink]);
+
   const [isHD, setIsHD] = useState(() => {
     try {
       const saved = localStorage.getItem("acoustic_presence_is_signature_sound");
@@ -430,6 +492,7 @@ export default function StemStudio({
         });
 
         audioElementsRef.current[stem] = audio;
+        audio.playbackRate = speed;
       }
 
       // 2. If url has changed, load the new source
@@ -1004,6 +1067,25 @@ export default function StemStudio({
       
     });
   }, [volumes, mutes, solos]);
+
+  // Sync real-time master reverb changes
+  useEffect(() => {
+    if (reverbGainRef.current && audioContextRef.current) {
+      reverbGainRef.current.gain.setTargetAtTime(reverb, audioContextRef.current.currentTime, 0.05);
+    }
+  }, [reverb]);
+
+  // Sync real-time tempo (speed) changes
+  useEffect(() => {
+    Object.values(audioElementsRef.current).forEach((a: HTMLAudioElement) => {
+      try {
+        a.playbackRate = speed;
+      } catch (e) {
+        console.error("Failed to set playback rate:", e);
+      }
+    });
+  }, [speed]);
+
   useEffect(() => {
     masterEqNodesRef.current.forEach((node, i) => {
        const band = masterEq[i];
@@ -1154,17 +1236,80 @@ export default function StemStudio({
       a.click();
   };
 
-  const handleExportMix = async () => {
-    if (!audioContextRef.current || !stemUrls) return;
+  const handleExportMix = async (format: "wav" | "mp3" = "wav") => {
+    if (!stemUrls) return;
+    setExportFormat(format);
     setIsExporting(true);
     setExportProgress(0);
+    setExportError(null);
+    setDownloadLink(null);
+    
     try {
-      const sampleRate = audioContextRef.current.sampleRate;
-      const offlineCtx = new OfflineAudioContext(2, sampleRate * (duration || 300), sampleRate);
+      // 1. Ensure audio engine is initialized
+      if (!audioContextRef.current) {
+        try {
+          initAudio();
+        } catch (err) {
+          console.warn("Failed to initialize main audio engine for export, falling back:", err);
+        }
+      }
+      
+      const decodeCtx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      // 2. Pre-decode phase to discover exact track length and bypass OfflineAudioContext decode issues
+      const decodedBuffers: { [key: string]: AudioBuffer } = {};
+      let maxDuration = 0;
+      
+      const activeStems = stemsList.filter(stem => (stemUrls as any)[stem]);
+      if (activeStems.length === 0) {
+        throw new Error("No isolated stems are currently available to mix.");
+      }
+      
+      for (let i = 0; i < activeStems.length; i++) {
+         const stem = activeStems[i];
+         const url = (stemUrls as any)[stem];
+         if (!url) continue;
+         
+         const baseProgress = Math.floor((i / activeStems.length) * 40);
+         setExportProgress(baseProgress);
+         
+         const res = await fetch(url);
+         if (!res.ok) {
+           throw new Error(`Failed to download stem "${stem}": ${res.statusText}`);
+         }
+         const arrayBuf = await res.arrayBuffer();
+         
+         // Decode audio data safely across all mobile engines
+         const audioBuf = await new Promise<AudioBuffer>((resolve, reject) => {
+           try {
+             const promise = decodeCtx.decodeAudioData(arrayBuf, resolve, (err) => {
+               reject(err || new Error(`Decode failed for stem "${stem}"`));
+             });
+             if (promise && typeof promise.catch === "function") {
+               promise.catch(reject);
+             }
+           } catch (e) {
+             reject(e);
+           }
+         });
+         
+         decodedBuffers[stem] = audioBuf;
+         if (audioBuf.duration > maxDuration) {
+           maxDuration = audioBuf.duration;
+         }
+      }
+      
+      if (maxDuration <= 0) {
+        maxDuration = duration || 180;
+      }
+      
+      setExportProgress(45);
+      
+      // 3. Create OfflineAudioContext matching the decoded buffer sample rate to prevent mismatch errors
+      const exportSampleRate = decodeCtx.sampleRate || 44100;
+      const offlineCtx = new OfflineAudioContext(2, Math.ceil(exportSampleRate * maxDuration), exportSampleRate);
       
       const offlineMaster = offlineCtx.createGain();
-      offlineMaster.connect(offlineCtx.destination);
-      
       const offlineConvolver = offlineCtx.createConvolver();
       if (convolverRef.current && convolverRef.current.buffer) {
           offlineConvolver.buffer = convolverRef.current.buffer;
@@ -1174,14 +1319,56 @@ export default function StemStudio({
       
       offlineMaster.connect(offlineConvolver);
       offlineConvolver.connect(offlineRevGain);
-      offlineRevGain.connect(offlineCtx.destination); 
 
-      for (const stem of stemsList) {
-         const url = (stemUrls as any)[stem];
-         if (!url) continue;
-         const res = await fetch(url);
-         const arrayBuf = await res.arrayBuffer();
-         const audioBuf = await offlineCtx.decodeAudioData(arrayBuf);
+      // Create offline EQ filter nodes to match real-time graph
+      const bands = [
+        { name: "Deep Sub", f: 25, type: "peaking" },
+        { name: "Sub", f: 40, type: "peaking" },
+        { name: "Low Bass", f: 63, type: "peaking" },
+        { name: "Bass", f: 100, type: "peaking" },
+        { name: "Upper Bass", f: 160, type: "peaking" },
+        { name: "Low Mid", f: 250, type: "peaking" },
+        { name: "Mid", f: 400, type: "peaking" },
+        { name: "Upper Mid", f: 630, type: "peaking" },
+        { name: "High Mid", f: 1000, type: "peaking" },
+        { name: "Presence", f: 1600, type: "peaking" },
+        { name: "Up Pres.", f: 2500, type: "peaking" },
+        { name: "Clarity", f: 4000, type: "peaking" },
+        { name: "Highs", f: 6300, type: "peaking" },
+        { name: "Air", f: 10000, type: "peaking" },
+        { name: "Sparkle", f: 16000, type: "highshelf" }
+      ];
+
+      const offlineEqNodes = bands.map((b, idx) => {
+        const filter = offlineCtx.createBiquadFilter();
+        filter.type = b.type as BiquadFilterType;
+        filter.frequency.value = b.f;
+        filter.Q.value = 1.0;
+        
+        let boost = 0;
+        if (isHD) {
+          if (b.f <= 100) boost = 2.5;
+          else if (b.f >= 6300) boost = 3.5;
+          else if (b.f === 1600 || b.f === 2500 || b.f === 4000) boost = 2.0;
+        }
+        filter.gain.value = (masterEq[idx]?.g || 0) + boost;
+        return filter;
+      });
+
+      // Connect offlineMaster -> eqFilters -> destination
+      let lastOfflineNode: AudioNode = offlineMaster;
+      offlineEqNodes.forEach(filter => {
+         lastOfflineNode.connect(filter);
+         lastOfflineNode = filter;
+      });
+      lastOfflineNode.connect(offlineCtx.destination);
+
+      // Connect wet reverb channel to the EQ chain
+      offlineRevGain.connect(offlineEqNodes[0]); 
+
+      for (const stem of activeStems) {
+         const audioBuf = decodedBuffers[stem];
+         if (!audioBuf) continue;
          
          const source = offlineCtx.createBufferSource();
          source.buffer = audioBuf;
@@ -1231,25 +1418,41 @@ export default function StemStudio({
       
       setExportProgress(50);
       const renderedBuffer = await offlineCtx.startRendering();
-      setExportProgress(90);
+      setExportProgress(80);
       
-      const wav = audioBufferToWav(renderedBuffer);
-      const blob = new Blob([wav], { type: "audio/wav" });
+      normalizeAudioBuffer(renderedBuffer);
+      setExportProgress(90);
+
+      let blob: Blob;
+      let filename: string;
+      if (format === "mp3") {
+        blob = audioBufferToMp3(renderedBuffer);
+        filename = `${songTitle || 'custom_mixdown'}.mp3`;
+      } else {
+        const wav = audioBufferToWav(renderedBuffer);
+        blob = new Blob([wav], { type: "audio/wav" });
+        filename = `${songTitle || 'custom_mixdown'}.wav`;
+      }
+      
       const dlUrl = URL.createObjectURL(blob);
+      
+      // Fallback auto-trigger
       const a = document.createElement("a");
       a.href = dlUrl;
-      a.download = "custom_mixdown.wav";
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(dlUrl);
       
-    } catch (e) {
+      // Store the link so that mobile webviews or embedded iframes can render a direct click button
+      setDownloadLink({ url: dlUrl, filename });
+      setExportProgress(100);
+      
+    } catch (e: any) {
       console.error(e);
-      alert("Mixdown failed.");
+      setExportError(e?.message || "Mixdown failed. Check your connection or memory limits.");
     } finally {
       setIsExporting(false);
-      setExportProgress(0);
     }
   };
 
@@ -1399,7 +1602,7 @@ export default function StemStudio({
        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-indigo-500/[0.03] rounded-full blur-[150px] pointer-events-none z-0" />
        
        {/* HEADER BAR */}
-       <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 overflow-x-auto no-scrollbar gap-4">
+       <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 overflow-visible gap-4">
           <div className="flex items-center gap-2.5 shrink-0">
              {!isEmbedded ? (
                 <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-widest uppercase">
@@ -1475,24 +1678,114 @@ export default function StemStudio({
              <div className="text-[9px] uppercase tracking-wider font-extrabold text-emerald-400 bg-emerald-400/5 px-2 py-0.5 rounded-full border border-emerald-400/10 flex items-center gap-1 hidden md:flex">
                 <Activity className="w-2.5 h-2.5 animate-pulse" /> WebGPU Active
              </div>
-             <button 
-                onClick={handleExportMix}
-                disabled={stemmixStatus !== "ready" || isExporting}
-                className={`flex items-center gap-1 text-[9px] font-black tracking-widest uppercase px-3.5 py-1.5 rounded-full transition-colors shadow-lg ${
-                   stemmixStatus === "ready"
-                     ? "bg-amber-400 text-black hover:bg-amber-300 shadow-amber-400/10"
-                     : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
-                }`}
-             >
-                {isExporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />} 
-                {isExporting ? ( <><span className="hidden sm:inline">Exporting</span> {exportProgress}%</> ) : ( <><span className="hidden sm:inline">Export Mix</span></> )}
-             </button>
+             <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+                {/* MP3 Export Button */}
+                <button
+                   onClick={() => handleExportMix("mp3")}
+                   disabled={stemmixStatus !== "ready" || isExporting}
+                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
+                      stemmixStatus === "ready"
+                        ? isExporting && exportFormat === "mp3"
+                          ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
+                          : "bg-white/[0.04] text-white hover:bg-white/[0.1] hover:text-amber-400 border border-white/5"
+                        : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
+                   }`}
+                   title="Export Mix as MP3 (192kbps)"
+                >
+                   {isExporting && exportFormat === "mp3" ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-black" />
+                   ) : (
+                      <Download className="w-3 h-3 text-amber-400" />
+                   )}
+                   <span>
+                      {isExporting && exportFormat === "mp3" ? `${exportProgress}%` : "MP3"}
+                   </span>
+                </button>
+
+                {/* WAV Export Button */}
+                <button
+                   onClick={() => handleExportMix("wav")}
+                   disabled={stemmixStatus !== "ready" || isExporting}
+                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
+                      stemmixStatus === "ready"
+                        ? isExporting && exportFormat === "wav"
+                          ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
+                          : "bg-white/[0.04] text-white hover:bg-white/[0.1] hover:text-amber-400 border border-white/5"
+                        : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
+                   }`}
+                   title="Export Mix as Lossless WAV"
+                >
+                   {isExporting && exportFormat === "wav" ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-black" />
+                   ) : (
+                      <Download className="w-3 h-3 text-amber-400" />
+                   )}
+                   <span>
+                      {isExporting && exportFormat === "wav" ? `${exportProgress}%` : "WAV"}
+                   </span>
+                </button>
+             </div>
           </div>
        </div>
 
        {/* SCROLLABLE CONTENT BODY */}
        <div className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 sm:p-4 md:p-5 flex flex-col gap-5 custom-scrollbar bg-transparent z-10">
           
+          {downloadLink && (
+             <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in slide-in-from-top-2 duration-300 shadow-lg shadow-emerald-500/5">
+                <div className="flex items-start gap-3">
+                   <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                      <Check className="w-4 h-4" />
+                   </div>
+                   <div className="min-w-0">
+                      <h4 className="text-[11px] sm:text-xs font-black tracking-widest uppercase text-white">Mixdown Completed!</h4>
+                      <p className="text-[10px] text-emerald-400 font-mono truncate max-w-[200px] xs:max-w-[250px] sm:max-w-md mt-0.5" title={downloadLink.filename}>
+                         {downloadLink.filename}
+                      </p>
+                   </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                   <a
+                      href={downloadLink.url}
+                      download={downloadLink.filename}
+                      onClick={() => {
+                         setTimeout(() => setDownloadLink(null), 8000);
+                      }}
+                      className="px-4 py-2 bg-emerald-500 text-black rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-emerald-400 active:scale-95 transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                      referrerPolicy="no-referrer"
+                   >
+                      <Download className="w-3.5 h-3.5 animate-bounce" /> Save / Download
+                   </a>
+                   <button
+                      onClick={() => setDownloadLink(null)}
+                      className="p-2 hover:bg-white/5 rounded-xl text-white/40 hover:text-white transition-colors"
+                   >
+                      <X className="w-4 h-4" />
+                   </button>
+                </div>
+             </div>
+          )}
+
+          {exportError && (
+             <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex items-start justify-between gap-3 animate-in slide-in-from-top-2 duration-300">
+                <div className="flex items-start gap-3">
+                   <div className="w-8 h-8 rounded-full bg-red-500/20 flex items-center justify-center text-red-400 shrink-0 mt-0.5">
+                      <X className="w-4 h-4" />
+                   </div>
+                   <div>
+                      <h4 className="text-[11px] sm:text-xs font-black tracking-widest uppercase text-white">Export Failed</h4>
+                      <p className="text-[10px] text-white/60 leading-relaxed mt-0.5 max-w-sm">{exportError}</p>
+                   </div>
+                </div>
+                <button
+                   onClick={() => setExportError(null)}
+                   className="p-2 hover:bg-white/5 rounded-xl text-white/40 hover:text-white transition-colors"
+                >
+                   <X className="w-4 h-4" />
+                </button>
+             </div>
+          )}
+
           {stemmixStatus !== "ready" ? (
              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center my-auto animate-in fade-in duration-500">
                 {stemmixStatus === "idle" ? (
@@ -1524,6 +1817,25 @@ export default function StemStudio({
                       <div className="w-48 h-1.5 bg-white/5 rounded-full mt-6 overflow-hidden border border-white/5">
                          <div className="h-full bg-gradient-to-r from-amber-400 to-amber-300 rounded-full animate-pulse transition-all duration-300 ease-out" style={{ width: separationMode === "webgpu" ? '85%' : separationMode === "onnx" && progress > 0 ? `${progress}%` : '60%' }} />
                       </div>
+
+                      {separationMode === "ai" && (
+                         <div className="mt-4 flex flex-col items-center gap-1.5 text-center">
+                            <div className="text-[10.5px] text-white/40 flex items-center gap-1.5 font-mono bg-white/5 border border-white/10 px-2.5 py-1 rounded-full">
+                               <span>Default AI Space:</span>
+                               <a 
+                                  href="https://huggingface.co/spaces/tienqnguyen95/Stemmix" 
+                                  target="_blank" 
+                                  rel="noopener noreferrer" 
+                                  className="text-amber-400 font-bold hover:underline inline-flex items-center gap-0.5"
+                               >
+                                  tienqnguyen95/Stemmix ↗
+                               </a>
+                            </div>
+                            <div className="max-w-md bg-amber-500/5 border border-amber-500/10 rounded-xl p-3 text-[10.5px] leading-relaxed text-amber-300/80 font-sans mt-2 shadow-[inset_0_0_8px_rgba(251,191,36,0.02)]">
+                               <strong>Patience Advised:</strong> Once the model completes the separation steps, downloading the final stems to your device takes about <strong>1 minute</strong>. Please leave this page open.
+                            </div>
+                         </div>
+                      )}
 
                       {/* Terminal Log Console */}
                       <div className="w-full bg-[#050507]/95 border border-white/5 rounded-2xl p-4 flex flex-col font-mono text-left shadow-2xl h-52 overflow-hidden relative backdrop-blur-md mt-6">

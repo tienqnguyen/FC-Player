@@ -1737,11 +1737,28 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
     }
   };
 
+  const reconnectSource = () => {
+    if (!sourceRef.current || !analyserRef.current || !sigInRef.current || !sigOutRef.current) return;
+    try {
+      sourceRef.current.disconnect();
+    } catch(e) {}
+    try {
+      if (currentRouteStateRef.current) {
+        sourceRef.current.connect(sigInRef.current);
+      } else {
+        sourceRef.current.connect(analyserRef.current);
+      }
+    } catch(e) {
+      console.warn("Failed to reconnect source on iOS resume:", e);
+    }
+  };
+
   return {
     initAudio,
     toggleSignatureSound,
     isSignatureSound,
     resumeContext,
+    reconnectSource,
     isContextReady,
     analyser,
     updateEqNode,
@@ -3598,6 +3615,7 @@ export default function App() {
     toggleSignatureSound,
     isSignatureSound,
     resumeContext,
+    reconnectSource,
     analyser,
     updateEqNode,
     updateSpatial,
@@ -3605,6 +3623,26 @@ export default function App() {
     audioContextRef,
     masterGainRef,
   } = useAudioProcessor(eqSettings, spatialSettings);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+         if (audioContextRef.current && audioContextRef.current.state === "suspended") {
+            audioContextRef.current.resume().then(() => {
+              reconnectSource();
+            }).catch(console.warn);
+         } else if (audioContextRef.current && audioContextRef.current.state === "running") {
+            reconnectSource();
+         }
+      } else {
+         if (audioContextRef.current && audioContextRef.current.state === "running") {
+            audioContextRef.current.suspend().catch(console.warn);
+         }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [reconnectSource, audioContextRef]);
 
   const isSignatureSoundRef = useRef(isSignatureSound);
   useEffect(() => {
@@ -4735,8 +4773,35 @@ export default function App() {
 
                    {/* Equalizer */}
                    <div className="flex-1 flex flex-col min-h-0 relative z-10 w-full px-1">
-                      <div className="flex justify-between items-end mb-4 shrink-0">
-                        <h3 className="font-bold text-[12px] uppercase tracking-widest text-white/70">Equalizer</h3>
+                      <div className="flex justify-between items-center mb-4 shrink-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-bold text-[12px] uppercase tracking-widest text-white/70">Equalizer</h3>
+                          <div className="flex items-center gap-1 bg-white/5 border border-white/10 rounded-full p-0.5 ml-1">
+                            {[
+                              { num: 1, id: "ultra_hd", label: "HD Master" },
+                              { num: 2, id: "vocal_focus", label: "Vocal Focus" },
+                              { num: 3, id: "cinematic_4d", label: "Cinematic 4D" },
+                              { num: 4, id: "club_bass", label: "Club Bass" }
+                            ].map((presetItem) => {
+                              const presetObj = PRESETS.find(p => p.id === presetItem.id);
+                              const isActive = activePresetId === presetItem.id;
+                              return (
+                                <button
+                                  key={presetItem.num}
+                                  onClick={() => presetObj && applyPreset(presetObj)}
+                                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black tracking-tight transition-all duration-300 hover:scale-110 active:scale-95 cursor-pointer ${
+                                    isActive
+                                      ? "bg-amber-400 text-black border border-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.8)]"
+                                      : "bg-transparent text-white/40 hover:text-white/80 border border-transparent"
+                                  }`}
+                                  title={`Preset ${presetItem.num}: ${presetItem.label}`}
+                                >
+                                  {presetItem.num}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                         <button 
                           onClick={() => {
                               const newEq = eqSettings.map((b) => ({ ...b, g: 0 }));
@@ -4756,21 +4821,21 @@ export default function App() {
                                 </div>
                                 
                                 <div className="flex-1 w-full flex justify-center relative my-3">
-                                    <div className="absolute w-[4px] h-[80px] top-1/2 -translate-y-1/2 bg-black/60 rounded-full drop-shadow-sm border border-white/5" />
-                                    <div className="absolute top-1/2 left-1/2 w-6 h-[2px] bg-white/10 -translate-y-1/2 -translate-x-1/2 rounded" />
+                                    <div className="absolute w-[4px] h-[80px] top-1/2 -translate-y-1/2 bg-white/15 rounded-full drop-shadow-sm border border-white/10 shadow-[0_0_4px_rgba(255,255,255,0.05)]" />
+                                    <div className="absolute top-1/2 left-1/2 w-6 h-[2px] bg-white/20 -translate-y-1/2 -translate-x-1/2 rounded" />
                                     <div 
-                                      className="absolute left-1/2 -translate-x-1/2 bottom-[10px] w-[4px] rounded-full bg-amber-500/50 pointer-events-none transition-all duration-200" 
+                                      className="absolute left-1/2 -translate-x-1/2 bottom-[10px] w-[4px] rounded-full bg-amber-400 pointer-events-none transition-all duration-200" 
                                       style={{ 
                                         height: `${band.g > 0 ? (band.g / 12) * 50 : 0}%`, 
                                         bottom: '50%',
-                                        boxShadow: '0 0 10px rgba(245, 158, 11, 0.5)'
+                                        boxShadow: '0 0 12px rgba(251, 191, 36, 0.85)'
                                       }} 
                                     />
                                     <div 
-                                      className="absolute left-1/2 -translate-x-1/2 top-[10px] w-[4px] rounded-full bg-white/20 pointer-events-none transition-all duration-200" 
+                                      className="absolute left-1/2 -translate-x-1/2 top-[10px] w-[4px] rounded-full bg-white/50 pointer-events-none transition-all duration-200" 
                                       style={{ 
                                         height: `${band.g < 0 ? Math.abs(band.g / 12) * 50 : 0}%`, 
-                                        top: '50%'
+                                        top: '50%', boxShadow: '0 0 8px rgba(255, 255, 255, 0.3)'
                                       }} 
                                     />
                                     

@@ -5,7 +5,7 @@ import multer from "multer";
 import cors from "cors";
 import path from "path";
 import fs from "fs/promises";
-import { existsSync } from "fs";
+import { existsSync, writeFileSync, mkdirSync } from "fs";
 import { Readable } from "stream";
 import { spawn } from "child_process";
 import ytSearch from "yt-search";
@@ -97,6 +97,7 @@ async function startServer() {
   app.use(cors());
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
+  app.use("/stems-cache", express.static(path.join(process.cwd(), "stems_cache")));
 
   // API to stream audio of YouTube, Facebook, SoundCloud, etc.
   app.get("/api/stream", async (req, res) => {
@@ -200,6 +201,63 @@ async function startServer() {
     }
   });
 
+  const hfClientCache = new Map<string, any>();
+
+  app.get("/api/proxy-stem", async (req, res) => {
+    try {
+      const url = req.query.url as string;
+      const space = (req.query.space as string) || "tienqnguyen95/Stemmix";
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+
+      console.log(`[Proxy Stem] Fetching "${url}" via hfApp on space "${space}"`);
+      
+      let hfApp = hfClientCache.get(space);
+      if (!hfApp) {
+        const { client } = await import("@gradio/client");
+        hfApp = await client(space as any);
+        hfClientCache.set(space, hfApp);
+      }
+
+      const response = await hfApp.fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch from HF: ${response.status} ${response.statusText}`);
+      }
+
+      res.status(response.status);
+      
+      let contentType = response.headers.get("content-type") || "audio/wav";
+      res.setHeader("Content-Type", contentType);
+      
+      const contentLength = response.headers.get("content-length");
+      if (contentLength) res.setHeader("Content-Length", contentLength);
+
+      const contentRange = response.headers.get("content-range");
+      if (contentRange) res.setHeader("Content-Range", contentRange);
+      
+      res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+
+      if (response.body) {
+        const nodeStream = Readable.fromWeb(response.body as any);
+        nodeStream.pipe(res);
+        res.on("close", () => nodeStream.destroy());
+      } else {
+        res.status(500).json({ error: "No body in HF stream source." });
+      }
+    } catch (error: any) {
+      console.error(`[Proxy Stem Error]`, error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message || "Failed to proxy HF stem." });
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    }
+  });
+
   const upload = multer({ storage: multer.memoryStorage() });
   app.post("/api/stemmix", upload.single('audio_file'), async (req, res) => {
     try {
@@ -263,16 +321,38 @@ async function startServer() {
         }
       }
 
-            const runSeparation = async () => {
-        const promises = spaces.map(async (space) => {
-          console.log(`[Stemmix] Attempting to load Hugging Face Space: ${space}`);
-          const hfApp = await client(space);
+      const runSeparation = async () => {
+        // Find primary space to try first
+        let primarySpace = "tienqnguyen95/Stemmix";
+        if (customSpace && typeof customSpace === "string" && customSpace.trim()) {
+          primarySpace = customSpace.trim();
+        }
+
+        try {
+          console.log(`[Stemmix] Attempting primary Hugging Face Space: ${primarySpace}`);
+          const hfApp = await client(primarySpace as any);
           const res = await hfApp.predict("/separate_stems", {
             audio_file: handle_file(blob),
           });
           if (res && res.data) {
-            console.log(`[Stemmix] Successfully separated stems using Space: ${space}`);
-            return { res, space };
+            console.log(`[Stemmix] Successfully separated stems using primary Space: ${primarySpace}`);
+            return { res, space: primarySpace, hfApp };
+          }
+        } catch (e: any) {
+          console.warn(`[Stemmix] Primary space ${primarySpace} failed or is offline:`, e.message || e);
+        }
+
+        // Fallback: run remaining spaces in parallel
+        const remainingSpaces = spaces.filter(s => s !== primarySpace);
+        const promises = remainingSpaces.map(async (space) => {
+          console.log(`[Stemmix] Attempting fallback Hugging Face Space: ${space}`);
+          const hfApp = await client(space as any);
+          const res = await hfApp.predict("/separate_stems", {
+            audio_file: handle_file(blob),
+          });
+          if (res && res.data) {
+            console.log(`[Stemmix] Successfully separated stems using fallback Space: ${space}`);
+            return { res, space, hfApp };
           }
           throw new Error("No data");
         });
@@ -280,7 +360,7 @@ async function startServer() {
         try {
           return await Promise.any(promises);
         } catch (e) {
-          console.log(`[Stemmix] AI models unavailable, switching to WebGPU mode`);
+          console.log(`[Stemmix] All AI models unavailable, switching to local DSP/WebGPU mode`);
           return null;
         }
       };
@@ -347,9 +427,15 @@ async function startServer() {
           guitar = getUrl(result.res.data[offset+4]);
           piano = getUrl(result.res.data[offset+5]);
         }
-        
-        const formatProxyUrl = (u?: string) => u ? `/api/proxy-stream?url=${encodeURIComponent(u)}` : null;
-        
+
+        // Cache the hfApp client instance for instant proxying
+        hfClientCache.set(result.space, result.hfApp);
+
+        const formatProxyUrl = (u?: string) => {
+          if (!u) return null;
+          return `/api/proxy-stem?url=${encodeURIComponent(u)}&space=${encodeURIComponent(result.space)}`;
+        };
+
         const stems = {
             status: "Success",
             vocals: formatProxyUrl(vocals),
@@ -360,6 +446,7 @@ async function startServer() {
             other: formatProxyUrl(other),
             isDspFallback: false
         };
+        console.log(`[Stemmix] AI separation succeeded using Space: ${result.space}. Returned instant streaming URLs.`);
         return res.json({ success: true, stems });
       }
 
