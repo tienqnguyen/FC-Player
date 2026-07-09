@@ -1,6 +1,8 @@
 import express from "express";
-import * as nodeFetch from "node-fetch";
-const fetch = ((nodeFetch as any).default || nodeFetch) as typeof import("node-fetch").default;
+const fetch = async (url: any, options?: any): Promise<any> => {
+  const { default: nf } = await import("node-fetch");
+  return (nf as any)(url, options);
+};
 import * as cheerio from "cheerio";
 
 const app = express();

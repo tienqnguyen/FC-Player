@@ -1,5 +1,7 @@
-import * as nodeFetch from "node-fetch";
-const fetch = ((nodeFetch as any).default || nodeFetch) as typeof import("node-fetch").default;
+const fetch = async (url: any, options?: any): Promise<any> => {
+  const { default: nf } = await import("node-fetch");
+  return (nf as any)(url, options);
+};
 import { HttpsProxyAgent } from "https-proxy-agent";
 
 // Unflatten Nuxt 3 devalue array
