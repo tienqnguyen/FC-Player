@@ -3627,22 +3627,25 @@ export default function App() {
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-         if (audioContextRef.current && audioContextRef.current.state === "suspended") {
-            audioContextRef.current.resume().then(() => {
-              reconnectSource();
-            }).catch(console.warn);
-         } else if (audioContextRef.current && audioContextRef.current.state === "running") {
-            reconnectSource();
+         if (audioContextRef.current && (audioContextRef.current.state === "suspended" || audioContextRef.current.state === "interrupted")) {
+            audioContextRef.current.resume().catch(console.warn);
          }
-      } else {
-         if (audioContextRef.current && audioContextRef.current.state === "running") {
-            audioContextRef.current.suspend().catch(console.warn);
-         }
+         
+         // iOS Safari Web Audio background noise/static fix
+         // Slightly nudge the playback position to force Safari to flush audio buffers
+         setTimeout(() => {
+           if (audioRef.current && !audioRef.current.paused) {
+             const ct = audioRef.current.currentTime;
+             if (ct > 0.1) {
+               audioRef.current.currentTime = ct + 0.001;
+             }
+           }
+         }, 50);
       }
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [reconnectSource, audioContextRef]);
+  }, [audioContextRef]);
 
   const isSignatureSoundRef = useRef(isSignatureSound);
   useEffect(() => {
@@ -4442,24 +4445,24 @@ export default function App() {
       
 {/* Main Single Page Layout Container */}
       <div 
-        className={`w-full mx-auto relative z-20 h-full max-h-[100dvh] overflow-hidden flex flex-col ${
+        className={`w-full mx-auto relative z-20 h-full max-h-[100dvh] flex flex-col ${
           showStemmix 
-            ? "lg:grid lg:grid-cols-3 px-1 lg:px-4 pt-1 pb-1 flex-1 lg:gap-6" 
-            : "px-1 lg:px-4 pt-1 pb-1 flex-1"
+            ? "overflow-y-auto lg:overflow-hidden lg:grid lg:grid-cols-3 px-1 lg:px-4 pt-0 lg:pt-1 pb-1 flex-1 lg:gap-6" 
+            : "overflow-hidden px-1 lg:px-4 pt-0 lg:pt-1 pb-1 flex-1"
         }`}
       >
         {/* Column 1 (Left Column) - Player & Playlist */}
         <div className={`w-full flex flex-col ${
           showStemmix
-            ? "max-w-screen-md mx-auto flex-1 min-h-0 lg:col-span-1 lg:h-full lg:overflow-y-auto lg:custom-scrollbar lg:pr-2 lg:gap-4 shrink-0"
-            : "max-w-screen-md mx-auto flex-1 min-h-0"
+            ? "max-w-screen-md mx-auto flex-1 min-h-[80vh] lg:min-h-0 lg:col-span-1 lg:h-full lg:overflow-y-auto lg:custom-scrollbar lg:pr-2 lg:gap-4 shrink-0"
+            : "max-w-screen-md mx-auto flex-1 min-h-0 overflow-y-auto custom-scrollbar"
         }`}>
           
           {/* Player Section */}
-        <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate sticky top-[0.5rem] z-[60] border border-white/10 overflow-hidden ${
+        <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate sticky top-0 z-[60] border border-white/10 overflow-hidden ${
           isCompact 
-            ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)]" 
-            : "pt-4 pb-2 mb-4 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
+            ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)] lg:mt-2" 
+            : "pt-4 pb-2 mb-4 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)] lg:mt-2"
         }`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             
             {/* Dynamic Artwork Background */}
@@ -4871,7 +4874,7 @@ export default function App() {
           {/* Integrated Playlist Section */}
           <div className={`w-full max-w-lg mx-auto flex flex-col min-h-0 px-2 ${
             isCompact 
-              ? `flex-1 overflow-hidden mt-3 pb-3 ${showStemmix ? "hidden lg:flex" : ""}` 
+              ? `flex-1 overflow-hidden mt-3 pb-3 ` 
               : "flex-1 shrink-0 mt-6 pb-6"
           }`}>
           

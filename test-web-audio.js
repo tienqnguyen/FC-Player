@@ -1,1 +1,1 @@
-// just checking how others fix this
+console.log("Checking Safari audio static fix");
