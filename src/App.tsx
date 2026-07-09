@@ -2101,6 +2101,49 @@ const DEFAULT_SPATIAL = {
 
 export default function App() {
   const [currentSong, setCurrentSong] = useState<any>(null);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isAppInstalled, setIsAppInstalled] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setDeferredPrompt(null);
+      setIsAppInstalled(true);
+      console.log("PWA was installed successfully");
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    if (window.matchMedia("(display-mode: standalone)").matches) {
+      setIsAppInstalled(true);
+    }
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallAppClick = async () => {
+    if (deferredPrompt) {
+      try {
+        deferredPrompt.prompt();
+        const { outcome } = await deferredPrompt.userChoice;
+        console.log(`User response to the install prompt: ${outcome}`);
+        setDeferredPrompt(null);
+      } catch (err) {
+        console.error("Failed to prompt PWA installation", err);
+      }
+    } else {
+      setShowSettingsModal(false);
+      setPlaylistTab("guide");
+    }
+  };
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -4870,6 +4913,25 @@ export default function App() {
               >
                 <Info className="w-4 h-4" />
               </button>
+              {!isAppInstalled && (
+                <button
+                  onClick={() => {
+                    if (deferredPrompt) {
+                      handleInstallAppClick();
+                    } else {
+                      setPlaylistTab("guide");
+                    }
+                  }}
+                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                    deferredPrompt 
+                      ? "bg-emerald-500 text-black shadow-lg shadow-emerald-500/20 animate-pulse" 
+                      : "bg-white/10 text-white hover:bg-white/20 hover:text-emerald-400"
+                  }`}
+                  title={deferredPrompt ? "Install Web App Now" : "Install App Options"}
+                >
+                  <Smartphone className="w-4 h-4" />
+                </button>
+              )}
               {/* YouTube Cookies/Bypass Settings Button - Always visible */}
               <button
                 onClick={() => {
@@ -6100,6 +6162,22 @@ export default function App() {
                   Save our app directly on your smart device to unlock native <strong>fullscreen standalone display</strong>, isolated memory pools, and highly reliable background playback.
                 </p>
 
+                {isAppInstalled ? (
+                  <div className="mb-4 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3.5 rounded-2xl flex items-center gap-2.5 text-[11px] font-bold">
+                    <CheckCircle className="w-4 h-4" />
+                    <span>App is successfully installed and running standalone!</span>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleInstallAppClick}
+                    className="w-full mb-4 py-3 bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-[11px] uppercase tracking-widest rounded-2xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-400/10 active:scale-98 cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" />
+                    {deferredPrompt ? "Install Web App Now" : "Install Web App Options"}
+                  </button>
+                )}
+
                 {/* Steps Accordion / Grid */}
                 <div className="flex flex-col gap-3">
                   {/* iOS Safari */}
@@ -6345,6 +6423,57 @@ export default function App() {
                     <option value="ultra">Ultra (4095 taps) - Professional</option>
                     <option value="pro">Max Pro (8191 taps) - Audiophile</option>
                   </select>
+                </div>
+              </div>
+
+              {/* App Installation */}
+              <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[10px] font-black tracking-wider text-amber-400 uppercase flex items-center gap-1.5">
+                    <Smartphone className="w-3.5 h-3.5" />
+                    App Installation
+                  </h3>
+                  <span className="text-[8px] bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 px-1.5 py-0.5 rounded font-black font-mono">PWA CAPABLE</span>
+                </div>
+                <p className="text-[10px] text-white/50 leading-relaxed font-sans">
+                  Install <strong>FC PLAYER</strong> directly on your device to enjoy standalone full-screen view, optimized memory pools, and reliable background play.
+                </p>
+                <div className="flex flex-col gap-2">
+                  {isAppInstalled ? (
+                    <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3 text-[11px] font-bold text-emerald-400">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="w-4 h-4 text-emerald-400" />
+                        <span>Installed & Running Standalone</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2.5">
+                      <button
+                        type="button"
+                        onClick={handleInstallAppClick}
+                        className="w-full py-2.5 bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-[11px] uppercase tracking-wider rounded-xl transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-400/10 active:scale-98 cursor-pointer"
+                      >
+                        <Download className="w-4 h-4" />
+                        {deferredPrompt ? "Install Web App Now" : "Install Web App Options"}
+                      </button>
+                      
+                      {!deferredPrompt && (
+                        <div className="text-[9.5px] text-white/40 leading-relaxed bg-black/40 border border-white/5 p-2.5 rounded-xl flex flex-col gap-1.5">
+                          <span className="font-bold text-white/60">Quick Install Instructions:</span>
+                          <div className="grid grid-cols-2 gap-2 mt-0.5">
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-bold text-amber-300">iOS Safari:</span>
+                              <span>Tap <span className="inline-flex bg-white/10 text-white rounded p-0.5 text-[8px] font-bold"><Share2 className="w-2.5 h-2.5 inline" /></span> Share → <strong>Add to Home Screen</strong></span>
+                            </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="text-[9px] font-bold text-emerald-400">Chrome / Android:</span>
+                              <span>Tap <strong>⋮</strong> Menu → <strong>Install App</strong> / Add to Home Screen</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

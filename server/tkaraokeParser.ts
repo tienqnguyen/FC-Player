@@ -1,4 +1,5 @@
-import fetch from "node-fetch";
+import * as nodeFetch from "node-fetch";
+const fetch = ((nodeFetch as any).default || nodeFetch) as typeof import("node-fetch").default;
 import * as cheerio from "cheerio";
 
 const TKARAOKE_BASE = 'https://lyric.tkaraoke.com';
