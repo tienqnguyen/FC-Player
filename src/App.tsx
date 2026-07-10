@@ -1887,17 +1887,17 @@ const PRESETS = [
     name: "Ultra HD Master",
     desc: "Balanced 15-band enhancement for maximum detail and controlled punch.",
     eq: [
-      0, 2.0, 3.5, 2.0, 0.5, -1.0, -1.5, -1.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.5,
-      4.5,
+      0, 1.5, 2.5, 1.5, 0.5, -0.5, -1.0, -0.5, 0.5, 1.0, 1.5, 1.5, 2.0, 2.5,
+      3.0,
     ],
     spatial: {
-      bassWeight: 0.25,
-      punch: 0.45,
-      vocalHD: 0.6,
-      clarity: 0.15,
-      treble: 0.0,
-      reverb: 0.15,
-      wideness: 1.8,
+      bassWeight: 0.15,
+      punch: 0.35,
+      vocalHD: 0.4,
+      clarity: 0.1,
+      treble: 0.1,
+      reverb: 0.05,
+      wideness: 1.2,
     },
   },
   {
@@ -1906,17 +1906,17 @@ const PRESETS = [
     name: "Crystal Vocal HD",
     desc: "Pushes vocals forward with extreme 4D clarity while reducing muddy frequencies.",
     eq: [
-      -1.0, -1.5, -2.0, -2.5, -3.0, -2.0, -1.0, 0.5, 2.5, 4.0, 4.5, 5.0, 3.5,
-      2.0, 3.0,
+      -1.0, -1.5, -2.0, -2.5, -3.0, -2.0, -1.0, 0.5, 2.0, 3.5, 4.0, 4.0, 3.0,
+      1.5, 2.0,
     ],
     spatial: {
-      bassWeight: 0.1,
-      punch: 0.35,
-      vocalHD: 1.3,
-      clarity: 0.35,
+      bassWeight: 0.05,
+      punch: 0.25,
+      vocalHD: 1.0,
+      clarity: 0.25,
       treble: 0.0,
-      reverb: 0.2,
-      wideness: 1.6,
+      reverb: 0.1,
+      wideness: 1.2,
     },
   },
   {
@@ -1925,17 +1925,17 @@ const PRESETS = [
     name: "Cinematic 4D Spatial",
     desc: "Massive width, deep sub-bass, and immersive psychoacoustic wrapping.",
     eq: [
-      6.0, 5.5, 4.0, 2.0, 0.5, -1.0, -1.0, -0.5, 1.0, 1.5, 2.0, 2.5, 3.5, 4.5,
-      5.0,
+      5.0, 4.5, 3.0, 1.5, 0.5, -0.5, -1.0, -0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5,
+      4.0,
     ],
     spatial: {
-      bassWeight: 0.75,
-      punch: 0.55,
-      vocalHD: 0.4,
-      clarity: 0.3,
+      bassWeight: 0.6,
+      punch: 0.45,
+      vocalHD: 0.3,
+      clarity: 0.2,
       treble: 0.0,
-      reverb: 0.55,
-      wideness: 2.9,
+      reverb: 0.35,
+      wideness: 2.2,
     },
   },
   {
@@ -1944,17 +1944,17 @@ const PRESETS = [
     name: "Booming Club Bass",
     desc: "Heavy physical 3D bass thump for modern electronic and hip-hop.",
     eq: [
-      8.5, 7.5, 5.5, 2.0, 0.0, -2.0, -2.5, -2.0, -1.0, 0.0, 1.5, 2.0, 1.5, 2.5,
-      3.0,
+      7.0, 6.0, 4.5, 1.5, 0.0, -1.5, -2.0, -1.5, -0.5, 0.0, 1.0, 1.5, 1.0, 1.5,
+      2.0,
     ],
     spatial: {
-      bassWeight: 0.95,
-      punch: 0.85,
-      vocalHD: 0.2,
+      bassWeight: 0.75,
+      punch: 0.65,
+      vocalHD: 0.1,
       clarity: 0.1,
       treble: 0.0,
-      reverb: 0.1,
-      wideness: 1.5,
+      reverb: 0.05,
+      wideness: 1.2,
     },
   },
   {
@@ -4459,11 +4459,12 @@ export default function App() {
         }`}>
           
           {/* Player Section */}
-        <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate sticky top-0 z-[60] border border-white/10 overflow-hidden ${
-          isCompact 
-            ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)] lg:mt-2" 
-            : "pt-4 pb-2 mb-4 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)] lg:mt-2"
-        }`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+        <div className="sticky top-0 z-[60] bg-[#0A0B10] w-full pt-1 sm:pt-2 -mt-1 sm:-mt-2 pb-1 lg:bg-transparent lg:pt-0 lg:pb-0 lg:mt-0">
+          <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate border border-white/10 overflow-hidden ${
+            isCompact 
+              ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)] lg:mt-2" 
+              : "pt-4 pb-2 mb-4 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)] lg:mt-2"
+          }`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             
             {/* Dynamic Artwork Background */}
             {currentSong?.cover && (
@@ -4807,9 +4808,15 @@ export default function App() {
                         </div>
                         <button 
                           onClick={() => {
+                              setActivePresetId("custom");
                               const newEq = eqSettings.map((b) => ({ ...b, g: 0 }));
                               setEqSettings(newEq);
                               newEq.forEach((band, i) => updateEqNode?.(i, "gain", 0));
+                              
+                              setSpatialSettings(DEFAULT_SPATIAL);
+                              Object.entries(DEFAULT_SPATIAL).forEach(([key, val]) => {
+                                updateSpatial(key as any, val as number);
+                              });
                           }}
                           className="text-[10px] font-bold text-white/40 uppercase tracking-widest hover:text-white transition-colors"
                         >
@@ -4870,6 +4877,7 @@ export default function App() {
                </div>
             )}
           </div> {/* End of Player Section */}
+        </div> {/* End of Sticky Wrapper */}
 
           {/* Integrated Playlist Section */}
           <div className={`w-full max-w-lg mx-auto flex flex-col min-h-0 px-2 ${
