@@ -6436,6 +6436,13 @@ export default function App() {
                    : null
                }
                onExtractNewSong={() => handleSeparateStems()}
+               onUpdateAudioUrl={(newUrl) => {
+                 setAudioUrl(newUrl);
+                 if (currentSong) {
+                   setCurrentSong({ ...currentSong, audioUrl: newUrl });
+                 }
+                 setStemSongInfo(prev => prev ? { ...prev, url: newUrl } : null);
+               }}
             />
           </div>
         )}

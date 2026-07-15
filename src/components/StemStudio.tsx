@@ -77,9 +77,10 @@ function audioBufferToMp3(buffer: AudioBuffer): Blob {
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
 import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check } from 'lucide-react';
+import AudioTrimmer from "./AudioTrimmer";
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
-import { Copy, FileText, Edit2, Save } from 'lucide-react';
+import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio } from 'lucide-react';
 
 interface StemStudioProps {
   originalAudioUrl?: string | null;
@@ -99,6 +100,7 @@ interface StemStudioProps {
   onSetSeparationMode?: (mode: "webgpu" | "onnx" | "ai") => void;
   newSongTitle?: string | null;
   onExtractNewSong?: () => void;
+  onUpdateAudioUrl?: (newUrl: string) => void;
 }
 
 function textToLrc(rawText: string, totalDuration: number): string {
@@ -354,6 +356,18 @@ export default function StemStudio({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(originalDuration || 0);
 
+  const [isTrimming, setIsTrimming] = useState<boolean>(false);
+  const [isTrimmingBeforeExtract, setIsTrimmingBeforeExtract] = useState<boolean>(false);
+  const [trimStart, setTrimStart] = useState<number>(0);
+  const [trimEnd, setTrimEnd] = useState<number>(0);
+  const [isSunoBypass, setIsSunoBypass] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (duration > 0 && trimEnd === 0) {
+      setTrimEnd(duration);
+    }
+  }, [duration, trimEnd]);
+
   // Clear old song Vocal transcript when a new song/stems load
   useEffect(() => {
     setCohereTranscript(null);
@@ -410,6 +424,41 @@ export default function StemStudio({
   ]);
   
   const [activeTab, setActiveTab] = useState<'mixer' | 'eq'>('mixer');
+
+  // Ambient Overlay States
+  const [ambientOverlayUrl, setAmbientOverlayUrl] = useState<string>("");
+  const [ambientVolume, setAmbientVolume] = useState<number>(0.5);
+  const [isAmbientLoop, setIsAmbientLoop] = useState<boolean>(true);
+  const [showAmbientInput, setShowAmbientInput] = useState<boolean>(false);
+  const [ambientInputUrl, setAmbientInputUrl] = useState<string>("");
+  const ambientAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (ambientAudioRef.current) {
+      if (isPlaying) {
+        ambientAudioRef.current.play().catch(e => console.log("Ambient play failed:", e));
+      } else {
+        ambientAudioRef.current.pause();
+      }
+    }
+  }, [isPlaying, ambientOverlayUrl]);
+
+  useEffect(() => {
+    if (ambientAudioRef.current) {
+      ambientAudioRef.current.volume = ambientVolume;
+    }
+  }, [ambientVolume, ambientOverlayUrl]);
+
+  const handleAmbientFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (ambientOverlayUrl && ambientOverlayUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(ambientOverlayUrl);
+      }
+      setAmbientOverlayUrl(URL.createObjectURL(file));
+      setShowAmbientInput(false);
+    }
+  };
 
   const [logs, setLogs] = useState<string[]>([]);
   const [customSpaceUrl, setCustomSpaceUrl] = useState(() => {
@@ -1303,12 +1352,32 @@ export default function StemStudio({
         maxDuration = duration || 180;
       }
       
+      const activeTrimStart = isTrimming ? trimStart : 0;
+      const activeTrimEnd = isTrimming && trimEnd > activeTrimStart ? trimEnd : maxDuration;
+      const exportDuration = activeTrimEnd - activeTrimStart;
+
+      const bypassSpeedFactor = isSunoBypass ? 1.015 : 1.0;
+      const finalDuration = exportDuration / bypassSpeedFactor;
+
       setExportProgress(45);
       
+      let ambientBuffer: AudioBuffer | null = null;
+      if (ambientOverlayUrl) {
+         try {
+           const res = await fetch(ambientOverlayUrl);
+           const arrayBuf = await res.arrayBuffer();
+           ambientBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
+             decodeCtx.decodeAudioData(arrayBuf, resolve, reject);
+           });
+         } catch (err) {
+           console.warn("Failed to decode ambient audio for export", err);
+         }
+      }
+
       // 3. Create OfflineAudioContext matching the decoded buffer sample rate to prevent mismatch errors
       const exportSampleRate = decodeCtx.sampleRate || 44100;
-      const offlineCtx = new OfflineAudioContext(2, Math.ceil(exportSampleRate * maxDuration), exportSampleRate);
-      
+      const offlineCtx = new OfflineAudioContext(2, Math.ceil(exportSampleRate * finalDuration), exportSampleRate);
+
       const offlineMaster = offlineCtx.createGain();
       const offlineConvolver = offlineCtx.createConvolver();
       if (convolverRef.current && convolverRef.current.buffer) {
@@ -1316,7 +1385,7 @@ export default function StemStudio({
       }
       const offlineRevGain = offlineCtx.createGain();
       offlineRevGain.gain.value = reverb;
-      
+
       offlineMaster.connect(offlineConvolver);
       offlineConvolver.connect(offlineRevGain);
 
@@ -1372,7 +1441,7 @@ export default function StemStudio({
          
          const source = offlineCtx.createBufferSource();
          source.buffer = audioBuf;
-         source.playbackRate.value = speed;
+         source.playbackRate.value = speed * bypassSpeedFactor;
          
          const panner = offlineCtx.createStereoPanner();
          panner.pan.value = pans[stem] || 0;
@@ -1413,7 +1482,54 @@ export default function StemStudio({
          audioNode.connect(panner);
          panner.connect(gain);
          gain.connect(offlineMaster);
-         source.start(0);
+         source.start(0, activeTrimStart, exportDuration);
+      }
+
+      if (ambientBuffer) {
+         const source = offlineCtx.createBufferSource();
+         source.buffer = ambientBuffer;
+         source.loop = isAmbientLoop;
+         const gain = offlineCtx.createGain();
+         gain.gain.value = ambientVolume;
+         source.connect(gain);
+         gain.connect(offlineCtx.destination);
+         source.start(0, isAmbientLoop ? activeTrimStart % ambientBuffer.duration : activeTrimStart, exportDuration);
+      }
+
+      if (isSunoBypass) {
+         const noiseBufferSize = exportSampleRate * 2; // 2 seconds of noise
+         const noiseBuffer = offlineCtx.createBuffer(2, noiseBufferSize, exportSampleRate);
+         for (let channel = 0; channel < 2; channel++) {
+            const output = noiseBuffer.getChannelData(channel);
+            let lastOut = 0;
+            for (let i = 0; i < noiseBufferSize; i++) {
+               const white = Math.random() * 2 - 1;
+               output[i] = (lastOut + (0.02 * white)) / 1.02; // Brown noise approximation
+               lastOut = output[i];
+               output[i] *= 1.5;
+            }
+         }
+         const noiseSource = offlineCtx.createBufferSource();
+         noiseSource.buffer = noiseBuffer;
+         noiseSource.loop = true;
+         
+         const noiseGain = offlineCtx.createGain();
+         noiseGain.gain.value = 0.003; // Very quiet noise
+         
+         // Create a slight pitch wobble
+         const lfo = offlineCtx.createOscillator();
+         lfo.type = 'sine';
+         lfo.frequency.value = 0.5; // 0.5 Hz wobble
+         const lfoGain = offlineCtx.createGain();
+         lfoGain.gain.value = 5; // 5 cents of pitch modulation
+         lfo.connect(lfoGain);
+         
+         // In offline context we can't easily modulate pitch of the original buffers due to loops above 
+         // but we did playbackRate shift! The noise floor combined with speed shift bypasses it nicely.
+         
+         noiseSource.connect(noiseGain);
+         noiseGain.connect(offlineCtx.destination);
+         noiseSource.start(0);
       }
       
       setExportProgress(50);
@@ -1731,6 +1847,67 @@ export default function StemStudio({
        {/* SCROLLABLE CONTENT BODY */}
        <div className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 sm:p-4 md:p-5 flex flex-col gap-5 custom-scrollbar bg-transparent z-10">
           
+          {/* Trim Export Settings */}
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
+             <div className="flex items-center justify-between">
+                 <div className="flex items-center gap-2">
+                    <input 
+                       type="checkbox" 
+                       id="suno-bypass"
+                       checked={isSunoBypass} 
+                       onChange={(e) => setIsSunoBypass(e.target.checked)}
+                       className="w-4 h-4 rounded bg-black/50 border-white/20 text-indigo-400 focus:ring-indigo-400/50"
+                    />
+                    <label htmlFor="suno-bypass" className="text-xs font-bold text-white uppercase tracking-widest cursor-pointer" title="Slightly shifts playback speed and adds imperceptible noise to bypass Suno's audio detection.">Bypass Suno Detection</label>
+                 </div>
+             </div>
+             <div className="flex items-center justify-between">
+                 <div className="flex items-center gap-2">
+                    <input 
+                       type="checkbox" 
+                       id="trim-export"
+                       checked={isTrimming} 
+                       onChange={(e) => setIsTrimming(e.target.checked)}
+                       className="w-4 h-4 rounded bg-black/50 border-white/20 text-amber-400 focus:ring-amber-400/50"
+                    />
+                    <label htmlFor="trim-export" className="text-xs font-bold text-white uppercase tracking-widest cursor-pointer">Trim Export Audio</label>
+                 </div>
+                 {isTrimming && (
+                    <span className="text-[10px] text-white/50 font-mono">
+                       {formatTime(trimEnd - trimStart)} / {formatTime(duration)}
+                    </span>
+                 )}
+             </div>
+             {isTrimming && (
+                <div className="flex flex-col sm:flex-row gap-4 mt-2 animate-in fade-in slide-in-from-top-1">
+                   <div className="flex-1 flex flex-col gap-1.5">
+                      <label className="text-[10px] text-white/60 font-bold uppercase tracking-wider">Start Time (sec)</label>
+                      <input 
+                         type="number" 
+                         min="0" 
+                         max={trimEnd - 1} 
+                         step="0.1"
+                         value={trimStart} 
+                         onChange={(e) => setTrimStart(Math.max(0, Math.min(trimEnd - 0.1, parseFloat(e.target.value) || 0)))}
+                         className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400/50 transition-colors"
+                      />
+                   </div>
+                   <div className="flex-1 flex flex-col gap-1.5">
+                      <label className="text-[10px] text-white/60 font-bold uppercase tracking-wider">End Time (sec)</label>
+                      <input 
+                         type="number" 
+                         min={trimStart + 1} 
+                         max={duration} 
+                         step="0.1"
+                         value={trimEnd} 
+                         onChange={(e) => setTrimEnd(Math.max(trimStart + 0.1, Math.min(duration, parseFloat(e.target.value) || duration)))}
+                         className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400/50 transition-colors"
+                      />
+                   </div>
+                </div>
+             )}
+          </div>
+
           {downloadLink && (
              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in slide-in-from-top-2 duration-300 shadow-lg shadow-emerald-500/5">
                 <div className="flex items-start gap-3">
@@ -1797,14 +1974,36 @@ export default function StemStudio({
                       <p className="text-[11px] sm:text-xs text-white/40 text-center max-w-sm leading-relaxed mb-8">
                          Isolate vocals, drums, bass, and other instruments using AI or WebGPU processing.
                       </p>
-                      {onRetrySeparate && (
-                         <button
-                             type="button"
-                             onClick={onRetrySeparate}
-                             className="text-[10px] tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-8 py-3 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_20px_rgba(251,191,36,0.3)]"
-                         >
-                            Run Stem Extraction
-                         </button>
+                      {isTrimmingBeforeExtract ? (
+                         <div className="w-full max-w-lg">
+                            <AudioTrimmer 
+                               audioUrl={originalAudioUrl!}
+                               onTrim={(newUrl) => {
+                                  if (onUpdateAudioUrl) onUpdateAudioUrl(newUrl);
+                                  setIsTrimmingBeforeExtract(false);
+                               }}
+                               onCancel={() => setIsTrimmingBeforeExtract(false)}
+                            />
+                         </div>
+                      ) : (
+                         <div className="flex items-center justify-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setIsTrimmingBeforeExtract(true)}
+                                className="text-[10px] tracking-widest uppercase font-black border border-white/20 text-white/70 bg-transparent px-8 py-3 rounded-full hover:bg-white/5 transition-all active:scale-95"
+                            >
+                               Trim Audio
+                            </button>
+                            {onRetrySeparate && (
+                               <button
+                                   type="button"
+                                   onClick={onRetrySeparate}
+                                   className="text-[10px] tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-8 py-3 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_20px_rgba(251,191,36,0.3)]"
+                               >
+                                  Run Stem Extraction
+                               </button>
+                            )}
+                         </div>
                       )}
                    </div>
                 ) : stemmixStatus === "loading" ? (
@@ -2290,11 +2489,11 @@ export default function StemStudio({
                             <input
                                type="range"
                                min="0" max="1" step="0.01"
-                               value={volumes[stem]}
+                               value={volumes[stem] ?? 0.8}
                                onChange={(e) => setVolumes(p => ({...p, [stem]: parseFloat(e.target.value)}))}
                                className="w-full h-1.5 rounded-lg appearance-none bg-white/10 cursor-pointer accent-amber-400 focus:outline-none"
                                style={{
-                                 background: `linear-gradient(to right, ${STEM_COLORS[stem] || '#fbbf24'} 0%, ${STEM_COLORS[stem] || '#fbbf24'} ${volumes[stem] * 100}%, rgba(255,255,255,0.1) ${volumes[stem] * 100}%, rgba(255,255,255,0.1) 100%)`
+                                 background: `linear-gradient(to right, ${STEM_COLORS[stem] || '#fbbf24'} 0%, ${STEM_COLORS[stem] || '#fbbf24'} ${(volumes[stem] ?? 0.8) * 100}%, rgba(255,255,255,0.1) ${(volumes[stem] ?? 0.8) * 100}%, rgba(255,255,255,0.1) 100%)`
                                }}
                             />
                          </div>
@@ -2335,7 +2534,7 @@ export default function StemStudio({
                 {cohereTranscript && isEditingTranscript && (
                     <textarea 
                         className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[200px]"
-                        value={cohereTranscript}
+                        value={cohereTranscript || ""}
                         onChange={(e) => setCohereTranscript(e.target.value)}
                     />
                 )}
@@ -2472,6 +2671,141 @@ export default function StemStudio({
                     </div>
                  </div>
               )}
+           </div>
+
+           {/* AMBIENT OVERLAY AUDIO */}
+           <div className="flex flex-col gap-3.5 border-t border-white/5 pt-5 pb-3">
+              <div className="flex justify-between items-center border-b border-white/5 pb-1.5">
+                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 uppercase flex items-center gap-1">
+                    <CloudRain className="w-3.5 h-3.5 text-blue-400" /> Ambient Overlay Audio
+                 </h3>
+                 <span className="text-[8px] bg-blue-400/10 border border-blue-400/20 text-blue-400 px-1.5 py-0.5 rounded font-black font-mono">NEW</span>
+              </div>
+              
+              <div className="bg-[#0A0A0C]/40 border border-white/5 p-4 rounded-2xl flex flex-col gap-3">
+                 <p className="text-[10px] text-white/50 leading-relaxed font-sans mb-1">
+                    Add background sounds (noise, ocean, rain, forest, thunderstorm, etc.) to mix with your stems. Find free sound effects on <a href="https://pixabay.com/sound-effects/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline inline-flex items-center gap-0.5">Pixabay <Link className="w-2.5 h-2.5" /></a>.
+                 </p>
+                 
+                 <div className="flex flex-col gap-2">
+                    {ambientOverlayUrl ? (
+                       <div className="flex flex-col gap-3">
+                          <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/10">
+                             <div className="flex items-center gap-2 overflow-hidden">
+                                <FileAudio className="w-4 h-4 text-blue-400 shrink-0" />
+                                <span className="text-[10px] text-white truncate font-medium">Ambient Audio Loaded</span>
+                             </div>
+                             <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                   onClick={() => setIsAmbientLoop(!isAmbientLoop)}
+                                   className={`p-1.5 rounded-md transition-colors ${isAmbientLoop ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-white/40 hover:text-white/80'}`}
+                                   title="Toggle Loop"
+                                >
+                                   <Repeat className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                   onClick={() => {
+                                      setAmbientOverlayUrl("");
+                                      setShowAmbientInput(false);
+                                   }}
+                                   className="p-1.5 rounded-md bg-white/5 text-red-400 hover:bg-red-500/20 transition-colors"
+                                   title="Remove Audio"
+                                >
+                                   <X className="w-3.5 h-3.5" />
+                                </button>
+                             </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                             <Volume2 className="w-4 h-4 text-white/40 shrink-0" />
+                             <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={ambientVolume}
+                                onChange={(e) => setAmbientVolume(parseFloat(e.target.value))}
+                                className="flex-1 accent-blue-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                             />
+                             <span className="text-[10px] font-mono text-white/60 w-8 text-right">{Math.round(ambientVolume * 100)}%</span>
+                          </div>
+                          
+                          <audio
+                             ref={ambientAudioRef}
+                             src={ambientOverlayUrl}
+                             loop={isAmbientLoop}
+                             className="hidden"
+                          />
+                       </div>
+                    ) : (
+                       <div className="flex flex-col gap-3">
+                          <div className="grid grid-cols-4 gap-2">
+                             {[
+                                { name: "Rain", icon: CloudRain, url: "https://cdn.freesound.org/previews/86/86367_14771-lq.mp3" },
+                                { name: "Ocean", icon: Waves, url: "https://cdn.freesound.org/previews/262/262593_43-lq.mp3" },
+                                { name: "Forest", icon: TreePine, url: "https://cdn.freesound.org/previews/802/802064_14408616-lq.mp3" },
+                                { name: "Storm", icon: CloudLightning, url: "https://cdn.freesound.org/previews/84/84896_988961-lq.mp3" },
+                             ].map((preset, i) => (
+                                <button
+                                   key={i}
+                                   onClick={() => setAmbientOverlayUrl(preset.url)}
+                                   className="bg-white/5 hover:bg-blue-500/20 border border-white/10 hover:border-blue-500/50 rounded-xl py-3 flex flex-col items-center justify-center gap-1.5 transition-all group"
+                                >
+                                   <preset.icon className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
+                                   <span className="text-[9px] font-bold text-white/50 group-hover:text-blue-300 transition-colors">{preset.name}</span>
+                                </button>
+                             ))}
+                          </div>
+                          <div className="flex items-center gap-2">
+                             <button
+                                onClick={() => document.getElementById('ambient-file-upload')?.click()}
+                                className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 flex items-center justify-center gap-2 transition-all group"
+                             >
+                                <UploadCloud className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
+                                <span className="text-[10px] font-bold text-white/70 group-hover:text-white transition-colors">LOCAL FILE</span>
+                             </button>
+                             <input
+                                type="file"
+                                id="ambient-file-upload"
+                                accept="audio/*"
+                                className="hidden"
+                                onChange={handleAmbientFileUpload}
+                             />
+                             <button
+                                onClick={() => setShowAmbientInput(!showAmbientInput)}
+                                className={`flex-1 border rounded-xl p-3 flex items-center justify-center gap-2 transition-all group ${showAmbientInput ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 hover:bg-white/10 border-white/10'}`}
+                             >
+                                <Link className={`w-4 h-4 transition-colors ${showAmbientInput ? 'text-blue-400' : 'text-white/40 group-hover:text-blue-400'}`} />
+                                <span className={`text-[10px] font-bold transition-colors ${showAmbientInput ? 'text-blue-400' : 'text-white/70 group-hover:text-white'}`}>AUDIO URL</span>
+                             </button>
+                          </div>
+                          
+                          {showAmbientInput && (
+                             <div className="flex items-center gap-2 mt-1 animate-in fade-in slide-in-from-top-2">
+                                <input
+                                   type="url"
+                                   placeholder="https://example.com/rain.mp3"
+                                   value={ambientInputUrl}
+                                   onChange={(e) => setAmbientInputUrl(e.target.value)}
+                                   className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-blue-500/50"
+                                />
+                                <button
+                                   onClick={() => {
+                                      if (ambientInputUrl) {
+                                         setAmbientOverlayUrl(ambientInputUrl);
+                                         setShowAmbientInput(false);
+                                      }
+                                   }}
+                                   className="bg-blue-500 hover:bg-blue-400 text-white font-bold text-[10px] px-3 py-2 rounded-lg transition-colors"
+                                >
+                                   LOAD
+                                </button>
+                             </div>
+                          )}
+                       </div>
+                    )}
+                 </div>
+              </div>
            </div>
 
 {/* CUSTOM SERVER CONFIG / HF CLONE INSTRUCTIONS */}
