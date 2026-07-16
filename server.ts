@@ -90,7 +90,7 @@ async function getDirectMediaUrl(url: string): Promise<string> {
   return inFlightPromise;
 }
 
-import { formatLyric, improveLyric } from "./server/lyricProcessor";
+import { formatLyric, improveLyric, addChordsLyric } from "./server/lyricProcessor";
 
 async function startServer() {
   const app = express();
@@ -1416,6 +1416,20 @@ async function startServer() {
       res.json(result);
     } catch (error: any) {
       console.error("[Lyric Improve Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/lyric/chords", express.json(), async (req, res) => {
+    try {
+      const { lyric } = req.body;
+      if (!lyric) {
+         return res.status(400).json({ error: "lyric is required" });
+      }
+      const result = await addChordsLyric(lyric);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Lyric Chords Error]", error);
       res.status(500).json({ error: error.message });
     }
   });

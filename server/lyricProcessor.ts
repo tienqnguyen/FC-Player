@@ -41,6 +41,28 @@ Return ONLY valid JSON. Do not use markdown blocks for JSON.`;
     return await callLLM(prompt);
 }
 
+export async function addChordsLyric(rawLyric: string) {
+    const prompt = `You are a professional musician and chord arranger. Your task is to add musical chords to the provided lyrics.
+Insert the chords inline within square brackets right before the word they belong to. Do not change the original lyrics or their structure at all.
+CRITICAL: Preserve all original line breaks exactly as they appear in the input lyrics. Do NOT remove or flatten line breaks.
+Example:
+Input:
+Anh biết là buồn lắm chứ khi phải tìm đến cơn say như vậy
+Output:
+Anh [Dm] biết là buồn lắm chứ khi phải tìm [Am] đến cơn say như vậy
+
+INPUT LYRICS:
+${rawLyric}
+
+OUTPUT FORMAT:
+Provide the output as JSON with the following key:
+- "lyric": The lyrics with chords added.
+
+Return ONLY valid JSON. Do not use markdown blocks for JSON.`;
+
+    return await callLLM(prompt);
+}
+
 async function callLLM(prompt: string) {
     if (!process.env.GEMINI_API_KEY && !process.env.OPENROUTER_API_KEY) {
         throw new Error("Missing API Key. Please add GEMINI_API_KEY or OPENROUTER_API_KEY in the Secrets panel.");

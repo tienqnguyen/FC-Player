@@ -356,7 +356,10 @@ export default function StemStudio({
   const [lyricStyle, setLyricStyle] = useState<string>("");
   const [isFormattingLyric, setIsFormattingLyric] = useState<boolean>(false);
   const [isImprovingLyric, setIsImprovingLyric] = useState<boolean>(false);
+  const [isAddingChords, setIsAddingChords] = useState<boolean>(false);
   const [improvePercentage, setImprovePercentage] = useState<number>(3);
+  const [swapWordA, setSwapWordA] = useState<string>("Anh");
+  const [swapWordB, setSwapWordB] = useState<string>("Em");
   const [lyricDiff, setLyricDiff] = useState<Change[] | null>(null);
   const [isLyricCopied, setIsLyricCopied] = useState<boolean>(false);
 
@@ -415,6 +418,67 @@ export default function StemStudio({
         console.error("Failed to improve lyric", e);
      }
      setIsImprovingLyric(false);
+  };
+
+  const handleAddChords = async () => {
+     const textToProcess = lyricFormatted || lyricRaw;
+     if (!textToProcess) return;
+     setIsAddingChords(true);
+     try {
+        const res = await fetch("/api/lyric/chords", {
+           method: "POST",
+           headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({ lyric: textToProcess })
+        });
+        const data = await res.json();
+        if (res.ok && data.lyric) {
+           const changes = diffWords(textToProcess, data.lyric);
+           setLyricDiff(changes);
+           setLyricFormatted(data.lyric);
+        } else if (data.error) {
+           alert(data.error);
+        }
+     } catch (e) {
+        console.error("Failed to add chords", e);
+     }
+     setIsAddingChords(false);
+  };
+
+  const handleSwapWords = () => {
+     const textToProcess = lyricFormatted || lyricRaw;
+     if (!textToProcess || !swapWordA || !swapWordB) return;
+     
+     // Escape regex specials
+     const escapeRegExp = (string: string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+     const regex = new RegExp(`\\b(${escapeRegExp(swapWordA)}|${escapeRegExp(swapWordB)})\\b`, 'gi');
+     
+     const newText = textToProcess.replace(regex, (match) => {
+         const lowerMatch = match.toLowerCase();
+         const lowerA = swapWordA.toLowerCase();
+         const lowerB = swapWordB.toLowerCase();
+         
+         let replacement = "";
+         if (lowerMatch === lowerA) {
+             replacement = swapWordB;
+         } else if (lowerMatch === lowerB) {
+             replacement = swapWordA;
+         } else {
+             return match;
+         }
+         
+         // Preserve capitalization
+         if (match === match.toUpperCase() && match.length > 1) {
+             return replacement.toUpperCase();
+         } else if (match[0] === match[0].toUpperCase()) {
+             return replacement.charAt(0).toUpperCase() + replacement.slice(1).toLowerCase();
+         } else {
+             return replacement.toLowerCase();
+         }
+     });
+     
+     const changes = diffWords(textToProcess, newText);
+     setLyricDiff(changes);
+     setLyricFormatted(newText);
   };
 
   const handleInsertRandomChars = () => {
@@ -2665,20 +2729,20 @@ export default function StemStudio({
                         placeholder="e.g. Acoustic Pop, fast tempo"
                      />
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                      <button 
                         onClick={handleFormatLyric}
                         disabled={!lyricRaw || isFormattingLyric}
-                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[10px] font-bold tracking-widest uppercase px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
                      >
                         {isFormattingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                         Format for SUNO
                      </button>
-                     <div className="flex items-center bg-[#00ab6b] rounded-lg">
+                     <div className="flex items-center bg-[#00ab6b] rounded-lg shrink-0">
                         <button 
                            onClick={handleImproveLyric}
                            disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[10px] font-bold tracking-widest uppercase px-3 py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
+                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
                         >
                            {isImprovingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit2 className="w-3 h-3" />}
                            Improve
@@ -2687,7 +2751,7 @@ export default function StemStudio({
                            value={improvePercentage}
                            onChange={(e) => setImprovePercentage(Number(e.target.value))}
                            disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="bg-transparent text-white text-[10px] font-bold tracking-widest uppercase px-2 py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
+                           className="bg-transparent text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-1.5 py-1.5 sm:px-2 sm:py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
                         >
                            <option value={1} className="bg-black">1%</option>
                            <option value={3} className="bg-black">3%</option>
@@ -2697,9 +2761,41 @@ export default function StemStudio({
                         </select>
                      </div>
                      <button 
+                        onClick={handleAddChords}
+                        disabled={(!lyricRaw && !lyricFormatted) || isAddingChords}
+                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
+                     >
+                        {isAddingChords ? <Loader2 className="w-3 h-3 animate-spin" /> : <Music className="w-3 h-3" />}
+                        Add Chords
+                     </button>
+                     <div className="flex items-center gap-1 sm:gap-1.5 ml-0 sm:ml-1 pl-0 sm:pl-2 sm:border-l border-white/10 shrink-0">
+                        <input
+                           type="text"
+                           value={swapWordA}
+                           onChange={(e) => setSwapWordA(e.target.value)}
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[9px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           placeholder="A"
+                        />
+                        <RotateCcw className="w-3 h-3 text-white/40 cursor-pointer hover:text-white" onClick={() => { const temp = swapWordA; setSwapWordA(swapWordB); setSwapWordB(temp); }} />
+                        <input
+                           type="text"
+                           value={swapWordB}
+                           onChange={(e) => setSwapWordB(e.target.value)}
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[9px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           placeholder="B"
+                        />
+                        <button 
+                           onClick={handleSwapWords}
+                           disabled={(!lyricRaw && !lyricFormatted) || !swapWordA || !swapWordB}
+                           className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 ml-0.5 sm:ml-1"
+                        >
+                           Swap
+                        </button>
+                     </div>
+                     <button 
                         onClick={handleInsertRandomChars}
                         disabled={!lyricFormatted}
-                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[10px] font-bold tracking-widest uppercase px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 sm:ml-auto shrink-0"
                      >
                         <Wand2 className="w-3 h-3" />
                         Add Chars
