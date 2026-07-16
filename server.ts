@@ -90,6 +90,8 @@ async function getDirectMediaUrl(url: string): Promise<string> {
   return inFlightPromise;
 }
 
+import { formatLyric, improveLyric } from "./server/lyricProcessor";
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -1116,6 +1118,100 @@ async function startServer() {
     }
   });
 
+  // Pixabay API endpoints
+  app.get("/api/pixabay/search", async (req, res) => {
+    try {
+      const q = req.query.q as string || "rain";
+      const pixabayUrl = `https://pixabay.com/sound-effects/search/${encodeURIComponent(q)}/`;
+      
+      let html = "";
+      let isFreesoundFallback = false;
+      
+      try {
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(pixabayUrl)}`;
+        const response = await fetch(proxyUrl);
+        const data = await response.json();
+        if (data && data.contents && data.contents.includes("window.__BOOTSTRAP__")) {
+          html = data.contents;
+        }
+      } catch (e) {
+        console.warn("allorigins failed, falling back to freesound");
+        isFreesoundFallback = true;
+      }
+      
+      if (!html) {
+         isFreesoundFallback = true;
+      }
+      
+      if (isFreesoundFallback) {
+         // Fallback to Freesound since Pixabay aggressively blocks proxies via Cloudflare
+         const freeSoundUrl = `https://freesound.org/search/?q=${encodeURIComponent(q)}`;
+         const fsRes = await fetch(freeSoundUrl, {
+            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" }
+         });
+         const fsHtml = await fsRes.text();
+         const $ = cheerio.load(fsHtml);
+         const results: any[] = [];
+         
+         $(".bw-player").each((_, el) => {
+            const mp3 = $(el).attr("data-mp3");
+            const title = $(el).attr("data-title");
+            const duration = parseFloat($(el).attr("data-duration") || "0");
+            
+            if (mp3 && title) {
+               results.push({
+                  name: title.replace(".wav", "").replace(".mp3", ""),
+                  url: mp3,
+                  duration: duration,
+                  thumbnailUrl: ""
+               });
+            }
+         });
+         
+         return res.json({ success: true, data: results.slice(0, 15) });
+      }
+      
+      const match = html.match(/window\.__BOOTSTRAP__\s*=\s*(\{.*?\});/);
+      
+      if (!match) {
+         return res.json({ success: false, error: "Could not extract bootstrap data from Pixabay." });
+      }
+      
+      const bootstrap = JSON.parse(match[1]);
+      
+      const seenUrls = new Set<string>();
+      function extractAudioFromJSON(obj: any): any[] {
+        let results: any[] = [];
+        if (!obj || typeof obj !== 'object') return results;
+        
+        if (obj.mediaType === 'audio' && obj.sources && obj.sources.src) {
+           if (!seenUrls.has(obj.sources.src)) {
+             seenUrls.add(obj.sources.src);
+             results.push({
+                name: obj.name || obj.alt || "Unknown",
+                url: obj.sources.src,
+                duration: obj.duration || 0,
+                thumbnailUrl: obj.sources.thumbnailUrl || ""
+             });
+           }
+        }
+        
+        for (const key of Object.keys(obj)) {
+           if (typeof obj[key] === 'object') {
+             results = results.concat(extractAudioFromJSON(obj[key]));
+           }
+        }
+        return results;
+      }
+      
+      return res.json({ success: true, data: extractAudioFromJSON(bootstrap).slice(0, 15) });
+      
+    } catch (error: any) {
+      console.error("[Search Error]", error.message);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // TKaraoke API endpoints
   app.get("/api/tkaraoke/search", async (req, res) => {
     try {
@@ -1293,6 +1389,34 @@ async function startServer() {
       if (!res.headersSent) {
         res.status(500).json({ error: error.message || "Failed to download media." });
       }
+    }
+  });
+
+  app.post("/api/lyric/format", express.json(), async (req, res) => {
+    try {
+      const { lyric, style } = req.body;
+      if (!lyric) {
+         return res.status(400).json({ error: "lyric is required" });
+      }
+      const result = await formatLyric(lyric, style);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Lyric Format Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/lyric/improve", express.json(), async (req, res) => {
+    try {
+      const { lyric, percentage = 3 } = req.body;
+      if (!lyric) {
+         return res.status(400).json({ error: "lyric is required" });
+      }
+      const result = await improveLyric(lyric, percentage);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Lyric Improve Error]", error);
+      res.status(500).json({ error: error.message });
     }
   });
 

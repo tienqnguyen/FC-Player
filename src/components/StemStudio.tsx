@@ -76,11 +76,12 @@ function audioBufferToMp3(buffer: AudioBuffer): Blob {
   }
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
-import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check } from 'lucide-react';
+import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search } from 'lucide-react';
 import AudioTrimmer from "./AudioTrimmer";
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
-import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio } from 'lucide-react';
+import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio, Wand2 } from 'lucide-react';
+import { diffWords, Change } from 'diff';
 
 interface StemStudioProps {
   originalAudioUrl?: string | null;
@@ -281,7 +282,8 @@ export default function StemStudio({
   onSetSeparationMode,
   onStemLoadError,
   newSongTitle,
-  onExtractNewSong
+  onExtractNewSong,
+  onUpdateAudioUrl
 }: StemStudioProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -341,11 +343,95 @@ export default function StemStudio({
     transcript: true,
     masterFx: true,
     masterEq: true,
-    aiCloud: true
+    aiCloud: true,
+    lyric: false
   });
   const toggleSection = (section) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
   };
+  
+  // Lyric Tool States
+  const [lyricRaw, setLyricRaw] = useState<string>("");
+  const [lyricFormatted, setLyricFormatted] = useState<string>("");
+  const [lyricStyle, setLyricStyle] = useState<string>("");
+  const [isFormattingLyric, setIsFormattingLyric] = useState<boolean>(false);
+  const [isImprovingLyric, setIsImprovingLyric] = useState<boolean>(false);
+  const [improvePercentage, setImprovePercentage] = useState<number>(3);
+  const [lyricDiff, setLyricDiff] = useState<Change[] | null>(null);
+  const [isLyricCopied, setIsLyricCopied] = useState<boolean>(false);
+
+  const handleCopyLyric = async () => {
+    try {
+      await navigator.clipboard.writeText(lyricFormatted);
+      setIsLyricCopied(true);
+      setTimeout(() => setIsLyricCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  const handleFormatLyric = async () => {
+     if (!lyricRaw) return;
+     setIsFormattingLyric(true);
+     setLyricDiff(null);
+     try {
+        const res = await fetch("/api/lyric/format", {
+           method: "POST",
+           headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({ lyric: lyricRaw, style: lyricStyle })
+        });
+        const data = await res.json();
+        if (res.ok && data.prompt) {
+           setLyricFormatted(data.prompt);
+           if (data.style && !lyricStyle) setLyricStyle(data.style);
+        } else if (data.error) {
+           alert(data.error);
+        }
+     } catch (e) {
+        console.error("Failed to format lyric", e);
+     }
+     setIsFormattingLyric(false);
+  };
+
+  const handleImproveLyric = async () => {
+     const textToImprove = lyricFormatted || lyricRaw;
+     if (!textToImprove) return;
+     setIsImprovingLyric(true);
+     try {
+        const res = await fetch("/api/lyric/improve", {
+           method: "POST",
+           headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({ lyric: textToImprove, percentage: improvePercentage })
+        });
+        const data = await res.json();
+        if (res.ok && data.lyric) {
+           const changes = diffWords(textToImprove, data.lyric);
+           setLyricDiff(changes);
+           setLyricFormatted(data.lyric);
+        } else if (data.error) {
+           alert(data.error);
+        }
+     } catch (e) {
+        console.error("Failed to improve lyric", e);
+     }
+     setIsImprovingLyric(false);
+  };
+
+  const handleInsertRandomChars = () => {
+     if (!lyricFormatted) return;
+     const chars = ['.', ',', '!', '?', '^', '~', '-', '*', '😊', '🔥', '✨', '🎶', '🎤', "'", '>', '$', '/', '`', '\\', '"'];
+     let newText = "";
+     for (let i = 0; i < lyricFormatted.length; i++) {
+        newText += lyricFormatted[i];
+        if (Math.random() < 0.05 && lyricFormatted[i] === ' ') {
+           newText += chars[Math.floor(Math.random() * chars.length)] + " ";
+        }
+     }
+     const changes = diffWords(lyricFormatted, newText);
+     setLyricDiff(changes);
+     setLyricFormatted(newText);
+  };
+
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [transcriptionStatus, setTranscriptionStatus] = useState('');
   const [subtitles, setSubtitles] = useState<any[] | null>(null);
@@ -431,7 +517,49 @@ export default function StemStudio({
   const [isAmbientLoop, setIsAmbientLoop] = useState<boolean>(true);
   const [showAmbientInput, setShowAmbientInput] = useState<boolean>(false);
   const [ambientInputUrl, setAmbientInputUrl] = useState<string>("");
+  const [showPixabaySearch, setShowPixabaySearch] = useState<boolean>(false);
+  const [pixabayQuery, setPixabayQuery] = useState<string>("rain");
+  const [pixabayResults, setPixabayResults] = useState<any[]>([]);
+  const [isPixabaySearching, setIsPixabaySearching] = useState<boolean>(false);
+  const [previewingUrl, setPreviewingUrl] = useState<string | null>(null);
   const ambientAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const togglePreview = (url: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (previewingUrl === url) {
+       previewAudioRef.current?.pause();
+       setPreviewingUrl(null);
+    } else {
+       if (previewAudioRef.current) {
+          previewAudioRef.current.pause();
+       }
+       setPreviewingUrl(url);
+       if (!previewAudioRef.current) {
+          previewAudioRef.current = new Audio(url);
+          previewAudioRef.current.onended = () => setPreviewingUrl(null);
+       } else {
+          previewAudioRef.current.src = url;
+       }
+       previewAudioRef.current.play().catch(e => console.error("Preview failed:", e));
+    }
+  };
+
+  const handlePixabaySearch = async () => {
+    if (!pixabayQuery) return;
+    setIsPixabaySearching(true);
+    setPixabayResults([]);
+    try {
+      const res = await fetch(`/api/pixabay/search?q=${encodeURIComponent(pixabayQuery)}`);
+      const data = await res.json();
+      if (data.success && data.data) {
+        setPixabayResults(data.data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setIsPixabaySearching(false);
+  };
 
   useEffect(() => {
     if (ambientAudioRef.current) {
@@ -2507,7 +2635,126 @@ export default function StemStudio({
              </div>
              )}
           </div>
-                                      {/* SUBTITLES UI */}
+                                      {/* LYRIC TOOL UI */}
+          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('lyric')}>
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> SUNO Lyric Tool</h3>
+                <div className="flex items-center gap-2">
+                   {expandedSections.lyric ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                </div>
+             </div>
+             
+             {expandedSections.lyric && (
+               <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                     <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Raw Lyrics</label>
+                     <textarea 
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[100px]"
+                        value={lyricRaw}
+                        onChange={(e) => setLyricRaw(e.target.value)}
+                        placeholder="Enter your lyrics here..."
+                     />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                     <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Style Request (Optional)</label>
+                     <input 
+                        type="text"
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/90 text-sm focus:outline-none focus:border-amber-400/50"
+                        value={lyricStyle}
+                        onChange={(e) => setLyricStyle(e.target.value)}
+                        placeholder="e.g. Acoustic Pop, fast tempo"
+                     />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                     <button 
+                        onClick={handleFormatLyric}
+                        disabled={!lyricRaw || isFormattingLyric}
+                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[10px] font-bold tracking-widest uppercase px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                     >
+                        {isFormattingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        Format for SUNO
+                     </button>
+                     <div className="flex items-center bg-[#00ab6b] rounded-lg">
+                        <button 
+                           onClick={handleImproveLyric}
+                           disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
+                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[10px] font-bold tracking-widest uppercase px-3 py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
+                        >
+                           {isImprovingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit2 className="w-3 h-3" />}
+                           Improve
+                        </button>
+                        <select 
+                           value={improvePercentage}
+                           onChange={(e) => setImprovePercentage(Number(e.target.value))}
+                           disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
+                           className="bg-transparent text-white text-[10px] font-bold tracking-widest uppercase px-2 py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
+                        >
+                           <option value={1} className="bg-black">1%</option>
+                           <option value={3} className="bg-black">3%</option>
+                           <option value={5} className="bg-black">5%</option>
+                           <option value={10} className="bg-black">10%</option>
+                           <option value={20} className="bg-black">20%</option>
+                        </select>
+                     </div>
+                     <button 
+                        onClick={handleInsertRandomChars}
+                        disabled={!lyricFormatted}
+                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[10px] font-bold tracking-widest uppercase px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                     >
+                        <Wand2 className="w-3 h-3" />
+                        Add Chars
+                     </button>
+                  </div>
+                  {lyricFormatted && (
+                     <div className="flex flex-col gap-1 mt-2 border-t border-white/5 pt-2">
+                        <label className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex justify-between">
+                           Formatted Output
+                           <div className="flex items-center gap-2">
+                              {lyricDiff && (
+                                 <button onClick={() => setLyricDiff(null)} className="text-white/50 hover:text-white mr-2">Clear Diff</button>
+                              )}
+                              <button 
+                                 onClick={handleCopyLyric} 
+                                 className={`flex items-center gap-1 transition-colors px-2 py-1 rounded ${isLyricCopied ? 'bg-green-500/20 text-green-400' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
+                                 title="Copy to clipboard"
+                              >
+                                 {isLyricCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                 {isLyricCopied && <span className="text-[9px] uppercase tracking-wider font-bold">Copied</span>}
+                              </button>
+                           </div>
+                        </label>
+                        {lyricDiff ? (
+                           <div className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar overflow-y-auto max-h-[300px] whitespace-pre-wrap">
+                              {lyricDiff.map((part, index) => (
+                                 <span 
+                                    key={index} 
+                                    className={
+                                       part.added ? 'bg-green-500/30 text-green-200 rounded px-1' :
+                                       part.removed ? 'bg-red-500/30 text-red-200 line-through rounded px-1' :
+                                       ''
+                                    }
+                                 >
+                                    {part.value}
+                                 </span>
+                              ))}
+                           </div>
+                        ) : (
+                           <textarea 
+                              className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/80 min-h-[150px]"
+                              value={lyricFormatted}
+                              onChange={(e) => {
+                                 setLyricFormatted(e.target.value);
+                                 setLyricDiff(null);
+                              }}
+                           />
+                        )}
+                     </div>
+                  )}
+               </div>
+             )}
+          </div>
+
+          {/* SUBTITLES UI */}
           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
              <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('transcript')}>
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Vocal Transcript</h3>
@@ -2597,7 +2844,20 @@ export default function StemStudio({
           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
              <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('masterFx')}>
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Settings2 className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Master FX</h3>
-                {expandedSections.masterFx ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                <div className="flex items-center gap-2">
+                   <button 
+                      onClick={(e) => {
+                         e.stopPropagation();
+                         setSpeed(1);
+                         setPreservePitch(true);
+                         setReverb(0);
+                      }}
+                      className="text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white/80 active:scale-95 transition-all bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg"
+                   >
+                      Reset
+                   </button>
+                   {expandedSections.masterFx ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                </div>
              </div>
              {expandedSections.masterFx && (
                <div className="flex flex-col gap-3.5">
@@ -2741,7 +3001,7 @@ export default function StemStudio({
                        <div className="flex flex-col gap-3">
                           <div className="grid grid-cols-4 gap-2">
                              {[
-                                { name: "Rain", icon: CloudRain, url: "https://cdn.freesound.org/previews/86/86367_14771-lq.mp3" },
+                                { name: "Noise", icon: Activity, url: "https://cdn.freesound.org/previews/8/8132_18300-lq.mp3" },
                                 { name: "Ocean", icon: Waves, url: "https://cdn.freesound.org/previews/262/262593_43-lq.mp3" },
                                 { name: "Forest", icon: TreePine, url: "https://cdn.freesound.org/previews/802/802064_14408616-lq.mp3" },
                                 { name: "Storm", icon: CloudLightning, url: "https://cdn.freesound.org/previews/84/84896_988961-lq.mp3" },
@@ -2756,7 +3016,14 @@ export default function StemStudio({
                                 </button>
                              ))}
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 mt-2">
+                             <button
+                                onClick={() => setShowPixabaySearch(!showPixabaySearch)}
+                                className={`flex-1 border rounded-xl p-3 flex items-center justify-center gap-2 transition-all group ${showPixabaySearch ? 'bg-blue-500/10 border-blue-500/30' : 'bg-[#00ab6b]/10 hover:bg-[#00ab6b]/20 border-[#00ab6b]/30'}`}
+                             >
+                                <Search className={`w-4 h-4 transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`} />
+                                <span className={`text-[10px] font-bold transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`}>SEARCH PIXABAY</span>
+                             </button>
                              <button
                                 onClick={() => document.getElementById('ambient-file-upload')?.click()}
                                 className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 flex items-center justify-center gap-2 transition-all group"
@@ -2780,6 +3047,62 @@ export default function StemStudio({
                              </button>
                           </div>
                           
+                          {showPixabaySearch && (
+                             <div className="flex flex-col gap-2 mt-1 animate-in fade-in slide-in-from-top-2 bg-black/30 border border-white/10 rounded-xl p-3">
+                                <div className="flex items-center gap-2">
+                                   <input
+                                      type="text"
+                                      placeholder="Search Pixabay for 'rain', 'forest', 'city'..."
+                                      value={pixabayQuery}
+                                      onChange={(e) => setPixabayQuery(e.target.value)}
+                                      onKeyDown={(e) => e.key === 'Enter' && handlePixabaySearch()}
+                                      className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-[#00ab6b]/50"
+                                   />
+                                   <button
+                                      onClick={handlePixabaySearch}
+                                      disabled={isPixabaySearching || !pixabayQuery}
+                                      className="bg-[#00ab6b] hover:bg-[#008f5a] disabled:opacity-50 disabled:hover:bg-[#00ab6b] text-white font-bold text-[10px] px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                                   >
+                                      {isPixabaySearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                                      SEARCH
+                                   </button>
+                                </div>
+                                {pixabayResults.length > 0 && (
+                                   <div className="flex flex-col gap-1.5 max-h-[150px] overflow-y-auto custom-scrollbar mt-2">
+                                      {pixabayResults.map((result, i) => (
+                                         <div
+                                            key={i}
+                                            className="flex items-center justify-between bg-white/5 p-2 rounded-lg text-left transition-colors border border-transparent hover:border-white/10 group"
+                                         >
+                                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                               <button
+                                                  onClick={(e) => togglePreview(result.url, e)}
+                                                  className="p-1.5 rounded-full bg-black/40 text-white/50 hover:text-[#00ab6b] hover:bg-black/60 transition-colors shrink-0"
+                                                  title={previewingUrl === result.url ? "Stop Preview" : "Play Preview"}
+                                               >
+                                                  {previewingUrl === result.url ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                                               </button>
+                                               <span className="text-[10px] text-white/70 group-hover:text-white truncate font-medium">{result.name}</span>
+                                            </div>
+                                            <button
+                                               onClick={() => {
+                                                  setAmbientOverlayUrl(result.url);
+                                                  if (previewingUrl) {
+                                                     previewAudioRef.current?.pause();
+                                                     setPreviewingUrl(null);
+                                                  }
+                                               }}
+                                               className="text-[9px] font-bold text-white/50 hover:text-black bg-white/10 hover:bg-[#00ab6b] px-2 py-1 rounded transition-colors shrink-0 ml-2"
+                                            >
+                                               LOAD
+                                            </button>
+                                         </div>
+                                      ))}
+                                   </div>
+                                )}
+                             </div>
+                          )}
+
                           {showAmbientInput && (
                              <div className="flex items-center gap-2 mt-1 animate-in fade-in slide-in-from-top-2">
                                 <input
