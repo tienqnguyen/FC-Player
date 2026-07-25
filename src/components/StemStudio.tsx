@@ -1347,6 +1347,16 @@ export default function StemStudio({
 
 
   
+
+  const getSafeTitle = () => {
+    let title = songTitle || "track";
+    title = title.replace(/[^a-zA-Z0-9_\-\s]/g, "").trim();
+    if (title.length > 30) {
+      title = title.substring(0, 30).trim();
+    }
+    return title || "track";
+  };
+
   const handleExportZip = async () => {
     try {
       const zip = new JSZip();
@@ -1362,7 +1372,7 @@ export default function StemStudio({
       const dlUrl = URL.createObjectURL(content);
       const a = document.createElement("a");
       a.href = dlUrl;
-      a.download = "separated_stems.zip";
+      a.download = `${getSafeTitle()}_stems.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1386,7 +1396,7 @@ export default function StemStudio({
       const dlUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = dlUrl;
-      a.download = `${songTitle} - ${stem}.mp3`;
+      a.download = `${getSafeTitle()}_${stem}.mp3`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1396,7 +1406,7 @@ export default function StemStudio({
       // Fallback
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${songTitle} - ${stem}.mp3`;
+      a.download = `${getSafeTitle()}_${stem}.mp3`;
       a.click();
     }
   };
@@ -1473,7 +1483,7 @@ export default function StemStudio({
       const blob = new Blob([srtContent], { type: 'text/srt' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `${songTitle || 'transcript'}.srt`;
+      a.download = `${getSafeTitle()}.srt`;
       a.click();
   };
 
@@ -1735,11 +1745,11 @@ export default function StemStudio({
       let filename: string;
       if (format === "mp3") {
         blob = audioBufferToMp3(renderedBuffer);
-        filename = `${songTitle || 'custom_mixdown'}.mp3`;
+        filename = `${getSafeTitle()}_mixdown.mp3`;
       } else {
         const wav = audioBufferToWav(renderedBuffer);
         blob = new Blob([wav], { type: "audio/wav" });
-        filename = `${songTitle || 'custom_mixdown'}.wav`;
+        filename = `${getSafeTitle()}_mixdown.wav`;
       }
       
       const dlUrl = URL.createObjectURL(blob);
@@ -1913,7 +1923,7 @@ export default function StemStudio({
        <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 overflow-visible gap-4">
           <div className="flex items-center gap-2.5 shrink-0">
              {!isEmbedded ? (
-                <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-widest uppercase">
+                <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-wider sm:tracking-widest uppercase">
                    <ArrowLeft className="w-3.5 h-3.5" /> Back
                 </button>
              ) : (
@@ -1928,7 +1938,7 @@ export default function StemStudio({
              {newSongTitle && onExtractNewSong && (
                 <button
                     onClick={onExtractNewSong}
-                    className="ml-1 px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-widest uppercase rounded-full shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0 animate-pulse"
+                    className="ml-1 px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-wider sm:tracking-widest uppercase rounded-full shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0 animate-pulse"
                     title={`Extract stems for ${newSongTitle}`}
                 >
                     <Sparkles className="w-3 h-3" />
@@ -1991,7 +2001,7 @@ export default function StemStudio({
                 <button
                    onClick={() => handleExportMix("mp3")}
                    disabled={stemmixStatus !== "ready" || isExporting}
-                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
+                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-wider sm:tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
                       stemmixStatus === "ready"
                         ? isExporting && exportFormat === "mp3"
                           ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
@@ -2014,7 +2024,7 @@ export default function StemStudio({
                 <button
                    onClick={() => handleExportMix("wav")}
                    disabled={stemmixStatus !== "ready" || isExporting}
-                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
+                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-wider sm:tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
                       stemmixStatus === "ready"
                         ? isExporting && exportFormat === "wav"
                           ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
@@ -2050,7 +2060,7 @@ export default function StemStudio({
                        onChange={(e) => setIsSunoBypass(e.target.checked)}
                        className="w-4 h-4 rounded bg-black/50 border-white/20 text-indigo-400 focus:ring-indigo-400/50"
                     />
-                    <label htmlFor="suno-bypass" className="text-xs font-bold text-white uppercase tracking-widest cursor-pointer" title="Slightly shifts playback speed and adds imperceptible noise to bypass Suno's audio detection.">Bypass Suno Detection</label>
+                    <label htmlFor="suno-bypass" className="text-xs font-bold text-white uppercase tracking-wider sm:tracking-widest cursor-pointer" title="Slightly shifts playback speed and adds imperceptible noise to bypass Suno's audio detection.">Bypass Suno Detection</label>
                  </div>
              </div>
              <div className="flex items-center justify-between">
@@ -2062,7 +2072,7 @@ export default function StemStudio({
                        onChange={(e) => setIsTrimming(e.target.checked)}
                        className="w-4 h-4 rounded bg-black/50 border-white/20 text-amber-400 focus:ring-amber-400/50"
                     />
-                    <label htmlFor="trim-export" className="text-xs font-bold text-white uppercase tracking-widest cursor-pointer">Trim Export Audio</label>
+                    <label htmlFor="trim-export" className="text-xs font-bold text-white uppercase tracking-wider sm:tracking-widest cursor-pointer">Trim Export Audio</label>
                  </div>
                  {isTrimming && (
                     <span className="text-[10px] text-white/50 font-mono">
@@ -2107,7 +2117,7 @@ export default function StemStudio({
                       <Check className="w-4 h-4" />
                    </div>
                    <div className="min-w-0">
-                      <h4 className="text-[11px] sm:text-xs font-black tracking-widest uppercase text-white">Mixdown Completed!</h4>
+                      <h4 className="text-[11px] sm:text-xs font-black tracking-wider sm:tracking-widest uppercase text-white">Mixdown Completed!</h4>
                       <p className="text-[10px] text-emerald-400 font-mono truncate max-w-[200px] xs:max-w-[250px] sm:max-w-md mt-0.5" title={downloadLink.filename}>
                          {downloadLink.filename}
                       </p>
@@ -2120,7 +2130,7 @@ export default function StemStudio({
                       onClick={() => {
                          setTimeout(() => setDownloadLink(null), 8000);
                       }}
-                      className="px-4 py-2 bg-emerald-500 text-black rounded-xl text-[10px] font-black tracking-widest uppercase hover:bg-emerald-400 active:scale-95 transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                      className="px-4 py-2 bg-emerald-500 text-black rounded-xl text-[10px] font-black tracking-wider sm:tracking-widest uppercase hover:bg-emerald-400 active:scale-95 transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
                       referrerPolicy="no-referrer"
                    >
                       <Download className="w-3.5 h-3.5 animate-bounce" /> Save / Download
@@ -2142,7 +2152,7 @@ export default function StemStudio({
                       <X className="w-4 h-4" />
                    </div>
                    <div>
-                      <h4 className="text-[11px] sm:text-xs font-black tracking-widest uppercase text-white">Export Failed</h4>
+                      <h4 className="text-[11px] sm:text-xs font-black tracking-wider sm:tracking-widest uppercase text-white">Export Failed</h4>
                       <p className="text-[10px] text-white/60 leading-relaxed mt-0.5 max-w-sm">{exportError}</p>
                    </div>
                 </div>
@@ -2182,7 +2192,7 @@ export default function StemStudio({
                             <button
                                 type="button"
                                 onClick={() => setIsTrimmingBeforeExtract(true)}
-                                className="text-[10px] tracking-widest uppercase font-black border border-white/20 text-white/70 bg-transparent px-8 py-3 rounded-full hover:bg-white/5 transition-all active:scale-95"
+                                className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border border-white/20 text-white/70 bg-transparent px-8 py-3 rounded-full hover:bg-white/5 transition-all active:scale-95"
                             >
                                Trim Audio
                             </button>
@@ -2190,7 +2200,7 @@ export default function StemStudio({
                                <button
                                    type="button"
                                    onClick={onRetrySeparate}
-                                   className="text-[10px] tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-8 py-3 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_20px_rgba(251,191,36,0.3)]"
+                                   className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-8 py-3 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_20px_rgba(251,191,36,0.3)]"
                                >
                                   Run Stem Extraction
                                </button>
@@ -2233,9 +2243,9 @@ export default function StemStudio({
                          <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-2 shrink-0">
                             <div className="flex items-center gap-1.5">
                                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                               <span className="text-[9px] font-black text-amber-400 tracking-widest uppercase">Pipeline Diagnostics</span>
+                               <span className="text-[9px] font-black text-amber-400 tracking-wider sm:tracking-widest uppercase">Pipeline Diagnostics</span>
                             </div>
-                            <span className="text-[8px] text-white/30 tracking-widest font-mono">LIVE FEED</span>
+                            <span className="text-[8px] text-white/30 tracking-wider sm:tracking-widest font-mono">LIVE FEED</span>
                          </div>
                          
                          <div 
@@ -2335,7 +2345,7 @@ export default function StemStudio({
                                            localStorage.removeItem("stemmix_custom_space_url");
                                         } catch {}
                                      }}
-                                     className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase rounded-xl transition-all border border-white/5"
+                                     className="px-2 py-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase rounded-xl transition-all border border-white/5"
                                   >
                                      Clear
                                   </button>
@@ -2355,7 +2365,7 @@ export default function StemStudio({
                             <button 
                                type="button"
                                onClick={onRetrySeparate} 
-                               className="text-[10px] tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-6 py-2.5 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-lg shadow-amber-400/10"
+                               className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-6 py-2.5 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-lg shadow-amber-400/10"
                             >
                                Retry Separation
                             </button>
@@ -2364,7 +2374,7 @@ export default function StemStudio({
                             <button
                                type="button"
                                onClick={() => onSetSeparationMode?.("webgpu")}
-                               className="text-[10px] tracking-widest uppercase font-black border border-white/10 text-white/60 hover:text-white bg-white/5 px-6 py-2.5 rounded-full hover:bg-white/10 transition-all active:scale-95"
+                               className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border border-white/10 text-white/60 hover:text-white bg-white/5 px-6 py-2.5 rounded-full hover:bg-white/10 transition-all active:scale-95"
                             >
                                Switch to WebGPU
                             </button>
@@ -2394,8 +2404,8 @@ export default function StemStudio({
                     <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0C] via-black/20 to-transparent z-20 pointer-events-none" />
                     <div className="absolute bottom-4 left-5 z-30 pointer-events-none">
                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] sm:text-[10px] font-black text-black bg-amber-400 px-2 py-0.5 rounded uppercase tracking-widest shadow-md shadow-amber-400/20">V2 HD</span>
-                          <span className="text-[9px] text-white/60 font-mono tracking-widest flex items-center gap-1.5 bg-black/50 px-2 py-0.5 rounded backdrop-blur-sm border border-white/10">
+                          <span className="text-[8.5px] sm:text-[10px] font-black text-black bg-amber-400 px-2 py-0.5 rounded uppercase tracking-wider sm:tracking-widest shadow-md shadow-amber-400/20">V2 HD</span>
+                          <span className="text-[9px] text-white/60 font-mono tracking-wider sm:tracking-widest flex items-center gap-1.5 bg-black/50 px-2 py-0.5 rounded backdrop-blur-sm border border-white/10">
                              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                              LIVE FEED
                           </span>
@@ -2414,17 +2424,17 @@ export default function StemStudio({
                     <div className="mb-auto mt-2 relative z-10">
                         {isLoadingAudio ? (
                            <div className="flex flex-col min-w-0 leading-tight bg-black/40 p-2.5 rounded-xl border border-white/10 backdrop-blur-md text-right items-end shadow-xl">
-                              <span className="text-xs sm:text-sm font-black text-amber-400 uppercase tracking-widest animate-pulse flex items-center gap-2">
+                              <span className="text-xs sm:text-sm font-black text-amber-400 uppercase tracking-wider sm:tracking-widest animate-pulse flex items-center gap-2">
                                  <Loader2 className="w-4 h-4 animate-spin text-amber-400" /> Buffering
                               </span>
-                              <span className="text-[9px] text-white/50 font-mono uppercase tracking-widest mt-1">Stems: {loadedCount}/{stemsList.length}</span>
+                              <span className="text-[9px] text-white/50 font-mono uppercase tracking-wider sm:tracking-widest mt-1">Stems: {loadedCount}/{stemsList.length}</span>
                            </div>
                         ) : (
                            <div className="flex flex-col min-w-0 leading-tight bg-black/40 p-2.5 rounded-xl border border-white/10 backdrop-blur-md text-right items-end shadow-xl">
-                              <span className="text-[10px] sm:text-xs font-black text-white uppercase tracking-widest flex items-center gap-2">
+                              <span className="text-[10px] sm:text-xs font-black text-white uppercase tracking-wider sm:tracking-widest flex items-center gap-2">
                                  {isPlaying ? <><Play className="w-3 h-3 fill-current" /> PLAYING</> : <><Pause className="w-3 h-3 fill-current" /> PAUSED</>}
                               </span>
-                              <span className="text-[8px] sm:text-[9px] text-white/50 font-mono uppercase tracking-widest mt-1">EQ Ready</span>
+                              <span className="text-[8px] sm:text-[9px] text-white/50 font-mono uppercase tracking-wider sm:tracking-widest mt-1">EQ Ready</span>
                            </div>
                         )}
                     </div>
@@ -2463,7 +2473,7 @@ export default function StemStudio({
                        >
                           <RotateCcw className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                        </button>
-                       <button onClick={() => setIsHD(!isHD)} className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center border text-[11px] sm:text-[13px] font-black tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 shrink-0 ${isHD ? 'border-amber-400/40 bg-amber-400/10 text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.5)] shadow-[inset_0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/40 hover:bg-black/60 border-white/10 text-white/40 hover:text-white/70 shadow-inner'}`} title="Toggle Lossless HD Audio">HD</button>
+                       <button onClick={() => setIsHD(!isHD)} className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center border text-[11px] sm:text-[13px] font-black tracking-wider sm:tracking-widest uppercase transition-all duration-300 hover:scale-105 active:scale-95 shrink-0 ${isHD ? 'border-amber-400/40 bg-amber-400/10 text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.5)] shadow-[inset_0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/40 hover:bg-black/60 border-white/10 text-white/40 hover:text-white/70 shadow-inner'}`} title="Toggle Lossless HD Audio">HD</button>
                     </div>
                  </div>
 
@@ -2520,7 +2530,7 @@ export default function StemStudio({
                        </div>
                     </div>
                     
-                    <div className="absolute bottom-1 left-2 right-2 flex justify-between text-[9px] sm:text-[10px] font-black text-white tracking-widest px-1 z-20 pointer-events-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">
+                    <div className="absolute bottom-1 left-2 right-2 flex justify-between text-[8.5px] sm:text-[10px] font-black text-white tracking-wider sm:tracking-widest px-1 z-20 pointer-events-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]">
                        <span className="bg-black/40 px-1.5 py-0.5 rounded backdrop-blur-sm">{formatTime(currentTime)}</span>
                        <span className="bg-black/40 px-1.5 py-0.5 rounded backdrop-blur-sm">{formatTime(duration)}</span>
                     </div>
@@ -2558,7 +2568,7 @@ export default function StemStudio({
                       aiCloud: !allExpanded
                    });
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 hover:border-white/10 text-[9px] font-black uppercase tracking-widest text-white/50 hover:text-white transition-all duration-300 active:scale-95 shadow-sm"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 hover:border-white/10 text-[9px] font-black uppercase tracking-wider sm:tracking-widest text-white/50 hover:text-white transition-all duration-300 active:scale-95 shadow-sm"
              >
                 {Object.values(expandedSections).every(v => v) ? (
                    <>
@@ -2733,7 +2743,7 @@ export default function StemStudio({
                      <button 
                         onClick={handleFormatLyric}
                         disabled={!lyricRaw || isFormattingLyric}
-                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
+                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
                      >
                         {isFormattingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                         Format for SUNO
@@ -2742,7 +2752,7 @@ export default function StemStudio({
                         <button 
                            onClick={handleImproveLyric}
                            disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
+                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
                         >
                            {isImprovingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit2 className="w-3 h-3" />}
                            Improve
@@ -2751,7 +2761,7 @@ export default function StemStudio({
                            value={improvePercentage}
                            onChange={(e) => setImprovePercentage(Number(e.target.value))}
                            disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="bg-transparent text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-1.5 py-1.5 sm:px-2 sm:py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
+                           className="bg-transparent text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1.5 sm:px-2 sm:py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
                         >
                            <option value={1} className="bg-black">1%</option>
                            <option value={3} className="bg-black">3%</option>
@@ -2763,7 +2773,7 @@ export default function StemStudio({
                      <button 
                         onClick={handleAddChords}
                         disabled={(!lyricRaw && !lyricFormatted) || isAddingChords}
-                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
+                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
                      >
                         {isAddingChords ? <Loader2 className="w-3 h-3 animate-spin" /> : <Music className="w-3 h-3" />}
                         Add Chords
@@ -2773,7 +2783,7 @@ export default function StemStudio({
                            type="text"
                            value={swapWordA}
                            onChange={(e) => setSwapWordA(e.target.value)}
-                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[9px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
                            placeholder="A"
                         />
                         <RotateCcw className="w-3 h-3 text-white/40 cursor-pointer hover:text-white" onClick={() => { const temp = swapWordA; setSwapWordA(swapWordB); setSwapWordB(temp); }} />
@@ -2781,13 +2791,13 @@ export default function StemStudio({
                            type="text"
                            value={swapWordB}
                            onChange={(e) => setSwapWordB(e.target.value)}
-                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[9px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
                            placeholder="B"
                         />
                         <button 
                            onClick={handleSwapWords}
                            disabled={(!lyricRaw && !lyricFormatted) || !swapWordA || !swapWordB}
-                           className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 ml-0.5 sm:ml-1"
+                           className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 ml-0.5 sm:ml-1"
                         >
                            Swap
                         </button>
@@ -2795,7 +2805,7 @@ export default function StemStudio({
                      <button 
                         onClick={handleInsertRandomChars}
                         disabled={!lyricFormatted}
-                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[9px] sm:text-[10px] font-bold tracking-widest uppercase px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 sm:ml-auto shrink-0"
+                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 sm:ml-auto shrink-0"
                      >
                         <Wand2 className="w-3 h-3" />
                         Add Chars
@@ -2948,7 +2958,7 @@ export default function StemStudio({
                          setPreservePitch(true);
                          setReverb(0);
                       }}
-                      className="text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white/80 active:scale-95 transition-all bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg"
+                      className="text-[8px] font-black uppercase tracking-wider sm:tracking-widest text-white/40 hover:text-white/80 active:scale-95 transition-all bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg"
                    >
                       Reset
                    </button>
@@ -3001,7 +3011,7 @@ export default function StemStudio({
                           const newEq = masterEq.map((b) => ({ ...b, g: 0 }));
                           setMasterEq(newEq);
                        }}
-                       className="text-[8px] font-black uppercase tracking-widest text-white/40 hover:text-white/80 active:scale-95 transition-all bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg"
+                       className="text-[8px] font-black uppercase tracking-wider sm:tracking-widest text-white/40 hover:text-white/80 active:scale-95 transition-all bg-white/5 border border-white/10 px-2.5 py-1 rounded-lg"
                     >
                        Reset
                     </button>
@@ -3283,7 +3293,7 @@ export default function StemStudio({
                             setCustomSpaceUrl("");
                             localStorage.removeItem("stemmix_custom_space_url");
                          }}
-                         className="px-2.5 py-1.5 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase rounded-xl transition-all border border-white/5"
+                         className="px-2 py-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase rounded-xl transition-all border border-white/5"
                       >
                          Clear
                       </button>

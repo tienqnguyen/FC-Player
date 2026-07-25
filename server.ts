@@ -1370,7 +1370,9 @@ async function startServer() {
         contentType = "audio/wav";
       }
 
-      const safeTitle = title.replace(/[^a-zA-Z0-9\s-_]/g, "").trim() || "audio";
+      let safeTitle = title.replace(/[^a-zA-Z0-9\\s-_]/g, "").trim();
+      if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
+      if (!safeTitle) safeTitle = "audio";
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`);
       res.setHeader("Content-Type", contentType);
 

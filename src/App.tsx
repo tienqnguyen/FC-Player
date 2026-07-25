@@ -2973,6 +2973,16 @@ export default function App() {
     setRecentSongs((prev) => prev.filter((s) => s.id !== id));
   };
 
+
+  const getSafeFilename = (title) => {
+    if (!title) return "audio";
+    let clean = title.replace(/[^a-zA-Z0-9_\-\s]/g, "").trim();
+    if (clean.length > 30) {
+      clean = clean.substring(0, 30).trim();
+    }
+    return clean || "audio";
+  };
+
   const downloadAudio = async (e: React.MouseEvent, song: any) => {
     e.stopPropagation();
     if (!song.audioUrl) return;
@@ -2981,7 +2991,7 @@ export default function App() {
     if (song.audioUrl.startsWith("blob:")) {
       const link = document.createElement("a");
       link.href = song.audioUrl;
-      link.download = `${song.title || "audio"}.m4a`;
+      link.download = `${getSafeFilename(song.title)}.m4a`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -2999,7 +3009,7 @@ export default function App() {
       } catch (err) {}
     }
     
-    const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(song.title || "audio")}`;
+    const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(getSafeFilename(song.title))}`;
 
     try {
       const res = await fetch(downloadUrl);
@@ -3008,7 +3018,7 @@ export default function App() {
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = blobUrl;
-      link.download = `${song.title || "audio"}.m4a`;
+      link.download = `${getSafeFilename(song.title)}.m4a`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -3017,7 +3027,7 @@ export default function App() {
       // fallback
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.download = `${song.title || "audio"}.m4a`;
+      link.download = `${getSafeFilename(song.title)}.m4a`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -4105,7 +4115,7 @@ export default function App() {
 
       const a = document.createElement("a");
       a.href = resultUrl;
-      a.download = `HD_Enhanced_${fileName?.replace(/\.[^/.]+$/, "") || "audio"}.wav`;
+      a.download = `HD_Enhanced_${getSafeFilename(fileName)}.wav`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
