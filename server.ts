@@ -119,6 +119,9 @@ async function startServer() {
         };
         if (req.headers.range) headers["Range"] = req.headers.range;
         const response = await fetch(directUrl, { headers });
+        if (!response.ok) {
+           throw new Error(`Direct fetch failed with status: ${response.status}`);
+        }
         res.status(response.status);
         let contentType = response.headers.get("content-type");
         if (contentType) res.setHeader("Content-Type", contentType);
@@ -141,7 +144,7 @@ async function startServer() {
       }
 
       const ytDlpArgs = ["-f", "bestaudio", "-o", "-", url];
-      const subprocess = spawn("yt-dlp", ytDlpArgs);
+      const subprocess = spawn(youtubedl.constants.YOUTUBE_DL_PATH, ytDlpArgs);
       res.setHeader("Content-Type", "audio/mpeg");
       res.setHeader("Transfer-Encoding", "chunked");
       if (subprocess.stdout) {
@@ -1353,9 +1356,32 @@ async function startServer() {
         }
       }
 
-      const response = await fetch(finalUrl, { headers });
-      if (!response.ok) {
-        throw new Error(`Failed to fetch media from source. Status: ${response.status}`);
+      let response: any = null;
+      try {
+         response = await fetch(finalUrl, { headers });
+         if (!response.ok) {
+           console.warn(`[Download API] Direct fetch failed with status: ${response?.status}, falling back to yt-dlp...`);
+           response = null;
+         }
+      } catch(err) {
+         console.warn("[Download API] Direct fetch threw error, falling back to yt-dlp...");
+      }
+
+      if (!response) {
+         const ytDlpArgs = ["-f", "bestaudio", "-o", "-", url];
+         const subprocess = spawn(youtubedl.constants.YOUTUBE_DL_PATH, ytDlpArgs);
+         let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
+         if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
+         if (!safeTitle) safeTitle = "audio";
+         res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeTitle)}.mp3"`);
+         res.setHeader("Content-Type", "audio/mpeg");
+         res.setHeader("Transfer-Encoding", "chunked");
+         if (subprocess.stdout) {
+             subprocess.stdout.pipe(res);
+         } else {
+             res.status(500).json({ error: "Failed to download audio stream via yt-dlp" });
+         }
+         return;
       }
 
       let contentType = response.headers.get("content-type") || "audio/mpeg";
@@ -1370,7 +1396,7 @@ async function startServer() {
         contentType = "audio/wav";
       }
 
-      let safeTitle = title.replace(/[^a-zA-Z0-9\\s-_]/g, "").trim();
+      let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
       if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
       if (!safeTitle) safeTitle = "audio";
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`);

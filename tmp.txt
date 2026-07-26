@@ -1,0 +1,3 @@
+      const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
+
+      const bypassSpeedFactor = 1.015;

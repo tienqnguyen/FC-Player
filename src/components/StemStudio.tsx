@@ -511,6 +511,9 @@ export default function StemStudio({
   const [trimStart, setTrimStart] = useState<number>(0);
   const [trimEnd, setTrimEnd] = useState<number>(0);
   const [isSunoBypass, setIsSunoBypass] = useState<boolean>(false);
+  const [sunoSpeedFactor, setSunoSpeedFactor] = useState<number>(1.045);
+  const [sunoNoiseLevel, setSunoNoiseLevel] = useState<number>(0.002);
+  const [showSunoSettings, setShowSunoSettings] = useState<boolean>(false);
 
   useEffect(() => {
     if (duration > 0 && trimEnd === 0) {
@@ -1487,6 +1490,85 @@ export default function StemStudio({
       a.click();
   };
 
+  const [isBypassingSuno, setIsBypassingSuno] = useState<boolean>(false);
+
+  const handleDirectSunoBypass = async () => {
+    if (!originalAudioUrl) return;
+    setIsBypassingSuno(true);
+    setExportError(null);
+    setDownloadLink(null);
+    setExportProgress(0);
+
+    try {
+      const res = await fetch(originalAudioUrl);
+      const arrayBuffer = await res.arrayBuffer();
+      if (!audioContextRef.current) {
+        initAudio();
+      }
+      const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
+      const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
+      const bypassSpeedFactor = sunoSpeedFactor;
+      const exportSampleRate = decodedBuffer.sampleRate;
+      
+      const activeTrimStart = isTrimming ? trimStart : 0;
+      const activeTrimEnd = isTrimming && trimEnd > activeTrimStart ? trimEnd : decodedBuffer.duration;
+      const exportDuration = activeTrimEnd - activeTrimStart;
+      const finalDuration = exportDuration / bypassSpeedFactor;
+      
+      const offlineCtx = new OfflineAudioContext(2, exportSampleRate * finalDuration, exportSampleRate);
+
+      const source = offlineCtx.createBufferSource();
+      source.buffer = decodedBuffer;
+      source.playbackRate.value = bypassSpeedFactor;
+      source.connect(offlineCtx.destination);
+      source.start(0, activeTrimStart, exportDuration);
+
+      const noiseBufferSize = exportSampleRate * 2;
+      const noiseBuffer = offlineCtx.createBuffer(2, noiseBufferSize, exportSampleRate);
+      for (let channel = 0; channel < 2; channel++) {
+         const output = noiseBuffer.getChannelData(channel);
+         let lastOut = 0;
+         for (let i = 0; i < noiseBufferSize; i++) {
+            const white = Math.random() * 2 - 1;
+            output[i] = (lastOut + (0.02 * white)) / 1.02; 
+            lastOut = output[i];
+            output[i] *= 1.5;
+         }
+      }
+      const noiseSource = offlineCtx.createBufferSource();
+      noiseSource.buffer = noiseBuffer;
+      noiseSource.loop = true;
+      const noiseGain = offlineCtx.createGain();
+      noiseGain.gain.value = sunoNoiseLevel; 
+      noiseSource.connect(noiseGain);
+      noiseGain.connect(offlineCtx.destination);
+      noiseSource.start(0);
+
+      setExportProgress(50);
+      const renderedBuffer = await offlineCtx.startRendering();
+      setExportProgress(90);
+
+      const blob = audioBufferToMp3(renderedBuffer);
+      const filename = `${getSafeTitle()}_Suno_Safe.mp3`;
+      const dlUrl = URL.createObjectURL(blob);
+      
+      const a = document.createElement("a");
+      a.href = dlUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      
+      setDownloadLink({ url: dlUrl, filename });
+      setExportProgress(100);
+    } catch (e: any) {
+      console.error("Direct Suno bypass failed", e);
+      setExportError(e.message || "Failed to process audio for Suno bypass.");
+    } finally {
+      setIsBypassingSuno(false);
+    }
+  };
+
   const handleExportMix = async (format: "wav" | "mp3" = "wav") => {
     if (!stemUrls) return;
     setExportFormat(format);
@@ -1558,7 +1640,7 @@ export default function StemStudio({
       const activeTrimEnd = isTrimming && trimEnd > activeTrimStart ? trimEnd : maxDuration;
       const exportDuration = activeTrimEnd - activeTrimStart;
 
-      const bypassSpeedFactor = isSunoBypass ? 1.015 : 1.0;
+      const bypassSpeedFactor = isSunoBypass ? sunoSpeedFactor : 1.0;
       const finalDuration = exportDuration / bypassSpeedFactor;
 
       setExportProgress(45);
@@ -1716,7 +1798,7 @@ export default function StemStudio({
          noiseSource.loop = true;
          
          const noiseGain = offlineCtx.createGain();
-         noiseGain.gain.value = 0.003; // Very quiet noise
+         noiseGain.gain.value = sunoNoiseLevel; // Very quiet noise
          
          // Create a slight pitch wobble
          const lfo = offlineCtx.createOscillator();
@@ -2051,17 +2133,60 @@ export default function StemStudio({
           
           {/* Trim Export Settings */}
           <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
-             <div className="flex items-center justify-between">
-                 <div className="flex items-center gap-2">
-                    <input 
-                       type="checkbox" 
-                       id="suno-bypass"
-                       checked={isSunoBypass} 
-                       onChange={(e) => setIsSunoBypass(e.target.checked)}
-                       className="w-4 h-4 rounded bg-black/50 border-white/20 text-indigo-400 focus:ring-indigo-400/50"
-                    />
-                    <label htmlFor="suno-bypass" className="text-xs font-bold text-white uppercase tracking-wider sm:tracking-widest cursor-pointer" title="Slightly shifts playback speed and adds imperceptible noise to bypass Suno's audio detection.">Bypass Suno Detection</label>
+             <div className="flex flex-col gap-3">
+                 <div className="flex items-center justify-between">
+                     <div className="flex items-center gap-2">
+                        <input 
+                           type="checkbox" 
+                           id="suno-bypass"
+                           checked={isSunoBypass} 
+                           onChange={(e) => setIsSunoBypass(e.target.checked)}
+                           className="w-4 h-4 rounded bg-black/50 border-white/20 text-indigo-400 focus:ring-indigo-400/50 cursor-pointer"
+                        />
+                        <label htmlFor="suno-bypass" className="text-xs font-bold text-white uppercase tracking-wider sm:tracking-widest cursor-pointer" title="Slightly shifts playback speed and adds imperceptible noise to bypass Suno's audio detection.">Bypass Suno Detection</label>
+                     </div>
+                     <button
+                         type="button"
+                         onClick={() => setShowSunoSettings(!showSunoSettings)}
+                         className="text-[9px] uppercase tracking-wider font-bold text-white/40 hover:text-white/80 transition-colors p-1"
+                     >
+                         <Settings2 className="w-3.5 h-3.5" />
+                     </button>
                  </div>
+                 {isSunoBypass && showSunoSettings && (
+                     <div className="p-3 bg-black/40 border border-indigo-500/20 rounded-xl flex flex-col gap-3 animate-in fade-in slide-in-from-top-2">
+                         <div className="flex flex-col gap-1">
+                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                 <span>Speed Shift</span>
+                                 <span className="text-indigo-400">{sunoSpeedFactor.toFixed(3)}x</span>
+                             </div>
+                             <input 
+                                 type="range" 
+                                 min="1.0" 
+                                 max="1.15" 
+                                 step="0.005" 
+                                 value={sunoSpeedFactor}
+                                 onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
+                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
+                             />
+                         </div>
+                         <div className="flex flex-col gap-1">
+                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                 <span>Noise Level</span>
+                                 <span className="text-indigo-400">{sunoNoiseLevel.toFixed(4)}</span>
+                             </div>
+                             <input 
+                                 type="range" 
+                                 min="0" 
+                                 max="0.02" 
+                                 step="0.0005" 
+                                 value={sunoNoiseLevel}
+                                 onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
+                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
+                             />
+                         </div>
+                     </div>
+                 )}
              </div>
              <div className="flex items-center justify-between">
                  <div className="flex items-center gap-2">
@@ -2188,23 +2313,79 @@ export default function StemStudio({
                             />
                          </div>
                       ) : (
-                         <div className="flex items-center justify-center gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setIsTrimmingBeforeExtract(true)}
-                                className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border border-white/20 text-white/70 bg-transparent px-8 py-3 rounded-full hover:bg-white/5 transition-all active:scale-95"
-                            >
-                               Trim Audio
-                            </button>
-                            {onRetrySeparate && (
+                         <div className="flex flex-col items-center justify-center gap-4">
+                            <div className="flex flex-col items-center gap-2">
                                <button
                                    type="button"
-                                   onClick={onRetrySeparate}
-                                   className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-8 py-3 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_20px_rgba(251,191,36,0.3)]"
+                                   onClick={handleDirectSunoBypass}
+                                   disabled={isBypassingSuno || !originalAudioUrl}
+                                   className="flex items-center justify-center gap-2 text-[10px] tracking-wider sm:tracking-widest uppercase font-black border-2 border-indigo-500 text-white bg-indigo-600 px-8 py-3 rounded-full hover:bg-indigo-500 hover:border-indigo-400 transition-all active:scale-95 shadow-[0_0_20px_rgba(99,102,241,0.4)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                   title="Applies a slight speed shift and imperceptible noise to bypass Suno's detection."
                                >
-                                  Run Stem Extraction
+                                  {isBypassingSuno ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                                  {isBypassingSuno ? "Processing Bypass..." : "Bypass Suno Detection (Mixdown)"}
                                </button>
-                            )}
+                               <button
+                                   type="button"
+                                   onClick={() => setShowSunoSettings(!showSunoSettings)}
+                                   className="text-[9px] uppercase tracking-wider font-bold text-white/50 hover:text-white/80 transition-colors flex items-center gap-1"
+                               >
+                                  <Settings2 className="w-3 h-3" />
+                                  Bypass Settings
+                               </button>
+                               {showSunoSettings && (
+                                   <div className="mt-2 p-3 bg-black/40 border border-white/10 rounded-xl flex flex-col gap-3 w-64 animate-in fade-in slide-in-from-top-2">
+                                       <div className="flex flex-col gap-1">
+                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                               <span>Speed Shift</span>
+                                               <span className="text-amber-400">{sunoSpeedFactor.toFixed(3)}x</span>
+                                           </div>
+                                           <input 
+                                               type="range" 
+                                               min="1.0" 
+                                               max="1.15" 
+                                               step="0.005" 
+                                               value={sunoSpeedFactor}
+                                               onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
+                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                           />
+                                       </div>
+                                       <div className="flex flex-col gap-1">
+                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                               <span>Noise Level</span>
+                                               <span className="text-amber-400">{sunoNoiseLevel.toFixed(4)}</span>
+                                           </div>
+                                           <input 
+                                               type="range" 
+                                               min="0" 
+                                               max="0.02" 
+                                               step="0.0005" 
+                                               value={sunoNoiseLevel}
+                                               onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
+                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                           />
+                                       </div>
+                                   </div>
+                               )}
+                            </div>
+                            <div className="flex items-center justify-center gap-3">
+                               <button
+                                   type="button"
+                                   onClick={() => setIsTrimmingBeforeExtract(true)}
+                                   className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border border-white/20 text-white/70 bg-transparent px-8 py-3 rounded-full hover:bg-white/5 transition-all active:scale-95"
+                               >
+                                  Trim Audio
+                               </button>
+                               {onRetrySeparate && (
+                                  <button
+                                      type="button"
+                                      onClick={onRetrySeparate}
+                                      className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-8 py-3 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_20px_rgba(251,191,36,0.3)]"
+                                  >
+                                     Run Stem Extraction
+                                  </button>
+                               )}
+                            </div>
                          </div>
                       )}
                    </div>

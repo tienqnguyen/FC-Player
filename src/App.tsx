@@ -2615,8 +2615,13 @@ export default function App() {
       
       const res = await fetch(endpoint);
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Search request failed");
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.includes("application/json")) {
+           const data = await res.json();
+           throw new Error(data.error || "Search request failed");
+        } else {
+           throw new Error(`Server returned status ${res.status}: The service might be temporarily down or unreachable.`);
+        }
       }
       
       const data = await res.json();
@@ -3495,16 +3500,20 @@ export default function App() {
           return;
         }
 
-        const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info).map((v: any) => ({
-          id: v.video_id || v.id || Date.now().toString() + Math.random(),
-          title: v.title || v.desc || "TikTok Audio",
-          originalUrl: "https://www.tiktok.com/@" + username + "/video/" + (v.video_id || v.id),
-          audioUrl: v.music || v.play || v.music_info?.play,
-          videoUrl: v.play || null,
-          cover: v.cover || v.origin_cover || v.music_info?.cover,
-          author: v.author?.nickname || "@" + username,
-          timestamp: Date.now()
-        }));
+        const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info).map((v: any) => {
+          const rawAudioUrl = v.music || v.play || v.music_info?.play;
+          const proxiedAudioUrl = rawAudioUrl && rawAudioUrl.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` : rawAudioUrl;
+          return {
+            id: v.video_id || v.id || Date.now().toString() + Math.random(),
+            title: v.title || v.desc || "TikTok Audio",
+            originalUrl: "https://www.tiktok.com/@" + username + "/video/" + (v.video_id || v.id),
+            audioUrl: proxiedAudioUrl,
+            videoUrl: v.play || null,
+            cover: v.cover || v.origin_cover || v.music_info?.cover,
+            author: v.author?.nickname || "@" + username,
+            timestamp: Date.now()
+          };
+        });
 
         if (newSongs.length > 0) {
           setRecentSongs((prev) => {
@@ -3549,13 +3558,14 @@ export default function App() {
       }
       if (data && data.data && (data.data.music || data.data.play)) {
         const urlToFetch = data.data.music || data.data.play;
+        const proxiedAudioUrl = urlToFetch && urlToFetch.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(urlToFetch)}` : urlToFetch;
         const songTitle = oembedData.title || data.data.title || "TikTok Audio";
         
         const newSong = {
           id: data.data.id || Date.now().toString(),
           title: songTitle,
           originalUrl: urlToUse,
-          audioUrl: urlToFetch,
+          audioUrl: proxiedAudioUrl,
           videoUrl: data.data.play || null,
           cover: oembedData.thumbnail_url || data.data.cover || data.data.origin_cover,
           author: oembedData.author_name || data.data.author?.nickname,
@@ -3810,6 +3820,32 @@ export default function App() {
     resumeContext();
     const nextVal = !isSignatureSound;
     startDelayedAction("HD", nextVal);
+  };
+
+  const handleDownloadCurrentAudio = () => {
+    const targetUrl = audioUrl || currentSong?.audioUrl;
+    if (!targetUrl) return;
+    
+    // If it's a proxy stream url (like from nhaccuatui or soundcloud via backend), we can use the backend /api/download route
+    // The proxy stream URL is already formed like `/api/proxy-stream?url=...` or `/api/stream?url=...`
+    // We can extract the inner url and pass it to download API
+    let originalUrl = currentSong?.originalUrl || targetUrl;
+    let finalUrl = targetUrl;
+    
+    if (targetUrl.includes("/api/proxy-stream?url=")) {
+      originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
+    } else if (targetUrl.includes("/api/stream?url=")) {
+      originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
+    }
+
+    const title = fileName || currentSong?.title || "audio";
+    const downloadUrl = `/api/download?url=${encodeURIComponent(originalUrl)}&title=${encodeURIComponent(title)}`;
+    
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   const cycleVisualizer = () => {
@@ -4692,6 +4728,15 @@ export default function App() {
                       </button>
                     );
                   })()}
+
+                  <button 
+                    onClick={handleDownloadCurrentAudio}
+                    className="flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 text-white/40 hover:text-white/70"
+                    title="Download Audio"
+                  >
+                      <Download className="w-5 h-5" />
+                  </button>
+
                   {!showVideoIframe && (
                     <button 
                       onClick={cycleVisualizer}
@@ -5835,7 +5880,8 @@ export default function App() {
                             } else {
                               // TikTok type
                               const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
-                              const streamUrl = song.audioUrl || song.music || (song.music_info && song.music_info.play) || song.play;
+                              const rawStreamUrl = song.audioUrl || song.music || (song.music_info && song.music_info.play) || song.play;
+                              const streamUrl = rawStreamUrl && rawStreamUrl.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(rawStreamUrl)}` : rawStreamUrl;
                               const songTitle = song.title || song.desc || "TikTok Audio";
                               const coverArt = song.cover || song.origin_cover || (song.music_info && song.music_info.cover);
                               const creator = song.author?.nickname || song.author || "TikTok Creator";
