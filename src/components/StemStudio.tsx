@@ -510,10 +510,24 @@ export default function StemStudio({
   const [isTrimmingBeforeExtract, setIsTrimmingBeforeExtract] = useState<boolean>(false);
   const [trimStart, setTrimStart] = useState<number>(0);
   const [trimEnd, setTrimEnd] = useState<number>(0);
-  const [isSunoBypass, setIsSunoBypass] = useState<boolean>(false);
-  const [sunoSpeedFactor, setSunoSpeedFactor] = useState<number>(1.045);
-  const [sunoNoiseLevel, setSunoNoiseLevel] = useState<number>(0.002);
+  const [isSunoBypass, setIsSunoBypass] = useState<boolean>(() => localStorage.getItem("suno_bypass") === "true");
+  const [sunoSpeedFactor, setSunoSpeedFactor] = useState<number>(() => parseFloat(localStorage.getItem("suno_speed") || "1.045"));
+  const [sunoNoiseLevel, setSunoNoiseLevel] = useState<number>(() => parseFloat(localStorage.getItem("suno_noise") || "0.002"));
+  const [sunoPitchShift, setSunoPitchShift] = useState<number>(() => parseFloat(localStorage.getItem("suno_pitch") || "0"));
+  const [sunoEqLow, setSunoEqLow] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_low") || "0"));
+  const [sunoEqMid, setSunoEqMid] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_mid") || "0"));
+  const [sunoEqHigh, setSunoEqHigh] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_high") || "0"));
   const [showSunoSettings, setShowSunoSettings] = useState<boolean>(false);
+
+  useEffect(() => {
+    localStorage.setItem("suno_bypass", isSunoBypass.toString());
+    localStorage.setItem("suno_speed", sunoSpeedFactor.toString());
+    localStorage.setItem("suno_noise", sunoNoiseLevel.toString());
+    localStorage.setItem("suno_pitch", sunoPitchShift.toString());
+    localStorage.setItem("suno_eq_low", sunoEqLow.toString());
+    localStorage.setItem("suno_eq_mid", sunoEqMid.toString());
+    localStorage.setItem("suno_eq_high", sunoEqHigh.toString());
+  }, [isSunoBypass, sunoSpeedFactor, sunoNoiseLevel, sunoPitchShift, sunoEqLow, sunoEqMid, sunoEqHigh]);
 
   useEffect(() => {
     if (duration > 0 && trimEnd === 0) {
@@ -1513,14 +1527,38 @@ export default function StemStudio({
       const activeTrimStart = isTrimming ? trimStart : 0;
       const activeTrimEnd = isTrimming && trimEnd > activeTrimStart ? trimEnd : decodedBuffer.duration;
       const exportDuration = activeTrimEnd - activeTrimStart;
-      const finalDuration = exportDuration / bypassSpeedFactor;
+      
+      const pitchFactor = Math.pow(2, sunoPitchShift / 12);
+      const finalDuration = exportDuration / (bypassSpeedFactor * pitchFactor);
       
       const offlineCtx = new OfflineAudioContext(2, exportSampleRate * finalDuration, exportSampleRate);
 
       const source = offlineCtx.createBufferSource();
       source.buffer = decodedBuffer;
-      source.playbackRate.value = bypassSpeedFactor;
-      source.connect(offlineCtx.destination);
+      
+      source.playbackRate.value = bypassSpeedFactor * pitchFactor;
+      
+      const lowEq = offlineCtx.createBiquadFilter();
+      lowEq.type = 'lowshelf';
+      lowEq.frequency.value = 320;
+      lowEq.gain.value = sunoEqLow;
+      
+      const midEq = offlineCtx.createBiquadFilter();
+      midEq.type = 'peaking';
+      midEq.frequency.value = 1000;
+      midEq.Q.value = 0.5;
+      midEq.gain.value = sunoEqMid;
+      
+      const highEq = offlineCtx.createBiquadFilter();
+      highEq.type = 'highshelf';
+      highEq.frequency.value = 3200;
+      highEq.gain.value = sunoEqHigh;
+
+      source.connect(lowEq);
+      lowEq.connect(midEq);
+      midEq.connect(highEq);
+      highEq.connect(offlineCtx.destination);
+
       source.start(0, activeTrimStart, exportDuration);
 
       const noiseBufferSize = exportSampleRate * 2;
@@ -1551,13 +1589,6 @@ export default function StemStudio({
       const blob = audioBufferToMp3(renderedBuffer);
       const filename = `${getSafeTitle()}_Suno_Safe.mp3`;
       const dlUrl = URL.createObjectURL(blob);
-      
-      const a = document.createElement("a");
-      a.href = dlUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
       
       setDownloadLink({ url: dlUrl, filename });
       setExportProgress(100);
@@ -1641,7 +1672,8 @@ export default function StemStudio({
       const exportDuration = activeTrimEnd - activeTrimStart;
 
       const bypassSpeedFactor = isSunoBypass ? sunoSpeedFactor : 1.0;
-      const finalDuration = exportDuration / bypassSpeedFactor;
+      const pitchFactor = isSunoBypass ? Math.pow(2, sunoPitchShift / 12) : 1.0;
+      const finalDuration = exportDuration / (bypassSpeedFactor * pitchFactor);
 
       setExportProgress(45);
       
@@ -1714,6 +1746,30 @@ export default function StemStudio({
          lastOfflineNode.connect(filter);
          lastOfflineNode = filter;
       });
+
+      if (isSunoBypass) {
+          const sunoLowEq = offlineCtx.createBiquadFilter();
+          sunoLowEq.type = 'lowshelf';
+          sunoLowEq.frequency.value = 320;
+          sunoLowEq.gain.value = sunoEqLow;
+          
+          const sunoMidEq = offlineCtx.createBiquadFilter();
+          sunoMidEq.type = 'peaking';
+          sunoMidEq.frequency.value = 1000;
+          sunoMidEq.Q.value = 0.5;
+          sunoMidEq.gain.value = sunoEqMid;
+          
+          const sunoHighEq = offlineCtx.createBiquadFilter();
+          sunoHighEq.type = 'highshelf';
+          sunoHighEq.frequency.value = 3200;
+          sunoHighEq.gain.value = sunoEqHigh;
+
+          lastOfflineNode.connect(sunoLowEq);
+          sunoLowEq.connect(sunoMidEq);
+          sunoMidEq.connect(sunoHighEq);
+          lastOfflineNode = sunoHighEq;
+      }
+
       lastOfflineNode.connect(offlineCtx.destination);
 
       // Connect wet reverb channel to the EQ chain
@@ -1725,7 +1781,7 @@ export default function StemStudio({
          
          const source = offlineCtx.createBufferSource();
          source.buffer = audioBuf;
-         source.playbackRate.value = speed * bypassSpeedFactor;
+         source.playbackRate.value = speed * bypassSpeedFactor * pitchFactor;
          
          const panner = offlineCtx.createStereoPanner();
          panner.pan.value = pans[stem] || 0;
@@ -1835,14 +1891,6 @@ export default function StemStudio({
       }
       
       const dlUrl = URL.createObjectURL(blob);
-      
-      // Fallback auto-trigger
-      const a = document.createElement("a");
-      a.href = dlUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
       
       // Store the link so that mobile webviews or embedded iframes can render a direct click button
       setDownloadLink({ url: dlUrl, filename });
@@ -2162,11 +2210,26 @@ export default function StemStudio({
                              </div>
                              <input 
                                  type="range" 
-                                 min="1.0" 
-                                 max="1.15" 
+                                 min="0.5" 
+                                 max="1.5" 
                                  step="0.005" 
                                  value={sunoSpeedFactor}
                                  onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
+                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
+                             />
+                         </div>
+                         <div className="flex flex-col gap-1">
+                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                 <span>Pitch Shift (Semitones)</span>
+                                 <span className="text-indigo-400">{sunoPitchShift.toFixed(1)}</span>
+                             </div>
+                             <input 
+                                 type="range" 
+                                 min="-12" 
+                                 max="12" 
+                                 step="0.1" 
+                                 value={sunoPitchShift}
+                                 onChange={(e) => setSunoPitchShift(parseFloat(e.target.value))}
                                  className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
                              />
                          </div>
@@ -2178,10 +2241,49 @@ export default function StemStudio({
                              <input 
                                  type="range" 
                                  min="0" 
-                                 max="0.02" 
+                                 max="0.05" 
                                  step="0.0005" 
                                  value={sunoNoiseLevel}
                                  onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
+                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
+                             />
+                         </div>
+                         <div className="flex flex-col gap-1">
+                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                 <span>EQ Low (320Hz)</span>
+                                 <span className="text-indigo-400">{sunoEqLow.toFixed(1)} dB</span>
+                             </div>
+                             <input 
+                                 type="range" 
+                                 min="-24" max="24" step="0.5" 
+                                 value={sunoEqLow}
+                                 onChange={(e) => setSunoEqLow(parseFloat(e.target.value))}
+                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
+                             />
+                         </div>
+                         <div className="flex flex-col gap-1">
+                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                 <span>EQ Mid (1kHz)</span>
+                                 <span className="text-indigo-400">{sunoEqMid.toFixed(1)} dB</span>
+                             </div>
+                             <input 
+                                 type="range" 
+                                 min="-24" max="24" step="0.5" 
+                                 value={sunoEqMid}
+                                 onChange={(e) => setSunoEqMid(parseFloat(e.target.value))}
+                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
+                             />
+                         </div>
+                         <div className="flex flex-col gap-1">
+                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                 <span>EQ High (3.2kHz)</span>
+                                 <span className="text-indigo-400">{sunoEqHigh.toFixed(1)} dB</span>
+                             </div>
+                             <input 
+                                 type="range" 
+                                 min="-24" max="24" step="0.5" 
+                                 value={sunoEqHigh}
+                                 onChange={(e) => setSunoEqHigh(parseFloat(e.target.value))}
                                  className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
                              />
                          </div>
@@ -2236,36 +2338,39 @@ export default function StemStudio({
           </div>
 
           {downloadLink && (
-             <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in slide-in-from-top-2 duration-300 shadow-lg shadow-emerald-500/5">
-                <div className="flex items-start gap-3">
-                   <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                      <Check className="w-4 h-4" />
+             <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex flex-col gap-4 animate-in slide-in-from-top-2 duration-300 shadow-lg shadow-emerald-500/5">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                   <div className="flex items-start gap-3">
+                      <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
+                         <Check className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                         <h4 className="text-[11px] sm:text-xs font-black tracking-wider sm:tracking-widest uppercase text-white">Mixdown Completed!</h4>
+                         <p className="text-[10px] text-emerald-400 font-mono truncate max-w-[200px] xs:max-w-[250px] sm:max-w-md mt-0.5" title={downloadLink.filename}>
+                            {downloadLink.filename}
+                         </p>
+                      </div>
                    </div>
-                   <div className="min-w-0">
-                      <h4 className="text-[11px] sm:text-xs font-black tracking-wider sm:tracking-widest uppercase text-white">Mixdown Completed!</h4>
-                      <p className="text-[10px] text-emerald-400 font-mono truncate max-w-[200px] xs:max-w-[250px] sm:max-w-md mt-0.5" title={downloadLink.filename}>
-                         {downloadLink.filename}
-                      </p>
+                   <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <audio controls src={downloadLink.url} className="h-8 w-full sm:w-48 outline-none opacity-80 hover:opacity-100 transition-opacity" />
+                      <a
+                         href={downloadLink.url}
+                         download={downloadLink.filename}
+                         onClick={() => {
+                            setTimeout(() => setDownloadLink(null), 8000);
+                         }}
+                         className="px-4 py-2 bg-emerald-500 text-black rounded-xl text-[10px] font-black tracking-wider sm:tracking-widest uppercase hover:bg-emerald-400 active:scale-95 transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                         referrerPolicy="no-referrer"
+                      >
+                         <Download className="w-3.5 h-3.5 animate-bounce" /> Save
+                      </a>
+                      <button
+                         onClick={() => setDownloadLink(null)}
+                         className="p-2 hover:bg-white/5 rounded-xl text-white/40 hover:text-white transition-colors"
+                      >
+                         <X className="w-4 h-4" />
+                      </button>
                    </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                   <a
-                      href={downloadLink.url}
-                      download={downloadLink.filename}
-                      onClick={() => {
-                         setTimeout(() => setDownloadLink(null), 8000);
-                      }}
-                      className="px-4 py-2 bg-emerald-500 text-black rounded-xl text-[10px] font-black tracking-wider sm:tracking-widest uppercase hover:bg-emerald-400 active:scale-95 transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
-                      referrerPolicy="no-referrer"
-                   >
-                      <Download className="w-3.5 h-3.5 animate-bounce" /> Save / Download
-                   </a>
-                   <button
-                      onClick={() => setDownloadLink(null)}
-                      className="p-2 hover:bg-white/5 rounded-xl text-white/40 hover:text-white transition-colors"
-                   >
-                      <X className="w-4 h-4" />
-                   </button>
                 </div>
              </div>
           )}
@@ -2342,11 +2447,26 @@ export default function StemStudio({
                                            </div>
                                            <input 
                                                type="range" 
-                                               min="1.0" 
-                                               max="1.15" 
+                                               min="0.5" 
+                                               max="1.5" 
                                                step="0.005" 
                                                value={sunoSpeedFactor}
                                                onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
+                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                           />
+                                       </div>
+                                       <div className="flex flex-col gap-1">
+                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                               <span>Pitch Shift (Semitones)</span>
+                                               <span className="text-amber-400">{sunoPitchShift.toFixed(1)}</span>
+                                           </div>
+                                           <input 
+                                               type="range" 
+                                               min="-12" 
+                                               max="12" 
+                                               step="0.1" 
+                                               value={sunoPitchShift}
+                                               onChange={(e) => setSunoPitchShift(parseFloat(e.target.value))}
                                                className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
                                            />
                                        </div>
@@ -2358,10 +2478,49 @@ export default function StemStudio({
                                            <input 
                                                type="range" 
                                                min="0" 
-                                               max="0.02" 
+                                               max="0.05" 
                                                step="0.0005" 
                                                value={sunoNoiseLevel}
                                                onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
+                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                           />
+                                       </div>
+                                       <div className="flex flex-col gap-1">
+                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                               <span>EQ Low (320Hz)</span>
+                                               <span className="text-amber-400">{sunoEqLow.toFixed(1)} dB</span>
+                                           </div>
+                                           <input 
+                                               type="range" 
+                                               min="-24" max="24" step="0.5" 
+                                               value={sunoEqLow}
+                                               onChange={(e) => setSunoEqLow(parseFloat(e.target.value))}
+                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                           />
+                                       </div>
+                                       <div className="flex flex-col gap-1">
+                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                               <span>EQ Mid (1kHz)</span>
+                                               <span className="text-amber-400">{sunoEqMid.toFixed(1)} dB</span>
+                                           </div>
+                                           <input 
+                                               type="range" 
+                                               min="-24" max="24" step="0.5" 
+                                               value={sunoEqMid}
+                                               onChange={(e) => setSunoEqMid(parseFloat(e.target.value))}
+                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                           />
+                                       </div>
+                                       <div className="flex flex-col gap-1">
+                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                                               <span>EQ High (3.2kHz)</span>
+                                               <span className="text-amber-400">{sunoEqHigh.toFixed(1)} dB</span>
+                                           </div>
+                                           <input 
+                                               type="range" 
+                                               min="-24" max="24" step="0.5" 
+                                               value={sunoEqHigh}
+                                               onChange={(e) => setSunoEqHigh(parseFloat(e.target.value))}
                                                className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
                                            />
                                        </div>
