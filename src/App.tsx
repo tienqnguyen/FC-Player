@@ -4493,8 +4493,8 @@ export default function App() {
       <div 
         className={`w-full mx-auto relative z-20 h-full max-h-[100dvh] flex flex-col ${
           showStemmix 
-            ? "overflow-y-auto lg:overflow-hidden lg:grid lg:grid-cols-3 px-1 lg:px-4 pt-0 lg:pt-1 pb-1 flex-1 lg:gap-6" 
-            : "overflow-hidden px-1 lg:px-4 pt-0 lg:pt-1 pb-1 flex-1"
+            ? "overflow-y-auto lg:overflow-hidden lg:grid lg:grid-cols-3 px-0 sm:px-1 lg:px-4 pt-0 lg:pt-1 pb-0 sm:pb-1 flex-1 lg:gap-6" 
+            : "overflow-hidden px-0 sm:px-1 lg:px-4 pt-0 lg:pt-1 pb-0 sm:pb-1 flex-1"
         }`}
       >
         {/* Column 1 (Left Column) - Player & Playlist */}
@@ -4506,10 +4506,10 @@ export default function App() {
           
           {/* Player Section */}
         <div className="sticky top-0 z-[60] bg-[#0A0B10] w-full pt-1 sm:pt-2 -mt-1 sm:-mt-2 pb-1 lg:bg-transparent lg:pt-0 lg:pb-0 lg:mt-0">
-          <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate border border-white/10 overflow-hidden ${
+          <div className={`w-full max-w-lg mx-auto flex flex-col items-center justify-center shrink-0 relative isolate border-b sm:border border-white/10 overflow-hidden ${
             isCompact 
-              ? "pt-3 pb-3 mb-2 rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)] lg:mt-2" 
-              : "pt-4 pb-2 mb-4 rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)] lg:mt-2"
+              ? "pt-3 pb-3 mb-0 sm:mb-2 rounded-b-[1.5rem] sm:rounded-[2rem] shadow-[0_12px_36px_rgba(0,0,0,0.5)] lg:mt-2" 
+              : "pt-4 pb-2 mb-0 sm:mb-4 rounded-b-[2rem] sm:rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)] lg:mt-2"
           }`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             
             {/* Dynamic Artwork Background */}
@@ -6464,9 +6464,9 @@ export default function App() {
         {showStemmix && (
           <div className={`flex flex-col ${
             !isCompact 
-              ? "lg:col-span-2 h-[80vh] lg:h-full shrink-0 lg:shrink" 
-              : "w-full mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
-          } bg-[#0A0B10]/40 backdrop-blur-[40px] rounded-[24px] border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
+              ? "w-full sm:w-auto lg:col-span-2 h-[80vh] lg:h-full shrink-0 lg:shrink" 
+              : "w-full mt-1 sm:mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
+          } bg-[#0A0B10]/40 backdrop-blur-[40px] rounded-none sm:rounded-[24px] border-y sm:border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
             <StemStudio 
                originalAudioUrl={stemSongInfo?.url || currentSong?.url || audioUrl}
                stemUrls={stemUrls} 

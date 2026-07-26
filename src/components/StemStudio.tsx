@@ -2035,6 +2035,252 @@ export default function StemStudio({
     );
   };
 
+  const subtitlesUI = (
+    <>
+      {/* SUBTITLES UI */}
+          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('transcript')}>
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Vocal Transcript</h3>
+                <div className="flex items-center gap-2">
+                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                       {cohereTranscript && !isEditingTranscript && (
+                           <>
+                               <button onClick={() => setIsEditingTranscript(true)} className="text-white/40 hover:text-white text-[10px] uppercase font-bold flex items-center gap-1"><Edit2 className="w-3 h-3" /> Edit</button>
+                               <button onClick={handleCopyTranscript} className="text-white/40 hover:text-white text-[10px] uppercase font-bold flex items-center gap-1"><Copy className="w-3 h-3" /> Copy</button>
+                               <button onClick={handleExportSRT} className="text-amber-400/70 hover:text-amber-400 text-[10px] uppercase font-bold flex items-center gap-1"><FileText className="w-3 h-3" /> Export SRT</button>
+                           </>
+                       )}
+                       {cohereTranscript && isEditingTranscript && (
+                           <button onClick={() => setIsEditingTranscript(false)} className="text-amber-400 hover:text-amber-300 text-[10px] uppercase font-bold flex items-center gap-1"><Save className="w-3 h-3" /> Save</button>
+                       )}
+                       {isTranscribing && <span className="text-[9px] font-mono font-medium text-amber-400 animate-pulse">{transcriptionStatus}</span>}
+                   </div>
+                   {expandedSections.transcript ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                </div>
+             </div>
+             
+             {expandedSections.transcript && (
+               <div className="flex flex-col gap-2.5">
+                {cohereTranscript && isEditingTranscript && (
+                    <textarea 
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[200px]"
+                        value={cohereTranscript || ""}
+                        onChange={(e) => setCohereTranscript(e.target.value)}
+                    />
+                )}
+                
+                {cohereTranscript && !isEditingTranscript && (
+                    <div className="bg-black/20 border border-white/5 p-4 rounded-xl flex flex-col gap-3 max-h-80 overflow-y-auto custom-scrollbar shadow-inner text-left scroll-smooth">
+                        {transcriptLines.map((line, idx) => {
+                           const isActive = currentTime >= line.start && currentTime < line.end;
+                           const isPast = currentTime >= line.end;
+                           return (
+                             <div 
+                               key={idx} 
+                               className={`text-sm leading-relaxed transition-colors duration-300 flex items-center gap-3 ${isActive ? 'text-amber-400 font-bold scale-[1.01] origin-left' : isPast ? 'text-white/60' : 'text-white/30'} group/item`}
+                             >
+                               <span 
+                                 className="text-[9px] font-mono opacity-50 shrink-0 w-12 hover:opacity-100 hover:text-amber-400 cursor-pointer transition-colors"
+                                 onClick={() => handleSeek({ target: { value: line.start } })}
+                                 title="Seek to this time"
+                               >
+                                 {Math.floor(line.start / 60)}:{(Math.floor(line.start % 60)).toString().padStart(2, '0')}
+                               </span>
+                               
+                               {editingLineIdx === idx ? (
+                                 <input
+                                   type="text"
+                                   value={editingLineText}
+                                   onChange={(e) => setEditingLineText(e.target.value)}
+                                   onBlur={() => handleSaveInlineLine(idx, editingLineText)}
+                                   onKeyDown={(e) => {
+                                     if (e.key === 'Enter') {
+                                       handleSaveInlineLine(idx, editingLineText);
+                                     } else if (e.key === 'Escape') {
+                                       setEditingLineIdx(null);
+                                     }
+                                   }}
+                                   autoFocus
+                                   className="flex-1 bg-white/5 border border-amber-400/30 rounded-lg px-2.5 py-1 text-white focus:outline-none focus:border-amber-400/80 font-normal text-sm"
+                                 />
+                                ) : (
+                                  <span 
+                                    className="flex-1 cursor-pointer hover:text-amber-300 hover:underline transition-all"
+                                    onClick={() => {
+                                      setEditingLineIdx(idx);
+                                      setEditingLineText(line.text);
+                                    }}
+                                    title="Click to edit text"
+                                  >
+                                    {line.text}
+                                  </span>
+                                )}
+                             </div>
+                           );
+                        })}
+                    </div>
+                )}
+               </div>
+             )}
+          </div>
+    </>
+  );
+
+  const sunoLyricUI = (
+    <>
+      {/* LYRIC TOOL UI */}
+          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('lyric')}>
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> SUNO Lyric Tool</h3>
+                <div className="flex items-center gap-2">
+                   {expandedSections.lyric ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                </div>
+             </div>
+             
+             {expandedSections.lyric && (
+               <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                     <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Raw Lyrics</label>
+                     <textarea 
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[100px]"
+                        value={lyricRaw}
+                        onChange={(e) => setLyricRaw(e.target.value)}
+                        placeholder="Enter your lyrics here..."
+                     />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                     <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Style Request (Optional)</label>
+                     <input 
+                        type="text"
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/90 text-sm focus:outline-none focus:border-amber-400/50"
+                        value={lyricStyle}
+                        onChange={(e) => setLyricStyle(e.target.value)}
+                        placeholder="e.g. Acoustic Pop, fast tempo"
+                     />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                     <button 
+                        onClick={handleFormatLyric}
+                        disabled={!lyricRaw || isFormattingLyric}
+                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
+                     >
+                        {isFormattingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                        Format for SUNO
+                     </button>
+                     <div className="flex items-center bg-[#00ab6b] rounded-lg shrink-0">
+                        <button 
+                           onClick={handleImproveLyric}
+                           disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
+                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
+                        >
+                           {isImprovingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit2 className="w-3 h-3" />}
+                           Improve
+                        </button>
+                        <select 
+                           value={improvePercentage}
+                           onChange={(e) => setImprovePercentage(Number(e.target.value))}
+                           disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
+                           className="bg-transparent text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1.5 sm:px-2 sm:py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
+                        >
+                           <option value={1} className="bg-black">1%</option>
+                           <option value={3} className="bg-black">3%</option>
+                           <option value={5} className="bg-black">5%</option>
+                           <option value={10} className="bg-black">10%</option>
+                           <option value={20} className="bg-black">20%</option>
+                        </select>
+                     </div>
+                     <button 
+                        onClick={handleAddChords}
+                        disabled={(!lyricRaw && !lyricFormatted) || isAddingChords}
+                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
+                     >
+                        {isAddingChords ? <Loader2 className="w-3 h-3 animate-spin" /> : <Music className="w-3 h-3" />}
+                        Add Chords
+                     </button>
+                     <div className="flex items-center gap-1 sm:gap-1.5 ml-0 sm:ml-1 pl-0 sm:pl-2 sm:border-l border-white/10 shrink-0">
+                        <input
+                           type="text"
+                           value={swapWordA}
+                           onChange={(e) => setSwapWordA(e.target.value)}
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           placeholder="A"
+                        />
+                        <RotateCcw className="w-3 h-3 text-white/40 cursor-pointer hover:text-white" onClick={() => { const temp = swapWordA; setSwapWordA(swapWordB); setSwapWordB(temp); }} />
+                        <input
+                           type="text"
+                           value={swapWordB}
+                           onChange={(e) => setSwapWordB(e.target.value)}
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           placeholder="B"
+                        />
+                        <button 
+                           onClick={handleSwapWords}
+                           disabled={(!lyricRaw && !lyricFormatted) || !swapWordA || !swapWordB}
+                           className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 ml-0.5 sm:ml-1"
+                        >
+                           Swap
+                        </button>
+                     </div>
+                     <button 
+                        onClick={handleInsertRandomChars}
+                        disabled={!lyricFormatted}
+                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 sm:ml-auto shrink-0"
+                     >
+                        <Wand2 className="w-3 h-3" />
+                        Add Chars
+                     </button>
+                  </div>
+                  {lyricFormatted && (
+                     <div className="flex flex-col gap-1 mt-2 border-t border-white/5 pt-2">
+                        <label className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex justify-between">
+                           Formatted Output
+                           <div className="flex items-center gap-2">
+                              {lyricDiff && (
+                                 <button onClick={() => setLyricDiff(null)} className="text-white/50 hover:text-white mr-2">Clear Diff</button>
+                              )}
+                              <button 
+                                 onClick={handleCopyLyric} 
+                                 className={`flex items-center gap-1 transition-colors px-2 py-1 rounded ${isLyricCopied ? 'bg-green-500/20 text-green-400' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
+                                 title="Copy to clipboard"
+                              >
+                                 {isLyricCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                 {isLyricCopied && <span className="text-[9px] uppercase tracking-wider font-bold">Copied</span>}
+                              </button>
+                           </div>
+                        </label>
+                        {lyricDiff ? (
+                           <div className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar overflow-y-auto max-h-[300px] whitespace-pre-wrap">
+                              {lyricDiff.map((part, index) => (
+                                 <span 
+                                    key={index} 
+                                    className={
+                                       part.added ? 'bg-green-500/30 text-green-200 rounded px-1' :
+                                       part.removed ? 'bg-red-500/30 text-red-200 line-through rounded px-1' :
+                                       ''
+                                    }
+                                 >
+                                    {part.value}
+                                 </span>
+                              ))}
+                           </div>
+                        ) : (
+                           <textarea 
+                              className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/80 min-h-[150px]"
+                              value={lyricFormatted}
+                              onChange={(e) => {
+                                 setLyricFormatted(e.target.value);
+                                 setLyricDiff(null);
+                              }}
+                           />
+                        )}
+                     </div>
+                  )}
+               </div>
+             )}
+          </div>
+    </>
+  );
+
   return (
     <div className={isEmbedded ? "w-full h-full flex flex-col text-white overflow-hidden rounded-[24px] relative bg-transparent" : "fixed inset-0 z-[100] flex flex-col text-white overflow-hidden animate-in fade-in duration-500 relative bg-black/50 backdrop-blur-3xl"}>
        {/* Dynamic Cover Artwork Background */}
@@ -2050,7 +2296,7 @@ export default function StemStudio({
        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-indigo-500/[0.03] rounded-full blur-[150px] pointer-events-none z-0" />
        
        {/* HEADER BAR */}
-       <div className="flex items-center justify-between p-3.5 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 overflow-visible gap-4">
+       <div className="flex items-center justify-between p-2 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 overflow-visible gap-2 sm:gap-4">
           <div className="flex items-center gap-2.5 shrink-0">
              {!isEmbedded ? (
                 <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-wider sm:tracking-widest uppercase">
@@ -2177,7 +2423,7 @@ export default function StemStudio({
        </div>
 
        {/* SCROLLABLE CONTENT BODY */}
-       <div className="flex-1 overflow-y-auto overflow-x-hidden p-3.5 sm:p-4 md:p-5 flex flex-col gap-5 custom-scrollbar bg-transparent z-10">
+       <div className="flex-1 overflow-y-auto overflow-x-hidden p-1.5 sm:p-4 md:p-5 flex flex-col gap-3 sm:gap-5 custom-scrollbar bg-transparent z-10">
           
           {/* Trim Export Settings */}
           <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
@@ -2546,6 +2792,41 @@ export default function StemStudio({
                                )}
                             </div>
                          </div>
+                      )}
+                      
+                      {/* PREVIEW & TRANSCRIPT SECTION */}
+                      {originalAudioUrl && !isTrimmingBeforeExtract && (
+                        <div className="w-full max-w-2xl mt-6 sm:mt-12 flex flex-col gap-4 items-center bg-black/20 p-3 sm:p-5 rounded-[20px] sm:rounded-3xl border border-white/5 shadow-2xl">
+                           <h4 className="text-[10px] font-bold text-white/50 uppercase tracking-[0.2em] mb-2">Original Audio Preview & Tools</h4>
+                           <div className="flex w-full items-center justify-between gap-4 flex-col sm:flex-row">
+                              <audio 
+                                 controls 
+                                 src={originalAudioUrl} 
+                                 className="w-full h-10 outline-none opacity-80 hover:opacity-100 transition-opacity" 
+                                 onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                                 onPlay={() => setIsPlaying(true)}
+                                 onPause={() => setIsPlaying(false)}
+                              />
+                              <button
+                                 onClick={handleCohereTranscribe}
+                                 className="h-10 px-6 rounded-full flex items-center justify-center text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-amber-400/10 border-amber-400/30 text-amber-400 hover:bg-amber-400/20 hover:border-amber-400/50 shrink-0 shadow-[0_0_15px_rgba(251,191,36,0.15)]"
+                                 title="Transcribe Audio"
+                              >
+                                 {isTranscribing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                                 Generate Lyrics
+                              </button>
+                           </div>
+                           
+                           { (cohereTranscript || isTranscribing) && (
+                              <div className="w-full text-left mt-2 border-t border-white/5 pt-4">
+                                 {subtitlesUI}
+                              </div>
+                           )}
+
+                           <div className="w-full text-left">
+                                 {sunoLyricUI}
+                           </div>
+                        </div>
                       )}
                    </div>
                 ) : stemmixStatus === "loading" ? (
@@ -3049,243 +3330,11 @@ export default function StemStudio({
              </div>
              )}
           </div>
-                                      {/* LYRIC TOOL UI */}
-          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('lyric')}>
-                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> SUNO Lyric Tool</h3>
-                <div className="flex items-center gap-2">
-                   {expandedSections.lyric ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
-                </div>
-             </div>
-             
-             {expandedSections.lyric && (
-               <div className="flex flex-col gap-3">
-                  <div className="flex flex-col gap-1">
-                     <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Raw Lyrics</label>
-                     <textarea 
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[100px]"
-                        value={lyricRaw}
-                        onChange={(e) => setLyricRaw(e.target.value)}
-                        placeholder="Enter your lyrics here..."
-                     />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                     <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Style Request (Optional)</label>
-                     <input 
-                        type="text"
-                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/90 text-sm focus:outline-none focus:border-amber-400/50"
-                        value={lyricStyle}
-                        onChange={(e) => setLyricStyle(e.target.value)}
-                        placeholder="e.g. Acoustic Pop, fast tempo"
-                     />
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                     <button 
-                        onClick={handleFormatLyric}
-                        disabled={!lyricRaw || isFormattingLyric}
-                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
-                     >
-                        {isFormattingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                        Format for SUNO
-                     </button>
-                     <div className="flex items-center bg-[#00ab6b] rounded-lg shrink-0">
-                        <button 
-                           onClick={handleImproveLyric}
-                           disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
-                        >
-                           {isImprovingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit2 className="w-3 h-3" />}
-                           Improve
-                        </button>
-                        <select 
-                           value={improvePercentage}
-                           onChange={(e) => setImprovePercentage(Number(e.target.value))}
-                           disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="bg-transparent text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1.5 sm:px-2 sm:py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
-                        >
-                           <option value={1} className="bg-black">1%</option>
-                           <option value={3} className="bg-black">3%</option>
-                           <option value={5} className="bg-black">5%</option>
-                           <option value={10} className="bg-black">10%</option>
-                           <option value={20} className="bg-black">20%</option>
-                        </select>
-                     </div>
-                     <button 
-                        onClick={handleAddChords}
-                        disabled={(!lyricRaw && !lyricFormatted) || isAddingChords}
-                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
-                     >
-                        {isAddingChords ? <Loader2 className="w-3 h-3 animate-spin" /> : <Music className="w-3 h-3" />}
-                        Add Chords
-                     </button>
-                     <div className="flex items-center gap-1 sm:gap-1.5 ml-0 sm:ml-1 pl-0 sm:pl-2 sm:border-l border-white/10 shrink-0">
-                        <input
-                           type="text"
-                           value={swapWordA}
-                           onChange={(e) => setSwapWordA(e.target.value)}
-                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
-                           placeholder="A"
-                        />
-                        <RotateCcw className="w-3 h-3 text-white/40 cursor-pointer hover:text-white" onClick={() => { const temp = swapWordA; setSwapWordA(swapWordB); setSwapWordB(temp); }} />
-                        <input
-                           type="text"
-                           value={swapWordB}
-                           onChange={(e) => setSwapWordB(e.target.value)}
-                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
-                           placeholder="B"
-                        />
-                        <button 
-                           onClick={handleSwapWords}
-                           disabled={(!lyricRaw && !lyricFormatted) || !swapWordA || !swapWordB}
-                           className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 ml-0.5 sm:ml-1"
-                        >
-                           Swap
-                        </button>
-                     </div>
-                     <button 
-                        onClick={handleInsertRandomChars}
-                        disabled={!lyricFormatted}
-                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 sm:ml-auto shrink-0"
-                     >
-                        <Wand2 className="w-3 h-3" />
-                        Add Chars
-                     </button>
-                  </div>
-                  {lyricFormatted && (
-                     <div className="flex flex-col gap-1 mt-2 border-t border-white/5 pt-2">
-                        <label className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex justify-between">
-                           Formatted Output
-                           <div className="flex items-center gap-2">
-                              {lyricDiff && (
-                                 <button onClick={() => setLyricDiff(null)} className="text-white/50 hover:text-white mr-2">Clear Diff</button>
-                              )}
-                              <button 
-                                 onClick={handleCopyLyric} 
-                                 className={`flex items-center gap-1 transition-colors px-2 py-1 rounded ${isLyricCopied ? 'bg-green-500/20 text-green-400' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
-                                 title="Copy to clipboard"
-                              >
-                                 {isLyricCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                 {isLyricCopied && <span className="text-[9px] uppercase tracking-wider font-bold">Copied</span>}
-                              </button>
-                           </div>
-                        </label>
-                        {lyricDiff ? (
-                           <div className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar overflow-y-auto max-h-[300px] whitespace-pre-wrap">
-                              {lyricDiff.map((part, index) => (
-                                 <span 
-                                    key={index} 
-                                    className={
-                                       part.added ? 'bg-green-500/30 text-green-200 rounded px-1' :
-                                       part.removed ? 'bg-red-500/30 text-red-200 line-through rounded px-1' :
-                                       ''
-                                    }
-                                 >
-                                    {part.value}
-                                 </span>
-                              ))}
-                           </div>
-                        ) : (
-                           <textarea 
-                              className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/80 min-h-[150px]"
-                              value={lyricFormatted}
-                              onChange={(e) => {
-                                 setLyricFormatted(e.target.value);
-                                 setLyricDiff(null);
-                              }}
-                           />
-                        )}
-                     </div>
-                  )}
-               </div>
-             )}
-          </div>
+                                      {sunoLyricUI}
+          
 
-          {/* SUBTITLES UI */}
-          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('transcript')}>
-                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Vocal Transcript</h3>
-                <div className="flex items-center gap-2">
-                   <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                       {cohereTranscript && !isEditingTranscript && (
-                           <>
-                               <button onClick={() => setIsEditingTranscript(true)} className="text-white/40 hover:text-white text-[10px] uppercase font-bold flex items-center gap-1"><Edit2 className="w-3 h-3" /> Edit</button>
-                               <button onClick={handleCopyTranscript} className="text-white/40 hover:text-white text-[10px] uppercase font-bold flex items-center gap-1"><Copy className="w-3 h-3" /> Copy</button>
-                               <button onClick={handleExportSRT} className="text-amber-400/70 hover:text-amber-400 text-[10px] uppercase font-bold flex items-center gap-1"><FileText className="w-3 h-3" /> Export SRT</button>
-                           </>
-                       )}
-                       {cohereTranscript && isEditingTranscript && (
-                           <button onClick={() => setIsEditingTranscript(false)} className="text-amber-400 hover:text-amber-300 text-[10px] uppercase font-bold flex items-center gap-1"><Save className="w-3 h-3" /> Save</button>
-                       )}
-                       {isTranscribing && <span className="text-[9px] font-mono font-medium text-amber-400 animate-pulse">{transcriptionStatus}</span>}
-                   </div>
-                   {expandedSections.transcript ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
-                </div>
-             </div>
-             
-             {expandedSections.transcript && (
-               <div className="flex flex-col gap-2.5">
-                {cohereTranscript && isEditingTranscript && (
-                    <textarea 
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[200px]"
-                        value={cohereTranscript || ""}
-                        onChange={(e) => setCohereTranscript(e.target.value)}
-                    />
-                )}
-                
-                {cohereTranscript && !isEditingTranscript && (
-                    <div className="bg-black/20 border border-white/5 p-4 rounded-xl flex flex-col gap-3 max-h-80 overflow-y-auto custom-scrollbar shadow-inner text-left scroll-smooth">
-                        {transcriptLines.map((line, idx) => {
-                           const isActive = currentTime >= line.start && currentTime < line.end;
-                           const isPast = currentTime >= line.end;
-                           return (
-                             <div 
-                               key={idx} 
-                               className={`text-sm leading-relaxed transition-colors duration-300 flex items-center gap-3 ${isActive ? 'text-amber-400 font-bold scale-[1.01] origin-left' : isPast ? 'text-white/60' : 'text-white/30'} group/item`}
-                             >
-                               <span 
-                                 className="text-[9px] font-mono opacity-50 shrink-0 w-12 hover:opacity-100 hover:text-amber-400 cursor-pointer transition-colors"
-                                 onClick={() => handleSeek({ target: { value: line.start } })}
-                                 title="Seek to this time"
-                               >
-                                 {Math.floor(line.start / 60)}:{(Math.floor(line.start % 60)).toString().padStart(2, '0')}
-                               </span>
-                               
-                               {editingLineIdx === idx ? (
-                                 <input
-                                   type="text"
-                                   value={editingLineText}
-                                   onChange={(e) => setEditingLineText(e.target.value)}
-                                   onBlur={() => handleSaveInlineLine(idx, editingLineText)}
-                                   onKeyDown={(e) => {
-                                     if (e.key === 'Enter') {
-                                       handleSaveInlineLine(idx, editingLineText);
-                                     } else if (e.key === 'Escape') {
-                                       setEditingLineIdx(null);
-                                     }
-                                   }}
-                                   autoFocus
-                                   className="flex-1 bg-white/5 border border-amber-400/30 rounded-lg px-2.5 py-1 text-white focus:outline-none focus:border-amber-400/80 font-normal text-sm"
-                                 />
-                                ) : (
-                                  <span 
-                                    className="flex-1 cursor-pointer hover:text-amber-300 hover:underline transition-all"
-                                    onClick={() => {
-                                      setEditingLineIdx(idx);
-                                      setEditingLineText(line.text);
-                                    }}
-                                    title="Click to edit text"
-                                  >
-                                    {line.text}
-                                  </span>
-                                )}
-                             </div>
-                           );
-                        })}
-                    </div>
-                )}
-               </div>
-             )}
-          </div>
+          {subtitlesUI}
+          
           {/* MASTER FX */}
           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
              <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('masterFx')}>
