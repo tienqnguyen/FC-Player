@@ -6,6 +6,26 @@
 }
 
 @layer utilities {
+  .console-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .console-scrollbar::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.6);
+    border-radius: 4px;
+  }
+  .console-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(16, 185, 129, 0.4);
+    border-radius: 4px;
+    border: 1px solid rgba(16, 185, 129, 0.2);
+  }
+  .console-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 185, 129, 0.7);
+  }
+  .console-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(16, 185, 129, 0.4) rgba(0, 0, 0, 0.6);
+  }
   .custom-scrollbar::-webkit-scrollbar {
     width: 0px;
     height: 0px;

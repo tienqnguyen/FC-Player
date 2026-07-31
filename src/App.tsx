@@ -2202,6 +2202,14 @@ export default function App() {
   const [stemSongInfo, setStemSongInfo] = useState<{title: string, duration: number, cover?: string, audioUrl?: string} | null>(null);
   const [stemmixError, setStemmixError] = useState("");
   const [showStemmix, setShowStemmix] = useState(true);
+
+  // Clear stem cache when changing songs
+  useEffect(() => {
+    if (currentSong?.audioUrl && stemSongInfo?.audioUrl && currentSong.audioUrl !== stemSongInfo.audioUrl) {
+       setStemSongInfo(null);
+       setStemUrls(null);
+    }
+  }, [currentSong?.audioUrl]);
   // Audio elements for playback of stems
   const stemsAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
   const [stemsPlaying, setStemsPlaying] = useState(false);

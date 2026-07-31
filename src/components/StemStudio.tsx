@@ -82,6 +82,7 @@ import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
 import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio, Wand2 } from 'lucide-react';
 import { diffWords, Change } from 'diff';
+import SpectrogramTool from "./Spectrogram";
 
 interface StemStudioProps {
   originalAudioUrl?: string | null;
@@ -316,7 +317,13 @@ export default function StemStudio({
   useEffect(() => {
     if (downloadLink && downloadLinkRef.current) {
       setTimeout(() => {
-        downloadLinkRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const container = document.getElementById('stem-studio-scroll-container');
+        if (container && downloadLinkRef.current) {
+           const offset = downloadLinkRef.current.offsetTop;
+           container.scrollTo({ top: offset - 20, behavior: 'smooth' });
+        } else {
+           downloadLinkRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
       }, 100);
     }
   }, [downloadLink]);
@@ -528,7 +535,7 @@ export default function StemStudio({
   const [isTrimmingBeforeExtract, setIsTrimmingBeforeExtract] = useState<boolean>(false);
   const [trimStart, setTrimStart] = useState<number>(0);
   const [trimEnd, setTrimEnd] = useState<number>(0);
-  const [isSunoBypass, setIsSunoBypass] = useState<boolean>(() => localStorage.getItem("suno_bypass") === "true");
+  const [isSunoBypass, setIsSunoBypass] = useState<boolean>(false);
   const [sunoSpeedFactor, setSunoSpeedFactor] = useState<number>(() => parseFloat(localStorage.getItem("suno_speed") || "1.045"));
   const [sunoNoiseLevel, setSunoNoiseLevel] = useState<number>(() => parseFloat(localStorage.getItem("suno_noise") || "0"));
   const [sunoPitchShift, setSunoPitchShift] = useState<number>(() => parseFloat(localStorage.getItem("suno_pitch") || "6.5"));
@@ -616,6 +623,7 @@ export default function StemStudio({
   const [isAmbientLoop, setIsAmbientLoop] = useState<boolean>(true);
   const [showAmbientInput, setShowAmbientInput] = useState<boolean>(false);
   const [ambientInputUrl, setAmbientInputUrl] = useState<string>("");
+  const [showSpectrogram, setShowSpectrogram] = useState<boolean>(false);
   const [showPixabaySearch, setShowPixabaySearch] = useState<boolean>(false);
   const [pixabayQuery, setPixabayQuery] = useState<string>("rain");
   const [pixabayResults, setPixabayResults] = useState<any[]>([]);
@@ -831,6 +839,14 @@ export default function StemStudio({
           a.removeAttribute("src");
         } catch {}
       });
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current.removeAttribute("src");
+      }
+      if (ambientAudioRef.current) {
+        ambientAudioRef.current.pause();
+        ambientAudioRef.current.removeAttribute("src");
+      }
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(console.error);
         audioContextRef.current = null;
@@ -838,6 +854,22 @@ export default function StemStudio({
       }
     };
   }, []);
+
+  // Cleanup audio when stems are cleared
+  useEffect(() => {
+    if (!stemUrls) {
+      if (previewAudioRef.current) {
+        previewAudioRef.current.pause();
+        previewAudioRef.current.removeAttribute("src");
+        setPreviewingUrl(null);
+      }
+      if (ambientAudioRef.current) {
+        ambientAudioRef.current.pause();
+        ambientAudioRef.current.removeAttribute("src");
+      }
+      setIsPlaying(false);
+    }
+  }, [stemUrls]);
 
   // Terminal logs simulation effect
   const logsContainerRef = useRef<HTMLDivElement>(null);
@@ -1422,7 +1454,7 @@ export default function StemStudio({
         if (masterToneLowRef.current) masterToneLowRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqLow : 0, t, 0.05);
         if (masterToneMidRef.current) masterToneMidRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqMid : 0, t, 0.05);
         if (masterToneHighRef.current) masterToneHighRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqHigh : 0, t, 0.05);
-        if (masterNoiseGainRef.current) masterNoiseGainRef.current.gain.setTargetAtTime(0, t, 0.05); // Never play noise in live preview
+        if (masterNoiseGainRef.current) masterNoiseGainRef.current.gain.setTargetAtTime(isSunoBypass ? sunoNoiseLevel : 0, t, 0.05);
     }
   }, [isSunoBypass, sunoEqLow, sunoEqMid, sunoEqHigh, sunoNoiseLevel, isPlaying]);
 
@@ -1450,6 +1482,7 @@ export default function StemStudio({
 
   useEffect(() => {
     setDownloadLink(null);
+    setIsSunoBypass(false);
   }, [originalAudioUrl]);
 
   const getSafeTitle = () => {
@@ -2384,9 +2417,8 @@ export default function StemStudio({
        {/* Ambient Studio Lighting Glows */}
        <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-400/[0.03] rounded-full blur-[120px] pointer-events-none z-0" />
        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-indigo-500/[0.03] rounded-full blur-[150px] pointer-events-none z-0" />
-       
        {/* HEADER BAR */}
-       <div className="flex flex-wrap items-center justify-between p-2 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 gap-2 sm:gap-4 overflow-visible">
+       <div className="flex flex-wrap items-center justify-between p-2 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-50 gap-2 sm:gap-4 overflow-visible">
           <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
              {!isEmbedded ? (
                 <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-wider sm:tracking-widest uppercase">
@@ -2400,7 +2432,7 @@ export default function StemStudio({
              <span className="text-[9px] font-black tracking-[0.15em] text-amber-400 uppercase bg-amber-400/5 px-2 py-0.5 rounded border border-amber-400/10 hidden xs:inline-block">
                 Stem Studio
              </span>
- 
+
              {onExtractNewSong && (
                 <button
                     onClick={onExtractNewSong}
@@ -2513,12 +2545,25 @@ export default function StemStudio({
        </div>
 
        {/* SCROLLABLE CONTENT BODY */}
-       <div className="flex-1 overflow-y-auto overflow-x-hidden p-1.5 sm:p-4 md:p-5 pb-24 sm:pb-32 flex flex-col gap-3 sm:gap-5 custom-scrollbar bg-transparent z-10">
+       <div id="stem-studio-scroll-container" className="flex-1 overflow-y-auto overflow-x-hidden p-1.5 sm:p-4 md:p-5 pb-24 sm:pb-32 flex flex-col gap-3 sm:gap-5 custom-scrollbar bg-transparent z-10 relative">
           
           
           {stemUrls && onClearStems && (
              <button
-                onClick={onClearStems}
+                onClick={(e) => {
+                   if (previewingUrl) {
+                      previewAudioRef.current?.pause();
+                      setPreviewingUrl(null);
+                   }
+                   if (ambientAudioRef.current) {
+                      ambientAudioRef.current.pause();
+                   }
+                   Object.values(audioElementsRef.current).forEach((a: any) => {
+                      a.pause();
+                   });
+                   setIsPlaying(false);
+                   onClearStems();
+                }}
                 className="self-start flex items-center gap-2 text-[11px] uppercase font-black tracking-widest text-indigo-300 hover:text-white bg-indigo-500/10 border border-indigo-500/30 hover:bg-indigo-500/30 px-6 py-3 rounded-2xl transition-all shadow-lg hover:shadow-indigo-500/20 active:scale-95"
              >
                 <ArrowLeft className="w-4 h-4" /> Back to Extract & Bypass Tools
@@ -2597,6 +2642,19 @@ export default function StemStudio({
                       </div>
                    </div>
                    <div className="flex items-center gap-2 sm:gap-3 shrink-0 flex-wrap sm:flex-nowrap">
+                      <button
+                         onClick={() => {
+                             if (isPlaying) {
+                                togglePlay();
+                             }
+                             document.querySelectorAll('audio').forEach(a => a.pause());
+                             setShowSpectrogram(true);
+                         }}
+                         className="px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-black tracking-widest uppercase transition-all flex items-center gap-1.5 cursor-pointer bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 border border-indigo-500/30"
+                         title="Compare Original Audio with Exported Mixdown"
+                      >
+                         <Activity className="w-3.5 h-3.5" /> Spectrogram
+                      </button>
                       <button
                          onClick={() => setIsTrimmingMixdown(!isTrimmingMixdown)}
                          className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-black tracking-widest uppercase transition-all flex items-center gap-1.5 cursor-pointer ${isTrimmingMixdown ? 'bg-amber-500 text-black shadow-[0_0_25px_rgba(245,158,11,0.4)] hover:bg-amber-400' : 'bg-white/10 text-white hover:bg-white/20'}`}
@@ -3461,7 +3519,11 @@ export default function StemStudio({
                      </div>
                      <div className="flex flex-col gap-1">
                          <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                             <span>Noise Level</span>
+                             <span className="flex items-center gap-1">
+                                Noise Level
+                                {isSunoBypass && sunoNoiseLevel > 0 && <Volume2 className="w-3 h-3 text-amber-400 animate-pulse" title="Noise plays in background during playback" />}
+                                {isSunoBypass && sunoNoiseLevel > 0 && <span className="text-[8px] text-amber-400/80 font-normal normal-case ml-1">(Plays in bg)</span>}
+                             </span>
                              <span className="text-amber-400">{sunoNoiseLevel.toFixed(4)}</span>
                          </div>
                          <input 
@@ -3706,14 +3768,28 @@ export default function StemStudio({
                                 { name: "Forest", icon: TreePine, url: "https://cdn.freesound.org/previews/802/802064_14408616-lq.mp3" },
                                 { name: "Storm", icon: CloudLightning, url: "https://cdn.freesound.org/previews/84/84896_988961-lq.mp3" },
                              ].map((preset, i) => (
-                                <button
-                                   key={i}
-                                   onClick={() => setAmbientOverlayUrl(preset.url)}
-                                   className="bg-white/5 hover:bg-blue-500/20 border border-white/10 hover:border-blue-500/50 rounded-xl py-3 flex flex-col items-center justify-center gap-1.5 transition-all group"
-                                >
-                                   <preset.icon className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
-                                   <span className="text-[9px] font-bold text-white/50 group-hover:text-blue-300 transition-colors">{preset.name}</span>
-                                </button>
+                                <div key={i} className="relative group bg-white/5 hover:bg-blue-500/20 border border-white/10 hover:border-blue-500/50 rounded-xl transition-all flex flex-col overflow-hidden">
+                                   <button
+                                      onClick={(e) => togglePreview(preset.url, e)}
+                                      className="absolute top-1.5 right-1.5 p-1 bg-black/40 hover:bg-blue-500 hover:text-white text-white/50 rounded-full transition-colors z-10"
+                                      title={previewingUrl === preset.url ? "Stop Preview" : "Play Preview"}
+                                   >
+                                      {previewingUrl === preset.url ? <Pause className="w-2.5 h-2.5" /> : <Play className="w-2.5 h-2.5 ml-[1px]" />}
+                                   </button>
+                                   <button
+                                      onClick={() => {
+                                         setAmbientOverlayUrl(preset.url);
+                                         if (previewingUrl === preset.url) {
+                                            previewAudioRef.current?.pause();
+                                            setPreviewingUrl(null);
+                                         }
+                                      }}
+                                      className="w-full h-full py-3 flex flex-col items-center justify-center gap-1.5 pt-4"
+                                   >
+                                      <preset.icon className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
+                                      <span className="text-[9px] font-bold text-white/50 group-hover:text-blue-300 transition-colors">{preset.name}</span>
+                                   </button>
+                                </div>
                              ))}
                           </div>
                           <div className="flex items-center gap-2 mt-2">
@@ -3905,6 +3981,16 @@ export default function StemStudio({
          )}
 
        </div>
+
+       {showSpectrogram && (
+          <SpectrogramTool 
+             initialAudioUrl1={originalAudioUrl} 
+             initialAudioUrl2={downloadLink?.url}
+             title1="Original Audio"
+             title2="Exported Mixdown"
+             onClose={() => setShowSpectrogram(false)} 
+          />
+       )}
 
     </div>
    );
