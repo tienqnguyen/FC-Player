@@ -874,7 +874,7 @@ export default function StemStudio({
     };
   }, []);
 
-  // Cleanup audio when stems are cleared
+  // Cleanup audio when stems are cleared or song changes
   useEffect(() => {
     if (!stemUrls) {
       if (previewAudioRef.current) {
@@ -886,9 +886,29 @@ export default function StemStudio({
         ambientAudioRef.current.pause();
         ambientAudioRef.current.removeAttribute("src");
       }
+      Object.values(audioElementsRef.current).forEach((a: any) => {
+        try {
+          a.pause();
+          a.currentTime = 0;
+          a.removeAttribute("src");
+          a.load();
+        } catch {}
+      });
+      audioElementsRef.current = {};
+      loadedUrlsRef.current = {};
+      setLoadedCount(0);
+      setCurrentTime(0);
+      setDuration(originalDuration || 0);
       setIsPlaying(false);
+      setDownloadLink(null);
+
+      if (audioContextRef.current) {
+        try { audioContextRef.current.close().catch(() => {}); } catch {}
+        audioContextRef.current = null;
+      }
+      initAttemptedRef.current = false;
     }
-  }, [stemUrls]);
+  }, [stemUrls, originalAudioUrl, originalDuration]);
 
   // Terminal logs simulation effect
   const logsContainerRef = useRef<HTMLDivElement>(null);
@@ -2470,7 +2490,7 @@ export default function StemStudio({
                     title={`Extract stems for ${newSongTitle || 'current song'}`}
                 >
                     <Sparkles className="w-3 h-3" />
-                    Extract {newSongTitle ? "New" : "Current"}
+                    EXTract new
                 </button>
              )}
           </div>

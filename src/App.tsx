@@ -2203,13 +2203,6 @@ export default function App() {
   const [stemmixError, setStemmixError] = useState("");
   const [showStemmix, setShowStemmix] = useState(true);
 
-  // Clear stem cache when changing songs
-  useEffect(() => {
-    if (currentSong?.audioUrl && stemSongInfo?.audioUrl && currentSong.audioUrl !== stemSongInfo.audioUrl) {
-       setStemSongInfo(null);
-       setStemUrls(null);
-    }
-  }, [currentSong?.audioUrl]);
   // Audio elements for playback of stems
   const stemsAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
   const [stemsPlaying, setStemsPlaying] = useState(false);
@@ -2946,8 +2939,8 @@ export default function App() {
       }
     }
 
-    const isLocal = song.id?.startsWith("local_") || (playUrl && playUrl.startsWith("blob:"));
-    if (!isLocal) {
+    const isLocalUploaded = song.id?.startsWith("local_") && uploadedFile;
+    if (!isLocalUploaded) {
       setUploadedFile(null);
     }
     if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
@@ -4206,28 +4199,47 @@ export default function App() {
   };
 
   const handleSeparateStems = async (forceEngine?: "webgpu" | "onnx" | "ai") => {
-    if (!audioUrl) return;
+    const targetAudioUrl = audioUrl || currentSong?.audioUrl || currentSong?.url;
+    if (!targetAudioUrl) return;
+    
     setShowStemmix(true);
-    if (audioRef.current && !audioRef.current.paused) {
+    
+    if (audioRef.current) {
+      try {
         audioRef.current.pause();
-        setIsPlaying(false);
+        audioRef.current.currentTime = 0;
+      } catch {}
+      setIsPlaying(false);
     }
     if (stemsPlaying) {
       setStemsPlaying(false);
     }
     Object.values(stemsAudioRefs.current).forEach((a: any) => {
-      a.pause();
-      a.removeAttribute('src');
+      try {
+        a.pause();
+        a.currentTime = 0;
+        a.removeAttribute('src');
+        a.load();
+      } catch {}
     });
     stemsAudioRefs.current = {};
-    
+
+    if (uploadedFile && !currentSong?.id?.startsWith("local_")) {
+      setUploadedFile(null);
+    }
+
+    const targetTitle = currentSong?.title || fileName || "Untitled Track";
+    const targetDuration = currentSong?.duration || duration || 0;
+    const targetCover = currentSong?.cover;
+
+    setAudioUrl(targetAudioUrl);
     setStemUrls(null);
-    setStemSongInfo({ title: currentSong?.title || "Untitled Track", duration: duration || 0, cover: currentSong?.cover, audioUrl: audioUrl });
+    setStemSongInfo({ title: targetTitle, duration: targetDuration, cover: targetCover, audioUrl: targetAudioUrl, url: targetAudioUrl } as any);
     setStemmixStatus("loading");
     setStemmixError("");
 
     const activeEngine = (typeof forceEngine === "string" ? forceEngine : null) || separationMode;
-    console.log(`[Stemmix] Starting separation using engine: ${activeEngine}`);
+    console.log(`[Stemmix] Starting separation for track: "${targetTitle}" using engine: ${activeEngine}`);
 
     if (activeEngine === "webgpu") {
       try {
@@ -4236,8 +4248,8 @@ export default function App() {
           throw new Error("WebGPU is not supported or enabled in this browser. Please use 'AI Cloud' separation.");
         }
 
-        console.log("[WebGPU] Fetching track buffer:", audioUrl);
-        const response = await fetch(audioUrl);
+        console.log("[WebGPU] Fetching track buffer:", targetAudioUrl);
+        const response = await fetch(targetAudioUrl);
         const arrayBuffer = await response.arrayBuffer();
 
         console.log("[WebGPU] Decoding audio binary data...");
@@ -4277,12 +4289,31 @@ export default function App() {
       }
     } else if (activeEngine === "ai") {
       try {
-        console.log("[AI Cloud] Sending to remote server for separation...");
+        console.log("[AI Cloud] Sending current song audio to remote server for separation...");
         const formData = new FormData();
-        if (uploadedFile && audioUrl && audioUrl.startsWith("blob:")) {
-          formData.append("audio_file", uploadedFile);
+
+        let audioFileToSend: Blob | null = null;
+        if (uploadedFile && currentSong?.id?.startsWith("local_")) {
+          audioFileToSend = uploadedFile;
+        } else if (targetAudioUrl) {
+          try {
+            console.log("[AI Cloud] Fetching current audioUrl as blob for extraction:", targetAudioUrl);
+            const fetchRes = await fetch(targetAudioUrl);
+            if (fetchRes.ok) {
+              audioFileToSend = await fetchRes.blob();
+            } else {
+              console.warn("[AI Cloud] Fetch audioUrl status:", fetchRes.status);
+            }
+          } catch (e) {
+            console.warn("[AI Cloud] Could not fetch audioUrl directly as blob:", e);
+          }
+        }
+
+        if (audioFileToSend && audioFileToSend.size > 0) {
+          const safeTitle = (currentSong?.title || "audio").replace(/[^a-zA-Z0-9_.-]/g, "_");
+          formData.append("audio_file", audioFileToSend, `${safeTitle}.mp3`);
         } else {
-          formData.append("audioUrl", audioUrl || "");
+          formData.append("audioUrl", targetAudioUrl || "");
         }
         
         let customSpace = "";
@@ -4320,7 +4351,7 @@ export default function App() {
     } else if (activeEngine === "onnx") {
       try {
         console.log("[ONNX] Initializing ONNX Runtime Web session...");
-        const response = await fetch(audioUrl);
+        const response = await fetch(targetAudioUrl);
         const arrayBuffer = await response.arrayBuffer();
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
         const decodedBuffer = await safeDecodeAudioData(ctx as any, arrayBuffer);
@@ -6516,7 +6547,7 @@ export default function App() {
               : "w-full mt-1 sm:mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
           } bg-[#0A0B10]/40 backdrop-blur-[40px] rounded-none sm:rounded-[24px] border-y sm:border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
             <StemStudio 
-               originalAudioUrl={stemSongInfo?.url || currentSong?.url || audioUrl}
+               originalAudioUrl={stemSongInfo?.audioUrl || stemSongInfo?.url || currentSong?.audioUrl || currentSong?.url || audioUrl}
                stemUrls={stemUrls} 
                songTitle={stemSongInfo?.title || currentSong?.title || "Untitled Track"}
                coverUrl={stemSongInfo?.cover || currentSong?.cover}
