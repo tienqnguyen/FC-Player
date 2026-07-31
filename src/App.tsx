@@ -52,28 +52,53 @@ const VISUALIZER_PALETTES = {
   },
 };
 
+
+const getFallbackGradient = (seed: string = "") => {
+  const gradients = [
+    "from-rose-500 via-orange-400 to-amber-500",
+    "from-blue-600 via-violet-500 to-purple-600",
+    "from-emerald-400 via-teal-500 to-cyan-500",
+    "from-fuchsia-500 via-pink-500 to-rose-500",
+    "from-violet-500 via-purple-500 to-fuchsia-500",
+    "from-indigo-500 via-blue-500 to-cyan-500",
+    "from-amber-400 via-orange-500 to-rose-500",
+    "from-pink-500 via-rose-500 to-red-500",
+    "from-cyan-500 via-blue-500 to-indigo-500",
+    "from-teal-400 via-emerald-500 to-green-500"
+  ];
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % gradients.length;
+  return gradients[index];
+};
+
+const getFallbackImage = (seed: string = "") => {
+  const images = [
+    "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=800",
+    "https://images.unsplash.com/photo-1557672172-298e090bd0f1?q=80&w=800",
+    "https://images.unsplash.com/photo-1579546929518-9e396f3cc809?q=80&w=800",
+    "https://images.unsplash.com/photo-1557683316-973673baf926?q=80&w=800",
+    "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=800"
+  ];
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = seed.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % images.length;
+  return images[index];
+};
+
 const FallbackImage = ({ src, alt, className, title }: any) => {
   const [error, setError] = useState(false);
   
   if (!src || error) {
-    // Determine initials
-    let initials = "♫";
-    if (alt && alt !== "cov") {
-      const cleanTitle = alt.replace(/\[.*\]/g, '').replace(/\(.*\)/g, '').trim();
-      const words = cleanTitle.split(' ').filter(Boolean);
-      if (words.length > 1) {
-          initials = (words[0][0] + words[1][0]).toUpperCase();
-      } else if (words.length === 1) {
-          initials = words[0].substring(0, 2).toUpperCase();
-      }
-    }
-
+    const fallbackSrc = getFallbackImage(alt || title || "default");
+    
+    // We can also just return the fallback image!
     return (
-      <div className={`flex flex-col items-center justify-center bg-gradient-to-br from-white/10 to-transparent border border-white/5 shadow-inner ${className}`} title={title || alt}>
-        <span className={`font-black text-white/40 tracking-widest uppercase drop-shadow-md ${className && className.includes('w-8') ? 'text-[10px]' : 'text-xl md:text-3xl'}`}>
-          {initials}
-        </span>
-      </div>
+      <img src={fallbackSrc} alt={alt} className={className} referrerPolicy="no-referrer" title={title} />
     );
   }
   
@@ -4423,20 +4448,27 @@ export default function App() {
     <div className={`text-[#E0E2E8] font-sans flex flex-col relative overflow-hidden ${
       isCompact ? "h-[100dvh] max-h-[100dvh] bg-[#0A0B10]" : "min-h-[100dvh] bg-[#0A0B10]"
     }`} style={{ fontFamily: "'Inter', sans-serif" }}>
+      
+      
+      
+      {/* Site Background - Always render gradient fallback underneath */}
+      <div className={`absolute inset-0 z-0 opacity-20 pointer-events-none bg-gradient-to-br ${getFallbackGradient(currentSong?.title || "default")}`} />
+      
       {currentSong?.cover && (
-        <>
-          <div 
-            className="absolute inset-0 z-0 opacity-40 transition-opacity duration-1000 scale-110 pointer-events-none"
-            style={{
-              backgroundImage: `url(${currentSong.cover})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              filter: 'blur(80px) saturate(150%)',
-            }}
-          />
-          <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/0 via-[#0A0B10]/60 to-[#0A0B10] pointer-events-none" />
-        </>
+        <div 
+          className="absolute inset-0 z-0 opacity-40 transition-opacity duration-1000 scale-110 pointer-events-none"
+          style={{
+            backgroundImage: `url(${currentSong.cover})`,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
+            filter: 'blur(80px) saturate(150%)',
+          }}
+        />
       )}
+      <div className="absolute inset-0 z-0 bg-gradient-to-b from-black/20 via-[#0A0B10]/80 to-[#0A0B10] pointer-events-none" />
+
+
+
 
       {audioError && (
         <div className="bg-red-500/90 text-white p-3 z-[60] text-sm text-center shadow-md">
@@ -4512,13 +4544,21 @@ export default function App() {
               : "pt-4 pb-2 mb-0 sm:mb-4 rounded-b-[2rem] sm:rounded-[2.5rem] shadow-[0_20px_50px_rgba(0,0,0,0.6)] lg:mt-2"
           }`} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             
-            {/* Dynamic Artwork Background */}
+            
+            
+            
+            {/* Dynamic Artwork Background with Fallback Layer */}
+            <div className={`absolute inset-0 -z-30 opacity-40 bg-gradient-to-tr ${getFallbackGradient(currentSong?.title || "default")}`} />
+            
             {currentSong?.cover && (
                <div 
                   className="absolute inset-0 -z-20 bg-center bg-cover blur-[50px] opacity-50 scale-[1.2] transition-all duration-1000 saturate-[1.5]"
                   style={{ backgroundImage: `url(${currentSong.cover})` }}
                />
             )}
+
+
+
             <div className="absolute inset-0 -z-10 bg-[#0A0B10]/50 backdrop-blur-[40px]" />
             
             {/* Cover Art / Visualizer */}
@@ -6464,7 +6504,7 @@ export default function App() {
         {showStemmix && (
           <div className={`flex flex-col ${
             !isCompact 
-              ? "w-full sm:w-auto lg:col-span-2 h-[80vh] lg:h-full shrink-0 lg:shrink" 
+              ? "w-full lg:col-span-2 h-[80vh] lg:h-full shrink-0 lg:shrink" 
               : "w-full mt-1 sm:mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
           } bg-[#0A0B10]/40 backdrop-blur-[40px] rounded-none sm:rounded-[24px] border-y sm:border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
             <StemStudio 

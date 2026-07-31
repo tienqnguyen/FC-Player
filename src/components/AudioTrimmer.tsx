@@ -5,12 +5,16 @@ import { Scissors, Play, Pause, RotateCcw } from 'lucide-react';
 import audioBufferToWav from 'audiobuffer-to-wav';
 
 interface AudioTrimmerProps {
+  mode?: "full" | "select-only";
+  onRegionChange?: (start: number, end: number) => void;
+  initialStart?: number;
+  initialEnd?: number;
   audioUrl: string;
   onTrim: (trimmedAudioUrl: string, trimStart: number, trimEnd: number) => void;
   onCancel: () => void;
 }
 
-export default function AudioTrimmer({ audioUrl, onTrim, onCancel }: AudioTrimmerProps) {
+export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full", onRegionChange, initialStart, initialEnd }: AudioTrimmerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const regionsRef = useRef<RegionsPlugin | null>(null);
@@ -19,8 +23,8 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel }: AudioTrimme
   const [isReady, setIsReady] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [startSec, setStartSec] = useState(0);
-  const [endSec, setEndSec] = useState(0);
+  const [startSec, setStartSec] = useState(initialStart || 0);
+  const [endSec, setEndSec] = useState(initialEnd || 0);
   
   useEffect(() => {
     if (!containerRef.current) return;
@@ -62,27 +66,39 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel }: AudioTrimme
     ws.load(audioUrl);
     
     ws.on('ready', () => {
+      
       const d = ws.getDuration();
       setDuration(d);
-      setEndSec(d);
+      
+      const st = initialStart || 0;
+      const en = initialEnd || d;
+      
+      setStartSec(st);
+      setEndSec(en);
       setIsReady(true);
       
       regions.addRegion({
-        start: 0,
-        end: d,
+        start: st,
+        end: en,
         color: 'rgba(251, 191, 36, 0.25)',
         drag: false,
         resize: true
       });
+
     });
     
     ws.on('play', () => setIsPlaying(true));
     ws.on('pause', () => setIsPlaying(false));
     
+    
     regions.on('region-updated', (region) => {
       setStartSec(region.start);
       setEndSec(region.end);
+      if (onRegionChange) {
+        onRegionChange(region.start, region.end);
+      }
     });
+
     
     return () => {
       ws.destroy();
@@ -166,43 +182,59 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel }: AudioTrimme
         )}
         <div ref={containerRef} className="w-full mt-8 rounded-lg overflow-hidden" />
       </div>
-      <div className="flex flex-wrap items-center justify-center gap-3 w-full">
-          <button
-            onClick={onCancel}
-            disabled={isProcessing}
-            className="px-6 py-3 rounded-full font-bold text-[10px] tracking-widest uppercase border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white transition-all"
-          >
-            Cancel
-          </button>
-          
-          <div className="flex items-center gap-2 p-1 bg-white/5 border border-white/10 rounded-full">
-             <button
-               onClick={handleReplay}
-               disabled={!isReady || isProcessing}
-               className="flex items-center justify-center w-10 h-10 rounded-full text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-50 transition-all"
-               title="Replay from start"
-             >
-               <RotateCcw className="w-4 h-4" />
-             </button>
-             <button
-               onClick={handlePlayPause}
-               disabled={!isReady || isProcessing}
-               className="flex items-center gap-2 bg-blue-500 text-white pl-4 pr-5 py-2.5 rounded-full font-bold text-[10px] tracking-widest uppercase hover:bg-blue-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)]"
-             >
-               {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-               {isPlaying ? "Pause" : "Play Preview"}
-             </button>
-          </div>
+      
 
-          <button
-            onClick={handleApply}
-            disabled={!isReady || isProcessing}
-            className="flex items-center gap-2 bg-amber-400 text-black px-6 py-3 rounded-full font-bold text-[10px] tracking-widest uppercase hover:bg-amber-300 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(251,191,36,0.3)] ml-auto sm:ml-0"
-          >
-            <Scissors className="w-4 h-4" />
-            Apply Trim
-          </button>
-      </div>
+      {mode === "full" && (
+        <div className="flex flex-wrap items-center justify-center gap-3 w-full">
+            <button
+              onClick={onCancel}
+              disabled={isProcessing}
+              className="px-6 py-3 rounded-full font-bold text-[10px] tracking-widest uppercase border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white transition-all"
+            >
+              Cancel
+            </button>
+            
+            <div className="flex items-center gap-2 p-1 bg-white/5 border border-white/10 rounded-full">
+               <button 
+                 onClick={handleReplay}
+                 disabled={!isReady || isProcessing}
+                 className="flex items-center justify-center w-10 h-10 rounded-full text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-50 transition-all"
+                 title="Replay from start"
+               >
+                 <RotateCcw className="w-4 h-4" />
+               </button>
+               <button 
+                 onClick={handlePlayPause}
+                 disabled={!isReady || isProcessing}
+                 className="flex items-center gap-2 bg-blue-500 text-white pl-4 pr-5 py-2.5 rounded-full font-bold text-[10px] tracking-widest uppercase hover:bg-blue-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)]"
+               >
+                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                 {isPlaying ? "Pause" : "Play Preview"}
+               </button>
+            </div>
+
+            <button
+              onClick={handleApply}
+              disabled={!isReady || isProcessing}
+              className="flex items-center gap-2 bg-amber-400 text-black px-6 py-3 rounded-full font-bold text-[10px] tracking-widest uppercase hover:bg-amber-300 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(251,191,36,0.3)] ml-auto sm:ml-0"
+            >
+              <Scissors className="w-4 h-4" />
+              Apply Trim
+            </button>
+        </div>
+      )}
+      {mode === "select-only" && (
+         <div className="flex items-center gap-2 w-full justify-center">
+             <button 
+                 onClick={handlePlayPause}
+                 disabled={!isReady || isProcessing}
+                 className="flex items-center gap-2 bg-white/10 text-white px-4 py-2 rounded-full font-bold text-[10px] tracking-widest uppercase hover:bg-white/20 disabled:opacity-50 transition-all"
+             >
+                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                 {isPlaying ? "Pause" : "Preview Trim Region"}
+             </button>
+         </div>
+      )}
     </div>
   );
 }

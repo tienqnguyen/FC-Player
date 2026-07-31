@@ -682,6 +682,11 @@ export default function StemStudio({
   const audioContextRef = useRef<AudioContext | null>(null);
   const masterGainRef = useRef<GainNode | null>(null);
   const masterEqNodesRef = useRef<BiquadFilterNode[]>([]);
+  const masterNoiseGainRef = useRef<GainNode | null>(null);
+  const masterToneLowRef = useRef<BiquadFilterNode | null>(null);
+  const masterToneMidRef = useRef<BiquadFilterNode | null>(null);
+  const masterToneHighRef = useRef<BiquadFilterNode | null>(null);
+
   const audioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
   
   const gainNodesRef = useRef<Record<string, GainNode>>({});
@@ -960,7 +965,47 @@ export default function StemStudio({
       masterEqNodesRef.current = eqNodes;
 
       // Connect master -> eqFilters -> destination
-      let lastNode: AudioNode = master;
+      
+      const toneLow = ctx.createBiquadFilter();
+      toneLow.type = 'lowshelf';
+      toneLow.frequency.value = 320;
+      toneLow.gain.value = sunoEqLow;
+      masterToneLowRef.current = toneLow;
+
+      const toneMid = ctx.createBiquadFilter();
+      toneMid.type = 'peaking';
+      toneMid.frequency.value = 1000;
+      toneMid.Q.value = 1.0;
+      toneMid.gain.value = sunoEqMid;
+      masterToneMidRef.current = toneMid;
+
+      const toneHigh = ctx.createBiquadFilter();
+      toneHigh.type = 'highshelf';
+      toneHigh.frequency.value = 3200;
+      toneHigh.gain.value = sunoEqHigh;
+      masterToneHighRef.current = toneHigh;
+
+      const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < noiseBuffer.length; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+      const noiseSrc = ctx.createBufferSource();
+      noiseSrc.buffer = noiseBuffer;
+      noiseSrc.loop = true;
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.value = sunoNoiseLevel;
+      masterNoiseGainRef.current = noiseGain;
+      noiseSrc.connect(noiseGain);
+      noiseGain.connect(ctx.destination);
+      noiseSrc.start(0);
+
+      master.connect(toneLow);
+      toneLow.connect(toneMid);
+      toneMid.connect(toneHigh);
+      
+      let lastNode: AudioNode = toneHigh;
+
       eqNodes.forEach(filter => {
         lastNode.connect(filter);
         lastNode = filter;
@@ -1333,16 +1378,33 @@ export default function StemStudio({
     }
   }, [reverb]);
 
-  // Sync real-time tempo (speed) changes
+  
+  // Sync real-time tempo (speed) and pitch changes
   useEffect(() => {
     Object.values(audioElementsRef.current).forEach((a: HTMLAudioElement) => {
       try {
-        a.playbackRate = speed;
+        const pitchFactor = isSunoBypass ? Math.pow(2, sunoPitchShift / 12) : 1.0;
+        const speedFactor = isSunoBypass ? sunoSpeedFactor : 1.0;
+        const targetRate = speed * speedFactor * pitchFactor;
+        a.playbackRate = targetRate;
+        a.preservesPitch = preservePitch && (sunoPitchShift === 0 || !isSunoBypass);
       } catch (e) {
         console.error("Failed to set playback rate:", e);
       }
     });
-  }, [speed]);
+  }, [speed, isSunoBypass, sunoSpeedFactor, sunoPitchShift, preservePitch]);
+
+  // Sync real-time Tone EQ and Noise
+  useEffect(() => {
+    if (audioContextRef.current) {
+        const t = audioContextRef.current.currentTime;
+        if (masterToneLowRef.current) masterToneLowRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqLow : 0, t, 0.05);
+        if (masterToneMidRef.current) masterToneMidRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqMid : 0, t, 0.05);
+        if (masterToneHighRef.current) masterToneHighRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqHigh : 0, t, 0.05);
+        if (masterNoiseGainRef.current) masterNoiseGainRef.current.gain.setTargetAtTime(isSunoBypass ? sunoNoiseLevel : 0, t, 0.05);
+    }
+  }, [isSunoBypass, sunoEqLow, sunoEqMid, sunoEqHigh, sunoNoiseLevel]);
+
 
   useEffect(() => {
     masterEqNodesRef.current.forEach((node, i) => {
@@ -2428,113 +2490,6 @@ export default function StemStudio({
           {/* Trim Export Settings */}
           <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
              <div className="flex flex-col gap-3">
-                 <div className="flex items-center justify-between">
-                     <div className="flex items-center gap-2">
-                        <input 
-                           type="checkbox" 
-                           id="suno-bypass"
-                           checked={isSunoBypass} 
-                           onChange={(e) => setIsSunoBypass(e.target.checked)}
-                           className="w-4 h-4 rounded bg-black/50 border-white/20 text-indigo-400 focus:ring-indigo-400/50 cursor-pointer"
-                        />
-                        <label htmlFor="suno-bypass" className="text-xs font-bold text-white uppercase tracking-wider sm:tracking-widest cursor-pointer" title="Slightly shifts playback speed and adds imperceptible noise to bypass Suno's audio detection.">Bypass Suno Detection</label>
-                     </div>
-                     <button
-                         type="button"
-                         onClick={() => setShowSunoSettings(!showSunoSettings)}
-                         className="text-[9px] uppercase tracking-wider font-bold text-white/40 hover:text-white/80 transition-colors p-1"
-                     >
-                         <Settings2 className="w-3.5 h-3.5" />
-                     </button>
-                 </div>
-                 {isSunoBypass && showSunoSettings && (
-                     <div className="p-3 bg-black/40 border border-indigo-500/20 rounded-xl flex flex-col gap-3 animate-in fade-in slide-in-from-top-2">
-                         <div className="flex flex-col gap-1">
-                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                 <span>Speed Shift</span>
-                                 <span className="text-indigo-400">{sunoSpeedFactor.toFixed(3)}x</span>
-                             </div>
-                             <input 
-                                 type="range" 
-                                 min="0.5" 
-                                 max="1.5" 
-                                 step="0.005" 
-                                 value={sunoSpeedFactor}
-                                 onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
-                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
-                             />
-                         </div>
-                         <div className="flex flex-col gap-1">
-                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                 <span>Pitch Shift (Semitones)</span>
-                                 <span className="text-indigo-400">{sunoPitchShift.toFixed(1)}</span>
-                             </div>
-                             <input 
-                                 type="range" 
-                                 min="-12" 
-                                 max="12" 
-                                 step="0.1" 
-                                 value={sunoPitchShift}
-                                 onChange={(e) => setSunoPitchShift(parseFloat(e.target.value))}
-                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
-                             />
-                         </div>
-                         <div className="flex flex-col gap-1">
-                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                 <span>Noise Level</span>
-                                 <span className="text-indigo-400">{sunoNoiseLevel.toFixed(4)}</span>
-                             </div>
-                             <input 
-                                 type="range" 
-                                 min="0" 
-                                 max="0.05" 
-                                 step="0.0005" 
-                                 value={sunoNoiseLevel}
-                                 onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
-                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
-                             />
-                         </div>
-                         <div className="flex flex-col gap-1">
-                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                 <span>EQ Low (320Hz)</span>
-                                 <span className="text-indigo-400">{sunoEqLow.toFixed(1)} dB</span>
-                             </div>
-                             <input 
-                                 type="range" 
-                                 min="-24" max="24" step="0.5" 
-                                 value={sunoEqLow}
-                                 onChange={(e) => setSunoEqLow(parseFloat(e.target.value))}
-                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
-                             />
-                         </div>
-                         <div className="flex flex-col gap-1">
-                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                 <span>EQ Mid (1kHz)</span>
-                                 <span className="text-indigo-400">{sunoEqMid.toFixed(1)} dB</span>
-                             </div>
-                             <input 
-                                 type="range" 
-                                 min="-24" max="24" step="0.5" 
-                                 value={sunoEqMid}
-                                 onChange={(e) => setSunoEqMid(parseFloat(e.target.value))}
-                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
-                             />
-                         </div>
-                         <div className="flex flex-col gap-1">
-                             <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                 <span>EQ High (3.2kHz)</span>
-                                 <span className="text-indigo-400">{sunoEqHigh.toFixed(1)} dB</span>
-                             </div>
-                             <input 
-                                 type="range" 
-                                 min="-24" max="24" step="0.5" 
-                                 value={sunoEqHigh}
-                                 onChange={(e) => setSunoEqHigh(parseFloat(e.target.value))}
-                                 className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-400"
-                             />
-                         </div>
-                     </div>
-                 )}
              </div>
              <div className="flex items-center justify-between">
                  <div className="flex items-center gap-2">
@@ -2553,34 +2508,29 @@ export default function StemStudio({
                     </span>
                  )}
              </div>
-             {isTrimming && (
-                <div className="flex flex-col sm:flex-row gap-4 mt-2 animate-in fade-in slide-in-from-top-1">
-                   <div className="flex-1 flex flex-col gap-1.5">
-                      <label className="text-[10px] text-white/60 font-bold uppercase tracking-wider">Start Time (sec)</label>
-                      <input 
-                         type="number" 
-                         min="0" 
-                         max={trimEnd - 1} 
-                         step="0.1"
-                         value={trimStart} 
-                         onChange={(e) => setTrimStart(Math.max(0, Math.min(trimEnd - 0.1, parseFloat(e.target.value) || 0)))}
-                         className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400/50 transition-colors"
-                      />
+             
+             {isTrimming && originalAudioUrl && (
+                <div className="mt-4 border border-amber-400/20 rounded-2xl overflow-hidden p-2 bg-black/20 relative animate-in fade-in slide-in-from-top-1">
+                   <div className="absolute top-4 right-6 z-10 flex flex-col items-end gap-0.5">
+                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest bg-black/50 px-2 py-0.5 rounded-md backdrop-blur-md">
+                         Mixdown Trim Region
+                      </span>
                    </div>
-                   <div className="flex-1 flex flex-col gap-1.5">
-                      <label className="text-[10px] text-white/60 font-bold uppercase tracking-wider">End Time (sec)</label>
-                      <input 
-                         type="number" 
-                         min={trimStart + 1} 
-                         max={duration} 
-                         step="0.1"
-                         value={trimEnd} 
-                         onChange={(e) => setTrimEnd(Math.max(trimStart + 0.1, Math.min(duration, parseFloat(e.target.value) || duration)))}
-                         className="bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-400/50 transition-colors"
-                      />
-                   </div>
+                   <AudioTrimmer 
+                      mode="select-only"
+                      audioUrl={originalAudioUrl}
+                      initialStart={trimStart}
+                      initialEnd={trimEnd > 0 ? trimEnd : duration}
+                      onRegionChange={(s, e) => {
+                         setTrimStart(s);
+                         setTrimEnd(e);
+                      }}
+                      onCancel={() => {}}
+                      onTrim={() => {}}
+                   />
                 </div>
              )}
+
           </div>
 
           {downloadLink && (
@@ -2642,9 +2592,9 @@ export default function StemStudio({
           )}
 
           {stemmixStatus !== "ready" ? (
-             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center my-auto animate-in fade-in duration-500">
+             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center my-auto animate-in fade-in duration-500 w-full">
                 {stemmixStatus === "idle" ? (
-                   <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+                   <div className="flex flex-col items-center justify-center py-16 px-4 text-center w-full">
                       <div className="w-16 h-16 rounded-full bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 mb-6">
                          <Sparkles className="w-8 h-8" />
                       </div>
@@ -2796,7 +2746,7 @@ export default function StemStudio({
                       
                       {/* PREVIEW & TRANSCRIPT SECTION */}
                       {originalAudioUrl && !isTrimmingBeforeExtract && (
-                        <div className="w-full max-w-2xl mt-6 sm:mt-12 flex flex-col gap-4 items-center bg-black/20 p-3 sm:p-5 rounded-[20px] sm:rounded-3xl border border-white/5 shadow-2xl">
+                        <div className="w-full max-w-4xl xl:max-w-5xl mt-6 sm:mt-12 flex flex-col gap-4 items-center bg-black/20 p-3 sm:p-5 rounded-[20px] sm:rounded-3xl border border-white/5 shadow-2xl">
                            <h4 className="text-[10px] font-bold text-white/50 uppercase tracking-[0.2em] mb-2">Original Audio Preview & Tools</h4>
                            <div className="flex w-full items-center justify-between gap-4 flex-col sm:flex-row">
                               <audio 
@@ -3050,12 +3000,34 @@ export default function StemStudio({
                               </span>
                               <span className="text-[9px] text-white/50 font-mono uppercase tracking-wider sm:tracking-widest mt-1">Stems: {loadedCount}/{stemsList.length}</span>
                            </div>
-                        ) : (
-                           <div className="flex flex-col min-w-0 leading-tight bg-black/40 p-2.5 rounded-xl border border-white/10 backdrop-blur-md text-right items-end shadow-xl">
-                              <span className="text-[10px] sm:text-xs font-black text-white uppercase tracking-wider sm:tracking-widest flex items-center gap-2">
-                                 {isPlaying ? <><Play className="w-3 h-3 fill-current" /> PLAYING</> : <><Pause className="w-3 h-3 fill-current" /> PAUSED</>}
-                              </span>
-                              <span className="text-[8px] sm:text-[9px] text-white/50 font-mono uppercase tracking-wider sm:tracking-widest mt-1">EQ Ready</span>
+                                                ) : (
+                           <div className="flex items-center gap-3">
+                              <div className="hidden sm:flex items-center gap-2 mr-2">
+                                 <button
+                                     onClick={(e) => { e.stopPropagation(); handleExportMix("mp3"); }}
+                                     disabled={stemmixStatus !== "ready" || isExporting}
+                                     className={`flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase ${isExporting && exportFormat === "mp3" ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse" : "bg-amber-400 text-black shadow-[0_0_15px_rgba(251,191,36,0.3)]"} px-3 py-2 rounded-xl hover:bg-amber-300 transition-colors disabled:opacity-50`}
+                                     title="Quick Export Mix (MP3)"
+                                 >
+                                     {isExporting && exportFormat === "mp3" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                                     MP3
+                                 </button>
+                                 <button
+                                     onClick={(e) => { e.stopPropagation(); handleExportMix("wav"); }}
+                                     disabled={stemmixStatus !== "ready" || isExporting}
+                                     className={`flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase ${isExporting && exportFormat === "wav" ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse" : "bg-white/10 border border-white/20 text-white"} px-3 py-1.5 rounded-xl hover:bg-white/20 hover:border-white/30 transition-colors disabled:opacity-50`}
+                                     title="Quick Export Mix (WAV)"
+                                 >
+                                     {isExporting && exportFormat === "wav" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                                     WAV
+                                 </button>
+                              </div>
+                              <div className="flex flex-col min-w-0 leading-tight bg-black/40 p-2.5 rounded-xl border border-white/10 backdrop-blur-md text-right items-end shadow-xl">
+                                 <span className="text-[10px] sm:text-xs font-black text-white uppercase tracking-wider sm:tracking-widest flex items-center gap-2">
+                                    {isPlaying ? <><Play className="w-3 h-3 fill-current" /> PLAYING</> : <><Pause className="w-3 h-3 fill-current" /> PAUSED</>}
+                                 </span>
+                                 <span className="text-[8px] sm:text-[9px] text-white/50 font-mono uppercase tracking-wider sm:tracking-widest mt-1">EQ Ready</span>
+                              </div>
                            </div>
                         )}
                     </div>
@@ -3354,38 +3326,143 @@ export default function StemStudio({
                    {expandedSections.masterFx ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
                 </div>
              </div>
+             
              {expandedSections.masterFx && (
-               <div className="flex flex-col gap-3.5">
-             <div className="grid grid-cols-2 gap-4">
-                <div className="bg-black/20 border border-white/5 p-3 rounded-xl flex flex-col gap-2">
-                   <div className="flex items-center justify-between">
-                         <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1"><Clock className="w-3 h-3" /> Tempo</span>
-                         <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="checkbox" checked={preservePitch} onChange={(e) => setPreservePitch(e.target.checked)} className="accent-amber-400" />
-                            <span className="text-[9px] font-bold text-white/50 uppercase flex items-center gap-1">Pitch Sync</span>
-                         </label>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-white/70 w-8">{speed.toFixed(2)}x</span>
-                        <input
-                            type="range" min="0.5" max="2" step="0.05" value={speed}
-                            onChange={(e) => setSpeed(parseFloat(e.target.value))}
-                            className="flex-1 h-1.5 rounded-lg appearance-none bg-white/10 accent-amber-400"
-                        />
-                      </div>
-                </div>
-                <div className="bg-black/20 border border-white/5 p-3 rounded-xl flex flex-col gap-2">
-                   <div className="flex justify-between">
-                      <span className="text-[10px] font-black uppercase tracking-wider text-purple-400 flex items-center gap-1"><Wind className="w-3 h-3" /> Reverb</span>
-                      <span className="text-[10px] font-mono text-white/70">{Math.round(reverb * 100)}%</span>
-                   </div>
-                   <input
-                       type="range" min="0" max="1" step="0.01" value={reverb}
-                       onChange={(e) => setReverb(parseFloat(e.target.value))}
-                       className="w-full h-1.5 rounded-lg appearance-none bg-white/10 accent-purple-400"
+               <div className="flex flex-col gap-3">
+                 <div className="flex items-center gap-2 mb-2">
+                    <input 
+                       type="checkbox" 
+                       id="master-suno-bypass"
+                       checked={isSunoBypass} 
+                       onChange={(e) => setIsSunoBypass(e.target.checked)}
+                       className="w-4 h-4 rounded bg-black/50 border-white/20 text-amber-400 focus:ring-amber-400/50 cursor-pointer"
                     />
+                    <label htmlFor="master-suno-bypass" className="text-[10px] font-black text-white uppercase tracking-widest cursor-pointer">Enable Bypass FX Engine</label>
                  </div>
-              </div>
+                 
+                 <div className={`flex flex-col gap-3 p-3 bg-black/20 border border-white/5 rounded-xl transition-all duration-300 ${isSunoBypass ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                     <div className="flex flex-col gap-1">
+                         <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                             <span>Speed Shift</span>
+                             <span className="text-amber-400">{sunoSpeedFactor.toFixed(3)}x</span>
+                         </div>
+                         <input 
+                             type="range" 
+                             min="0.5" 
+                             max="1.5" 
+                             step="0.005" 
+                             value={sunoSpeedFactor}
+                             onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
+                             className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                         />
+                     </div>
+                     <div className="flex flex-col gap-1">
+                         <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                             <span>Pitch Shift (Semitones)</span>
+                             <span className="text-amber-400">{sunoPitchShift.toFixed(1)}</span>
+                         </div>
+                         <input 
+                             type="range" 
+                             min="-12" 
+                             max="12" 
+                             step="0.1" 
+                             value={sunoPitchShift}
+                             onChange={(e) => setSunoPitchShift(parseFloat(e.target.value))}
+                             className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                         />
+                     </div>
+                     <div className="flex flex-col gap-1">
+                         <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                             <span>Noise Level</span>
+                             <span className="text-amber-400">{sunoNoiseLevel.toFixed(4)}</span>
+                         </div>
+                         <input 
+                             type="range" 
+                             min="0" 
+                             max="0.02" 
+                             step="0.0001" 
+                             value={sunoNoiseLevel}
+                             onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
+                             className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                         />
+                     </div>
+                     <div className="flex flex-col gap-1">
+                         <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                             <span>EQ Low (320Hz)</span>
+                             <span className="text-amber-400">{sunoEqLow.toFixed(1)} dB</span>
+                         </div>
+                         <input 
+                             type="range" 
+                             min="-12" 
+                             max="12" 
+                             step="0.1" 
+                             value={sunoEqLow}
+                             onChange={(e) => setSunoEqLow(parseFloat(e.target.value))}
+                             className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                         />
+                     </div>
+                     <div className="flex flex-col gap-1">
+                         <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                             <span>EQ Mid (1kHz)</span>
+                             <span className="text-amber-400">{sunoEqMid.toFixed(1)} dB</span>
+                         </div>
+                         <input 
+                             type="range" 
+                             min="-12" 
+                             max="12" 
+                             step="0.1" 
+                             value={sunoEqMid}
+                             onChange={(e) => setSunoEqMid(parseFloat(e.target.value))}
+                             className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                         />
+                     </div>
+                     <div className="flex flex-col gap-1">
+                         <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
+                             <span>EQ High (3.2kHz)</span>
+                             <span className="text-amber-400">{sunoEqHigh.toFixed(1)} dB</span>
+                         </div>
+                         <input 
+                             type="range" 
+                             min="-12" 
+                             max="12" 
+                             step="0.1" 
+                             value={sunoEqHigh}
+                             onChange={(e) => setSunoEqHigh(parseFloat(e.target.value))}
+                             className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                         />
+                     </div>
+                 </div>
+                 
+                 <div className="grid grid-cols-2 gap-4 mt-2">
+                    <div className="bg-black/20 border border-white/5 p-3 rounded-xl flex flex-col gap-2">
+                       <div className="flex items-center justify-between">
+                             <span className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1"><Clock className="w-3 h-3" /> Tempo</span>
+                             <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input type="checkbox" checked={preservePitch} onChange={(e) => setPreservePitch(e.target.checked)} className="accent-amber-400" />
+                                <span className="text-[9px] font-bold text-white/50 uppercase flex items-center gap-1">Pitch Sync</span>
+                             </label>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-mono text-white/70 w-8">{speed.toFixed(2)}x</span>
+                            <input
+                                type="range" min="0.5" max="2" step="0.05" value={speed}
+                                onChange={(e) => setSpeed(parseFloat(e.target.value))}
+                                className="flex-1 h-1.5 rounded-lg appearance-none bg-white/10 accent-amber-400"
+                            />
+                          </div>
+                    </div>
+                    <div className="bg-black/20 border border-white/5 p-3 rounded-xl flex flex-col gap-2">
+                       <div className="flex justify-between">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-purple-400 flex items-center gap-1"><Wind className="w-3 h-3" /> Reverb</span>
+                          <span className="text-[10px] font-mono text-white/70">{Math.round(reverb * 100)}%</span>
+                       </div>
+                       <input
+                           type="range" min="0" max="1" step="0.01" value={reverb}
+                           onChange={(e) => setReverb(parseFloat(e.target.value))}
+                           className="w-full h-1.5 rounded-lg appearance-none bg-white/10 accent-purple-400"
+                        />
+                     </div>
+                 </div>
            </div>
               )}
            </div>
@@ -3409,221 +3486,67 @@ export default function StemStudio({
               </div>
               
               {expandedSections.masterEq && (
-                 <div className="flex flex-col gap-4 py-1.5">
-                    {/* Row 1: Deep Sub, Sub, Low Bass, Bass, Upper Bass */}
-                    <div className="grid grid-cols-5 gap-2.5 place-items-center">
-                       {masterEq.slice(0, 5).map((band, i) => renderEqBand(band, i))}
-                    </div>
-                    
-                    {/* Row 2: Low Mid, Mid, Upper Mid, High Mid, Presence */}
-                    <div className="grid grid-cols-5 gap-2.5 place-items-center">
-                       {masterEq.slice(5, 10).map((band, i) => renderEqBand(band, i + 5))}
-                    </div>
-                    
-                    {/* Row 3: Up Pres., Clarity, Highs, Air, Sparkle */}
-                    <div className="grid grid-cols-5 gap-2.5 place-items-center">
-                       {masterEq.slice(10, 15).map((band, i) => renderEqBand(band, i + 10))}
+                 <div className="flex flex-col gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                       <div className="flex flex-col gap-2">
+                       <h4 className="text-[10px] font-black text-white/40 uppercase tracking-widest text-center border-b border-white/5 pb-1">Lows</h4>
+                       {masterEq.slice(0, 5).map((band, i) => (
+                           <div key={i} className="flex items-center gap-3">
+                              <span className="text-[9px] font-bold text-white/50 w-16 text-right uppercase tracking-wider">{band.name}</span>
+                              <input
+                                  type="range" min="-12" max="12" step="0.1" value={band.g}
+                                  onChange={(e) => {
+                                      const newEq = [...masterEq];
+                                      newEq[i].g = parseFloat(e.target.value);
+                                      setMasterEq(newEq);
+                                  }}
+                                  className="flex-1 h-1.5 rounded-lg appearance-none bg-white/10 accent-blue-400"
+                              />
+                              <span className="text-[9px] font-mono text-white/70 w-8 text-right">{band.g > 0 ? '+' : ''}{band.g.toFixed(1)}</span>
+                           </div>
+                       ))}
+                       </div>
+                       
+                       <div className="flex flex-col gap-2">
+                       <h4 className="text-[10px] font-black text-white/40 uppercase tracking-widest text-center border-b border-white/5 pb-1">Mids</h4>
+                       {masterEq.slice(5, 10).map((band, i) => (
+                           <div key={i + 5} className="flex items-center gap-3">
+                              <span className="text-[9px] font-bold text-white/50 w-16 text-right uppercase tracking-wider">{band.name}</span>
+                              <input
+                                  type="range" min="-12" max="12" step="0.1" value={band.g}
+                                  onChange={(e) => {
+                                      const newEq = [...masterEq];
+                                      newEq[i + 5].g = parseFloat(e.target.value);
+                                      setMasterEq(newEq);
+                                  }}
+                                  className="flex-1 h-1.5 rounded-lg appearance-none bg-white/10 accent-green-400"
+                              />
+                              <span className="text-[9px] font-mono text-white/70 w-8 text-right">{band.g > 0 ? '+' : ''}{band.g.toFixed(1)}</span>
+                           </div>
+                       ))}
+                       </div>
+
+                       <div className="flex flex-col gap-2">
+                       <h4 className="text-[10px] font-black text-white/40 uppercase tracking-widest text-center border-b border-white/5 pb-1">Highs</h4>
+                       {masterEq.slice(10, 15).map((band, i) => (
+                           <div key={i + 10} className="flex items-center gap-3">
+                              <span className="text-[9px] font-bold text-white/50 w-16 text-right uppercase tracking-wider">{band.name}</span>
+                              <input
+                                  type="range" min="-12" max="12" step="0.1" value={band.g}
+                                  onChange={(e) => {
+                                      const newEq = [...masterEq];
+                                      newEq[i + 10].g = parseFloat(e.target.value);
+                                      setMasterEq(newEq);
+                                  }}
+                                  className="flex-1 h-1.5 rounded-lg appearance-none bg-white/10 accent-purple-400"
+                              />
+                              <span className="text-[9px] font-mono text-white/70 w-8 text-right">{band.g > 0 ? '+' : ''}{band.g.toFixed(1)}</span>
+                           </div>
+                       ))}
+                       </div>
                     </div>
                  </div>
               )}
-           </div>
-
-           {/* AMBIENT OVERLAY AUDIO */}
-           <div className="flex flex-col gap-3.5 border-t border-white/5 pt-5 pb-3">
-              <div className="flex justify-between items-center border-b border-white/5 pb-1.5">
-                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 uppercase flex items-center gap-1">
-                    <CloudRain className="w-3.5 h-3.5 text-blue-400" /> Ambient Overlay Audio
-                 </h3>
-                 <span className="text-[8px] bg-blue-400/10 border border-blue-400/20 text-blue-400 px-1.5 py-0.5 rounded font-black font-mono">NEW</span>
-              </div>
-              
-              <div className="bg-[#0A0A0C]/40 border border-white/5 p-4 rounded-2xl flex flex-col gap-3">
-                 <p className="text-[10px] text-white/50 leading-relaxed font-sans mb-1">
-                    Add background sounds (noise, ocean, rain, forest, thunderstorm, etc.) to mix with your stems. Find free sound effects on <a href="https://pixabay.com/sound-effects/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline inline-flex items-center gap-0.5">Pixabay <Link className="w-2.5 h-2.5" /></a>.
-                 </p>
-                 
-                 <div className="flex flex-col gap-2">
-                    {ambientOverlayUrl ? (
-                       <div className="flex flex-col gap-3">
-                          <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/10">
-                             <div className="flex items-center gap-2 overflow-hidden">
-                                <FileAudio className="w-4 h-4 text-blue-400 shrink-0" />
-                                <span className="text-[10px] text-white truncate font-medium">Ambient Audio Loaded</span>
-                             </div>
-                             <div className="flex items-center gap-2 shrink-0">
-                                <button
-                                   onClick={() => setIsAmbientLoop(!isAmbientLoop)}
-                                   className={`p-1.5 rounded-md transition-colors ${isAmbientLoop ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-white/40 hover:text-white/80'}`}
-                                   title="Toggle Loop"
-                                >
-                                   <Repeat className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                   onClick={() => {
-                                      setAmbientOverlayUrl("");
-                                      setShowAmbientInput(false);
-                                   }}
-                                   className="p-1.5 rounded-md bg-white/5 text-red-400 hover:bg-red-500/20 transition-colors"
-                                   title="Remove Audio"
-                                >
-                                   <X className="w-3.5 h-3.5" />
-                                </button>
-                             </div>
-                          </div>
-                          
-                          <div className="flex items-center gap-3">
-                             <Volume2 className="w-4 h-4 text-white/40 shrink-0" />
-                             <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                                value={ambientVolume}
-                                onChange={(e) => setAmbientVolume(parseFloat(e.target.value))}
-                                className="flex-1 accent-blue-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
-                             />
-                             <span className="text-[10px] font-mono text-white/60 w-8 text-right">{Math.round(ambientVolume * 100)}%</span>
-                          </div>
-                          
-                          <audio
-                             ref={ambientAudioRef}
-                             src={ambientOverlayUrl}
-                             loop={isAmbientLoop}
-                             className="hidden"
-                          />
-                       </div>
-                    ) : (
-                       <div className="flex flex-col gap-3">
-                          <div className="grid grid-cols-4 gap-2">
-                             {[
-                                { name: "Noise", icon: Activity, url: "https://cdn.freesound.org/previews/8/8132_18300-lq.mp3" },
-                                { name: "Ocean", icon: Waves, url: "https://cdn.freesound.org/previews/262/262593_43-lq.mp3" },
-                                { name: "Forest", icon: TreePine, url: "https://cdn.freesound.org/previews/802/802064_14408616-lq.mp3" },
-                                { name: "Storm", icon: CloudLightning, url: "https://cdn.freesound.org/previews/84/84896_988961-lq.mp3" },
-                             ].map((preset, i) => (
-                                <button
-                                   key={i}
-                                   onClick={() => setAmbientOverlayUrl(preset.url)}
-                                   className="bg-white/5 hover:bg-blue-500/20 border border-white/10 hover:border-blue-500/50 rounded-xl py-3 flex flex-col items-center justify-center gap-1.5 transition-all group"
-                                >
-                                   <preset.icon className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
-                                   <span className="text-[9px] font-bold text-white/50 group-hover:text-blue-300 transition-colors">{preset.name}</span>
-                                </button>
-                             ))}
-                          </div>
-                          <div className="flex items-center gap-2 mt-2">
-                             <button
-                                onClick={() => setShowPixabaySearch(!showPixabaySearch)}
-                                className={`flex-1 border rounded-xl p-3 flex items-center justify-center gap-2 transition-all group ${showPixabaySearch ? 'bg-blue-500/10 border-blue-500/30' : 'bg-[#00ab6b]/10 hover:bg-[#00ab6b]/20 border-[#00ab6b]/30'}`}
-                             >
-                                <Search className={`w-4 h-4 transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`} />
-                                <span className={`text-[10px] font-bold transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`}>SEARCH PIXABAY</span>
-                             </button>
-                             <button
-                                onClick={() => document.getElementById('ambient-file-upload')?.click()}
-                                className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 flex items-center justify-center gap-2 transition-all group"
-                             >
-                                <UploadCloud className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
-                                <span className="text-[10px] font-bold text-white/70 group-hover:text-white transition-colors">LOCAL FILE</span>
-                             </button>
-                             <input
-                                type="file"
-                                id="ambient-file-upload"
-                                accept="audio/*"
-                                className="hidden"
-                                onChange={handleAmbientFileUpload}
-                             />
-                             <button
-                                onClick={() => setShowAmbientInput(!showAmbientInput)}
-                                className={`flex-1 border rounded-xl p-3 flex items-center justify-center gap-2 transition-all group ${showAmbientInput ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 hover:bg-white/10 border-white/10'}`}
-                             >
-                                <Link className={`w-4 h-4 transition-colors ${showAmbientInput ? 'text-blue-400' : 'text-white/40 group-hover:text-blue-400'}`} />
-                                <span className={`text-[10px] font-bold transition-colors ${showAmbientInput ? 'text-blue-400' : 'text-white/70 group-hover:text-white'}`}>AUDIO URL</span>
-                             </button>
-                          </div>
-                          
-                          {showPixabaySearch && (
-                             <div className="flex flex-col gap-2 mt-1 animate-in fade-in slide-in-from-top-2 bg-black/30 border border-white/10 rounded-xl p-3">
-                                <div className="flex items-center gap-2">
-                                   <input
-                                      type="text"
-                                      placeholder="Search Pixabay for 'rain', 'forest', 'city'..."
-                                      value={pixabayQuery}
-                                      onChange={(e) => setPixabayQuery(e.target.value)}
-                                      onKeyDown={(e) => e.key === 'Enter' && handlePixabaySearch()}
-                                      className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-[#00ab6b]/50"
-                                   />
-                                   <button
-                                      onClick={handlePixabaySearch}
-                                      disabled={isPixabaySearching || !pixabayQuery}
-                                      className="bg-[#00ab6b] hover:bg-[#008f5a] disabled:opacity-50 disabled:hover:bg-[#00ab6b] text-white font-bold text-[10px] px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
-                                   >
-                                      {isPixabaySearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
-                                      SEARCH
-                                   </button>
-                                </div>
-                                {pixabayResults.length > 0 && (
-                                   <div className="flex flex-col gap-1.5 max-h-[150px] overflow-y-auto custom-scrollbar mt-2">
-                                      {pixabayResults.map((result, i) => (
-                                         <div
-                                            key={i}
-                                            className="flex items-center justify-between bg-white/5 p-2 rounded-lg text-left transition-colors border border-transparent hover:border-white/10 group"
-                                         >
-                                            <div className="flex items-center gap-2 flex-1 min-w-0">
-                                               <button
-                                                  onClick={(e) => togglePreview(result.url, e)}
-                                                  className="p-1.5 rounded-full bg-black/40 text-white/50 hover:text-[#00ab6b] hover:bg-black/60 transition-colors shrink-0"
-                                                  title={previewingUrl === result.url ? "Stop Preview" : "Play Preview"}
-                                               >
-                                                  {previewingUrl === result.url ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                                               </button>
-                                               <span className="text-[10px] text-white/70 group-hover:text-white truncate font-medium">{result.name}</span>
-                                            </div>
-                                            <button
-                                               onClick={() => {
-                                                  setAmbientOverlayUrl(result.url);
-                                                  if (previewingUrl) {
-                                                     previewAudioRef.current?.pause();
-                                                     setPreviewingUrl(null);
-                                                  }
-                                               }}
-                                               className="text-[9px] font-bold text-white/50 hover:text-black bg-white/10 hover:bg-[#00ab6b] px-2 py-1 rounded transition-colors shrink-0 ml-2"
-                                            >
-                                               LOAD
-                                            </button>
-                                         </div>
-                                      ))}
-                                   </div>
-                                )}
-                             </div>
-                          )}
-
-                          {showAmbientInput && (
-                             <div className="flex items-center gap-2 mt-1 animate-in fade-in slide-in-from-top-2">
-                                <input
-                                   type="url"
-                                   placeholder="https://example.com/rain.mp3"
-                                   value={ambientInputUrl}
-                                   onChange={(e) => setAmbientInputUrl(e.target.value)}
-                                   className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-blue-500/50"
-                                />
-                                <button
-                                   onClick={() => {
-                                      if (ambientInputUrl) {
-                                         setAmbientOverlayUrl(ambientInputUrl);
-                                         setShowAmbientInput(false);
-                                      }
-                                   }}
-                                   className="bg-blue-500 hover:bg-blue-400 text-white font-bold text-[10px] px-3 py-2 rounded-lg transition-colors"
-                                >
-                                   LOAD
-                                </button>
-                             </div>
-                          )}
-                       </div>
-                    )}
-                 </div>
-              </div>
            </div>
 
 {/* CUSTOM SERVER CONFIG / HF CLONE INSTRUCTIONS */}
