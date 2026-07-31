@@ -6543,6 +6543,11 @@ onClearStems={() => {
                    ? currentSong?.title || "Untitled Track" 
                    : null
                }
+               webgpuQuality={webgpuQuality}
+               onWebgpuQualityChange={(val) => {
+                 setWebgpuQuality(val);
+                 localStorage.setItem("stemmix_webgpu_quality", val);
+               }}
                onExtractNewSong={() => handleSeparateStems()}
                onUpdateAudioUrl={(newUrl) => {
                  setAudioUrl(newUrl);

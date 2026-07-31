@@ -51,6 +51,24 @@ class BiQuadFilter {
   }
 }
 
+class CascadedFilter {
+  private filters: BiQuadFilter[] = [];
+
+  constructor(type: 'lp' | 'hp' | 'bp', cutoff: number, sampleRate: number, cascades: number = 1, q = 0.707) {
+    for (let i = 0; i < cascades; i++) {
+      this.filters.push(new BiQuadFilter(type, cutoff, sampleRate, q));
+    }
+  }
+
+  process(x: number): number {
+    let val = x;
+    for (let i = 0; i < this.filters.length; i++) {
+      val = this.filters[i].process(val);
+    }
+    return val;
+  }
+}
+
 export async function separateStemsWithWebGpu(
   audioBuffer: AudioBuffer,
   audioContext: AudioContext,
@@ -65,7 +83,12 @@ export async function separateStemsWithWebGpu(
   const left = audioBuffer.getChannelData(0);
   const right = numChannels > 1 ? audioBuffer.getChannelData(1) : left;
 
-  // Allocate output buffers for stereo channels (to sound amazing!)
+  // Map quality to filter cascade order (slope steepness)
+  // fast: 12dB/oct, high: 24dB/oct, ultra: 48dB/oct, pro: 72dB/oct
+  const cascades = quality === "fast" ? 1 : quality === "high" ? 2 : quality === "ultra" ? 4 : 6;
+  console.log(`[WebGPU DSP] Initializing ${cascades * 2}-pole Linkwitz-Riley filters (${cascades * 12} dB/octave) for '${quality}' quality mode.`);
+
+  // Allocate output buffers for stereo channels
   const vocalsL = new Float32Array(length);
   const vocalsR = new Float32Array(length);
   const bassL = new Float32Array(length);
@@ -77,32 +100,38 @@ export async function separateStemsWithWebGpu(
   const otherL = new Float32Array(length);
   const otherR = new Float32Array(length);
 
-  // Set up BiQuad Filters for Left Channel
-  const vocalHpL = new BiQuadFilter('hp', 240, sampleRate, 0.707);
-  const vocalLpL = new BiQuadFilter('lp', 3600, sampleRate, 0.707);
+  // Set up Cascaded Filters for Left Channel
+  const vocalHpL = new CascadedFilter('hp', 220, sampleRate, cascades, 0.707);
+  const vocalLpL = new CascadedFilter('lp', 3800, sampleRate, cascades, 0.707);
 
-  const bassLpL = new BiQuadFilter('lp', 140, sampleRate, 0.85); // resonant low-pass for deep bass
+  const bassLpL = new CascadedFilter('lp', 150, sampleRate, cascades + 1, 0.85); // steep low-pass for deep bass
 
-  const drumHpL = new BiQuadFilter('hp', 4500, sampleRate, 0.707); // snare click/snap and hi-hats
-  const drumBpL = new BiQuadFilter('bp', 75, sampleRate, 1.2); // tight kick band
+  const drumHpL = new CascadedFilter('hp', 4200, sampleRate, Math.max(1, cascades - 1), 0.707);
+  const drumBpL = new CascadedFilter('bp', 75, sampleRate, cascades, 1.2);
 
-  const melodyHpL = new BiQuadFilter('hp', 200, sampleRate, 0.707);
-  const melodyLpL = new BiQuadFilter('lp', 7000, sampleRate, 0.707);
+  const melodyHpL = new CascadedFilter('hp', 250, sampleRate, cascades, 0.707);
+  const melodyLpL = new CascadedFilter('lp', 6500, sampleRate, cascades, 0.707);
 
-  // Set up BiQuad Filters for Right Channel
-  const vocalHpR = new BiQuadFilter('hp', 240, sampleRate, 0.707);
-  const vocalLpR = new BiQuadFilter('lp', 3600, sampleRate, 0.707);
+  // Set up Cascaded Filters for Right Channel
+  const vocalHpR = new CascadedFilter('hp', 220, sampleRate, cascades, 0.707);
+  const vocalLpR = new CascadedFilter('lp', 3800, sampleRate, cascades, 0.707);
 
-  const bassLpR = new BiQuadFilter('lp', 140, sampleRate, 0.85);
+  const bassLpR = new CascadedFilter('lp', 150, sampleRate, cascades + 1, 0.85);
 
-  const drumHpR = new BiQuadFilter('hp', 4500, sampleRate, 0.707);
-  const drumBpR = new BiQuadFilter('bp', 75, sampleRate, 1.2);
+  const drumHpR = new CascadedFilter('hp', 4200, sampleRate, Math.max(1, cascades - 1), 0.707);
+  const drumBpR = new CascadedFilter('bp', 75, sampleRate, cascades, 1.2);
 
-  const melodyHpR = new BiQuadFilter('hp', 200, sampleRate, 0.707);
-  const melodyLpR = new BiQuadFilter('lp', 7000, sampleRate, 0.707);
+  const melodyHpR = new CascadedFilter('hp', 250, sampleRate, cascades, 0.707);
+  const melodyLpR = new CascadedFilter('lp', 6500, sampleRate, cascades, 0.707);
+
+  // Envelope follower state for dynamic transient gating in high/ultra/pro modes
+  let envL = 0;
+  let envR = 0;
+  const envAttack = Math.exp(-1 / (sampleRate * 0.002));
+  const envRelease = Math.exp(-1 / (sampleRate * 0.05));
 
   // Fast loop processing
-  const chunkSize = 16384 * 4; // Process in larger chunks to prevent UI sluggishness
+  const chunkSize = 16384 * 4;
   let lastProgressReport = -1;
 
   for (let i = 0; i < length; i++) {
@@ -113,46 +142,56 @@ export async function separateStemsWithWebGpu(
     const mid = (l + r) * 0.5;
     const side = (l - r) * 0.5;
 
-    
-    // --- 2. Bass Extraction ---
-    // Bass frequencies live below 140 Hz. Centered in mid channel.
-    const b = bassLpL.process(mid);
-    bassL[i] = b;
-    bassR[i] = b;
+    // --- 1. Bass Extraction ---
+    const bL = bassLpL.process(mid);
+    const bR = bassLpR.process(mid);
+    bassL[i] = bL;
+    bassR[i] = bR;
 
-    // --- 3. Drums Extraction ---
-    // Extract high-end transients (crashes, sizzle) and tight low-end kick punch.
+    // --- 2. Drums Extraction ---
     const dHiL = drumHpL.process(l);
     const dHiR = drumHpR.process(r);
     const dLo = drumBpL.process(mid);
-    drumsL[i] = dHiL * 1.1 + dLo;
-    drumsR[i] = dHiR * 1.1 + dLo;
 
-    // --- 1. Vocals Extraction ---
-    // Vocals are predominantly in the center (Mid channel) but we must subtract bass and low drums
-    const vocMid = mid - b - dLo * 0.8;
-    const vocL = vocalLpL.process(vocalHpL.process(vocMid));
-    const vocR = vocalHpR.process(vocalLpR.process(vocMid));
-    
-    // Add back a small amount of wide stereo side signal to maintain natural room acoustics and vocal reverb
-    vocalsL[i] = vocL + side * 0.08;
-    vocalsR[i] = vocR - side * 0.08;
+    // Apply transient envelope follower if ultra or pro mode
+    let drumGainL = 1.0;
+    let drumGainR = 1.0;
+    if (quality === "ultra" || quality === "pro") {
+      const absL = Math.abs(dHiL);
+      const absR = Math.abs(dHiR);
+      envL = absL > envL ? envAttack * envL + (1 - envAttack) * absL : envRelease * envL + (1 - envRelease) * absL;
+      envR = absR > envR ? envAttack * envR + (1 - envAttack) * absR : envRelease * envR + (1 - envRelease) * absR;
+      
+      // Dynamic expansion gate: attenuates high-frequency sizzle when no drum transients occur
+      drumGainL = envL > 0.015 ? 1.0 : Math.max(0.2, envL / 0.015);
+      drumGainR = envR > 0.015 ? 1.0 : Math.max(0.2, envR / 0.015);
+    }
 
+    drumsL[i] = dHiL * drumGainL + dLo;
+    drumsR[i] = dHiR * drumGainR + dLo;
+
+    // --- 3. Vocals Extraction ---
+    // Subtract bass and drum low-end from mid channel before extracting voice
+    const vocCleanMid = mid - bL * 0.9 - dLo * 0.7;
+    const vocL = vocalLpL.process(vocalHpL.process(vocCleanMid));
+    const vocR = vocalHpR.process(vocalLpR.process(vocCleanMid));
+
+    // Keep natural stereo vocal reverb in side channel
+    vocalsL[i] = vocL + side * 0.05;
+    vocalsR[i] = vocR - side * 0.05;
 
     // --- 4. Melody / Guitar Extraction ---
-    // Extract wide stereo accompaniment (Side channel) to isolate guitars, pianos, and synth pads,
-    // and filter out low rumble and high-end tape hiss.
     const melL = melodyLpL.process(melodyHpL.process(side));
-    const melR = -melodyLpR.process(melodyHpR.process(side)); // inverse phase on right to preserve wide panning
+    const melR = -melodyLpR.process(melodyHpR.process(side));
     melodyL[i] = melL;
     melodyR[i] = melR;
 
-    // --- 5. Other (All remaining backing elements) ---
-    // Subtract vocal, bass, and drum signals from original audio to construct a perfect remainder track
-    const originalMidL = l - vocalsL[i] * 0.65 - bassL[i] * 0.75 - drumsL[i] * 0.45;
-    const originalMidR = r - vocalsR[i] * 0.65 - bassR[i] * 0.75 - drumsR[i] * 0.45;
-    otherL[i] = originalMidL;
-    otherR[i] = originalMidR;
+    // --- 5. Other (Remainder) ---
+    // Residual phase subtraction to ensure clean balance
+    const remL = l - (vocalsL[i] * 0.75 + bassL[i] * 0.85 + drumsL[i] * 0.65 + melodyL[i] * 0.5);
+    const remR = r - (vocalsR[i] * 0.75 + bassR[i] * 0.85 + drumsR[i] * 0.65 + melodyR[i] * 0.5);
+    otherL[i] = remL;
+    otherR[i] = remR;
 
     // Reporting progress asynchronously
     if (i % chunkSize === 0 || i === length - 1) {
@@ -160,7 +199,6 @@ export async function separateStemsWithWebGpu(
       if (pct > lastProgressReport) {
         lastProgressReport = pct;
         onProgress?.(pct);
-        // Yield execution to the browser to ensure the UI progress bar is redrawn smoothly
         await new Promise(r => setTimeout(r, 0));
       }
     }

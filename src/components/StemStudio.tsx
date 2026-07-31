@@ -104,6 +104,8 @@ interface StemStudioProps {
   onExtractNewSong?: () => void;
   onUpdateAudioUrl?: (newUrl: string) => void;
   onClearStems?: () => void;
+  webgpuQuality?: 'fast' | 'high' | 'ultra' | 'pro';
+  onWebgpuQualityChange?: (quality: 'fast' | 'high' | 'ultra' | 'pro') => void;
 }
 
 function textToLrc(rawText: string, totalDuration: number): string {
@@ -290,7 +292,9 @@ export default function StemStudio({
   newSongTitle,
   onExtractNewSong,
   onUpdateAudioUrl,
-  onClearStems
+  onClearStems,
+  webgpuQuality = "ultra",
+  onWebgpuQualityChange
 }: StemStudioProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -301,6 +305,21 @@ export default function StemStudio({
   const [downloadLink, setDownloadLink] = useState<{ url: string; filename: string } | null>(null);
   const [isTrimmingMixdown, setIsTrimmingMixdown] = useState(false);
   const downloadLinkRef = useRef<HTMLDivElement>(null);
+
+  // Stop all playing audio elements whenever stem separation starts loading
+  useEffect(() => {
+    if (stemmixStatus === "loading") {
+      setIsPlaying(false);
+      Object.values(audioElementsRef.current).forEach((a: HTMLAudioElement) => {
+        try { a.pause(); } catch {}
+      });
+      if (typeof document !== 'undefined') {
+        document.querySelectorAll('audio').forEach((a: HTMLAudioElement) => {
+          try { a.pause(); } catch {}
+        });
+      }
+    }
+  }, [stemmixStatus]);
 
   // To avoid memory leaks, revoke old URL when setting a new one or unmounting
   useEffect(() => {
@@ -2418,8 +2437,8 @@ export default function StemStudio({
        <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-400/[0.03] rounded-full blur-[120px] pointer-events-none z-0" />
        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-indigo-500/[0.03] rounded-full blur-[150px] pointer-events-none z-0" />
        {/* HEADER BAR */}
-       <div className="flex flex-wrap items-center justify-between p-2 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-50 gap-2 sm:gap-4 overflow-visible">
-          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+       <div className="flex flex-wrap items-center justify-between p-2 sm:p-3.5 border-b border-white/5 bg-black/30 backdrop-blur-md shrink-0 z-50 gap-2 overflow-visible">
+          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 flex-wrap">
              {!isEmbedded ? (
                 <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-wider sm:tracking-widest uppercase">
                    <ArrowLeft className="w-3.5 h-3.5" /> Back
@@ -2435,8 +2454,19 @@ export default function StemStudio({
 
              {onExtractNewSong && (
                 <button
-                    onClick={onExtractNewSong}
-                    className="ml-1 px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-wider sm:tracking-widest uppercase rounded-full shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0"
+                    onClick={() => {
+                        setIsPlaying(false);
+                        Object.values(audioElementsRef.current).forEach((a: HTMLAudioElement) => {
+                           try { a.pause(); } catch {}
+                        });
+                        if (typeof document !== 'undefined') {
+                           document.querySelectorAll('audio').forEach((a: HTMLAudioElement) => {
+                              try { a.pause(); } catch {}
+                           });
+                        }
+                        onExtractNewSong();
+                    }}
+                    className="ml-0.5 px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-wider sm:tracking-widest uppercase rounded-full shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0"
                     title={`Extract stems for ${newSongTitle || 'current song'}`}
                 >
                     <Sparkles className="w-3 h-3" />
@@ -2445,55 +2475,69 @@ export default function StemStudio({
              )}
           </div>
 
-          <div className="flex items-center gap-2 shrink-0 flex-wrap w-full sm:w-auto mt-2 sm:mt-0 justify-between sm:justify-end">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
+             {/* WebGPU Quality Dropdown Header Selector */}
+             {separationMode === "webgpu" && (
+                <div className="flex items-center gap-1 bg-[#12131C] px-2 py-1 rounded-full border border-amber-400/30 shadow-md shrink-0">
+                   <Settings2 className="w-3 h-3 text-amber-400 shrink-0" />
+                   <span className="text-[9px] font-black uppercase text-amber-400/80 hidden lg:inline">Quality:</span>
+                   <select
+                      value={webgpuQuality || "ultra"}
+                      onChange={(e) => {
+                         const val = e.target.value as 'fast' | 'high' | 'ultra' | 'pro';
+                         onWebgpuQualityChange?.(val);
+                      }}
+                      className="bg-transparent text-[9px] font-black uppercase tracking-wider text-amber-400 focus:outline-none cursor-pointer"
+                      title="WebGPU Separation Quality & Filter Slope"
+                   >
+                      <option value="fast" className="bg-[#12131A] text-white">Fast (255 taps)</option>
+                      <option value="high" className="bg-[#12131A] text-white">High (1023 taps)</option>
+                      <option value="ultra" className="bg-[#12131A] text-white">Ultra (4095 taps)</option>
+                      <option value="pro" className="bg-[#12131A] text-white">Max Pro (8191 taps)</option>
+                   </select>
+                </div>
+             )}
+
              {/* Engine Toggle Selection */}
              <div className="flex items-center gap-0.5 bg-white/[0.03] p-0.5 rounded-full border border-white/5 shrink-0">
                 <button
                    onClick={() => onSetSeparationMode?.("webgpu")}
-                   className={`px-2.5 py-1 flex items-center justify-center gap-1.5 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
+                   className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
                      separationMode === "webgpu"
                        ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
                        : "text-white/40 hover:text-white/70"
                    }`}
                    title="Use high-performance client-side WebGPU DSP isolation"
                 >
-                   <Zap className="w-3.5 h-3.5 shrink-0" />
-                   <span className="hidden sm:inline">WebGPU</span>
+                   <Zap className="w-3 h-3 shrink-0" />
+                   <span>WebGPU</span>
                 </button>
                 <button
                    onClick={() => onSetSeparationMode?.("ai")}
-                   className={`px-2.5 py-1 flex items-center justify-center gap-1.5 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
+                   className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
                      separationMode === "ai"
                        ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
                        : "text-white/40 hover:text-white/70"
                    }`}
                    title="Use server-side AI Cloud"
                 >
-                   <Cloud className="w-3.5 h-3.5 shrink-0" />
-                   <span className="hidden sm:inline">AI Cloud</span>
+                   <Cloud className="w-3 h-3 shrink-0" />
+                   <span>AI Cloud</span>
                 </button>
                 <button
                    onClick={() => onSetSeparationMode?.("onnx")}
-                   className={`px-2.5 py-1 flex items-center justify-center gap-1.5 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
+                   className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
                      separationMode === "onnx"
                        ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
                        : "text-white/40 hover:text-white/70"
                    }`}
                    title="Use client-side ONNX neural network"
                 >
-                   <Brain className="w-3.5 h-3.5 shrink-0" />
-                   <span className="hidden sm:inline">ONNX ML</span>
+                   <Brain className="w-3 h-3 shrink-0" />
+                   <span>ONNX</span>
                 </button>
              </div>
 
-             {isDspFallback && (
-                <div className="text-[9px] uppercase tracking-wider font-extrabold text-amber-400 bg-amber-400/5 px-2.5 py-0.5 rounded-full border border-amber-400/20 flex items-center gap-1 animate-pulse">
-                   <Radio className="w-2.5 h-2.5 text-amber-400" /> <span className="hidden sm:inline">Acoustic </span>DSP<span className="hidden sm:inline"> Local</span>
-                </div>
-             )}
-             <div className="text-[9px] uppercase tracking-wider font-extrabold text-emerald-400 bg-emerald-400/5 px-2 py-0.5 rounded-full border border-emerald-400/10 flex items-center gap-1 hidden md:flex">
-                <Activity className="w-2.5 h-2.5 animate-pulse" /> WebGPU Active
-             </div>
              <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
                 {/* MP3 Export Button */}
                 <button
@@ -3172,7 +3216,6 @@ export default function StemStudio({
                                  <span className="text-[10px] sm:text-xs font-black text-white uppercase tracking-wider sm:tracking-widest flex items-center gap-2">
                                     {isPlaying ? <><Play className="w-3 h-3 fill-current" /> PLAYING</> : <><Pause className="w-3 h-3 fill-current" /> PAUSED</>}
                                  </span>
-                                 <span className="text-[8px] sm:text-[9px] text-white/50 font-mono uppercase tracking-wider sm:tracking-widest mt-1">EQ Ready</span>
                               </div>
                            </div>
                         )}
