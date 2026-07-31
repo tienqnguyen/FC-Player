@@ -76,7 +76,7 @@ function audioBufferToMp3(buffer: AudioBuffer): Blob {
   }
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
-import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search } from 'lucide-react';
+import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search, Scissors } from 'lucide-react';
 import AudioTrimmer from "./AudioTrimmer";
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
@@ -102,6 +102,7 @@ interface StemStudioProps {
   newSongTitle?: string | null;
   onExtractNewSong?: () => void;
   onUpdateAudioUrl?: (newUrl: string) => void;
+  onClearStems?: () => void;
 }
 
 function textToLrc(rawText: string, totalDuration: number): string {
@@ -247,19 +248,23 @@ function StemWaveform({ url, color, audioElement }: { url: string, color: string
 
     useEffect(() => {
         if (!containerRef.current || !url) return;
-        wsRef.current = WaveSurfer.create({
+        const ws = WaveSurfer.create({
             container: containerRef.current,
             waveColor: color,
             progressColor: 'rgba(255,255,255,0.5)',
-            url,
-            media: audioElement,
+            media: audioElement || undefined,
             height: 'auto',
             barWidth: 2,
             barGap: 2,
             barRadius: 2,
             interact: false
         });
-        return () => wsRef.current?.destroy();
+        wsRef.current = ws;
+        ws.load(url).catch((e: any) => { if (e && e.name !== 'AbortError' && !e.message?.includes('abort')) console.error(e); });
+        
+        return () => {
+            ws.destroy();
+        };
     }, [url, color, audioElement]);
 
     return <div ref={containerRef} className="w-full h-full opacity-60 hover:opacity-100 transition-opacity absolute inset-0 mix-blend-screen" />;
@@ -283,7 +288,8 @@ export default function StemStudio({
   onStemLoadError,
   newSongTitle,
   onExtractNewSong,
-  onUpdateAudioUrl
+  onUpdateAudioUrl,
+  onClearStems
 }: StemStudioProps) {
   const [isPlaying, setIsPlaying] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
@@ -292,6 +298,8 @@ export default function StemStudio({
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [downloadLink, setDownloadLink] = useState<{ url: string; filename: string } | null>(null);
+  const [isTrimmingMixdown, setIsTrimmingMixdown] = useState(false);
+  const downloadLinkRef = useRef<HTMLDivElement>(null);
 
   // To avoid memory leaks, revoke old URL when setting a new one or unmounting
   useEffect(() => {
@@ -302,6 +310,15 @@ export default function StemStudio({
         } catch {}
       }
     };
+  }, [downloadLink]);
+
+  // Scroll Mixdown Ready card into view when generated
+  useEffect(() => {
+    if (downloadLink && downloadLinkRef.current) {
+      setTimeout(() => {
+        downloadLinkRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 100);
+    }
   }, [downloadLink]);
 
   const [isHD, setIsHD] = useState(() => {
@@ -344,7 +361,8 @@ export default function StemStudio({
     masterFx: true,
     masterEq: true,
     aiCloud: true,
-    lyric: false
+    lyric: false,
+    overlay: true
   });
   const toggleSection = (section) => {
     setExpandedSections(prev => ({ ...prev, [section]: !prev[section] }));
@@ -512,11 +530,11 @@ export default function StemStudio({
   const [trimEnd, setTrimEnd] = useState<number>(0);
   const [isSunoBypass, setIsSunoBypass] = useState<boolean>(() => localStorage.getItem("suno_bypass") === "true");
   const [sunoSpeedFactor, setSunoSpeedFactor] = useState<number>(() => parseFloat(localStorage.getItem("suno_speed") || "1.045"));
-  const [sunoNoiseLevel, setSunoNoiseLevel] = useState<number>(() => parseFloat(localStorage.getItem("suno_noise") || "0.002"));
-  const [sunoPitchShift, setSunoPitchShift] = useState<number>(() => parseFloat(localStorage.getItem("suno_pitch") || "0"));
-  const [sunoEqLow, setSunoEqLow] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_low") || "0"));
-  const [sunoEqMid, setSunoEqMid] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_mid") || "0"));
-  const [sunoEqHigh, setSunoEqHigh] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_high") || "0"));
+  const [sunoNoiseLevel, setSunoNoiseLevel] = useState<number>(() => parseFloat(localStorage.getItem("suno_noise") || "0"));
+  const [sunoPitchShift, setSunoPitchShift] = useState<number>(() => parseFloat(localStorage.getItem("suno_pitch") || "6.5"));
+  const [sunoEqLow, setSunoEqLow] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_low") || "6.5"));
+  const [sunoEqMid, setSunoEqMid] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_mid") || "6.5"));
+  const [sunoEqHigh, setSunoEqHigh] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_high") || "6.5"));
   const [showSunoSettings, setShowSunoSettings] = useState<boolean>(false);
 
   useEffect(() => {
@@ -590,7 +608,7 @@ export default function StemStudio({
     { name: "Sparkle", f: 16000, g: 0, type: "highshelf" }
   ]);
   
-  const [activeTab, setActiveTab] = useState<'mixer' | 'eq'>('mixer');
+  const [activeTab, setActiveTab] = useState<'mixer' | 'eq' | 'ambient'>('mixer');
 
   // Ambient Overlay States
   const [ambientOverlayUrl, setAmbientOverlayUrl] = useState<string>("");
@@ -626,12 +644,15 @@ export default function StemStudio({
     }
   };
 
-  const handlePixabaySearch = async () => {
-    if (!pixabayQuery) return;
+  const handlePixabaySearch = async (overrideQuery?: string | any) => {
+    const isOverrideStr = typeof overrideQuery === 'string';
+    const q = isOverrideStr ? overrideQuery : pixabayQuery;
+    if (!q) return;
+    if (isOverrideStr) setPixabayQuery(overrideQuery);
     setIsPixabaySearching(true);
     setPixabayResults([]);
     try {
-      const res = await fetch(`/api/pixabay/search?q=${encodeURIComponent(pixabayQuery)}`);
+      const res = await fetch(`/api/pixabay/search?q=${encodeURIComponent(q)}`);
       const data = await res.json();
       if (data.success && data.data) {
         setPixabayResults(data.data);
@@ -994,7 +1015,7 @@ export default function StemStudio({
       noiseSrc.buffer = noiseBuffer;
       noiseSrc.loop = true;
       const noiseGain = ctx.createGain();
-      noiseGain.gain.value = sunoNoiseLevel;
+      noiseGain.gain.value = 0; // Live preview noise is kept at 0 (noise is only added during mixdown/bypass export rendering)
       masterNoiseGainRef.current = noiseGain;
       noiseSrc.connect(noiseGain);
       noiseGain.connect(ctx.destination);
@@ -1401,9 +1422,9 @@ export default function StemStudio({
         if (masterToneLowRef.current) masterToneLowRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqLow : 0, t, 0.05);
         if (masterToneMidRef.current) masterToneMidRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqMid : 0, t, 0.05);
         if (masterToneHighRef.current) masterToneHighRef.current.gain.setTargetAtTime(isSunoBypass ? sunoEqHigh : 0, t, 0.05);
-        if (masterNoiseGainRef.current) masterNoiseGainRef.current.gain.setTargetAtTime(isSunoBypass ? sunoNoiseLevel : 0, t, 0.05);
+        if (masterNoiseGainRef.current) masterNoiseGainRef.current.gain.setTargetAtTime(0, t, 0.05); // Never play noise in live preview
     }
-  }, [isSunoBypass, sunoEqLow, sunoEqMid, sunoEqHigh, sunoNoiseLevel]);
+  }, [isSunoBypass, sunoEqLow, sunoEqMid, sunoEqHigh, sunoNoiseLevel, isPlaying]);
 
 
   useEffect(() => {
@@ -1427,8 +1448,13 @@ export default function StemStudio({
 
   
 
+  useEffect(() => {
+    setDownloadLink(null);
+  }, [originalAudioUrl]);
+
   const getSafeTitle = () => {
     let title = songTitle || "track";
+    title = title.replace(/đ/g, "d").replace(/Đ/g, "D").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
     title = title.replace(/[^a-zA-Z0-9_\-\s]/g, "").trim();
     if (title.length > 30) {
       title = title.substring(0, 30).trim();
@@ -1623,26 +1649,28 @@ export default function StemStudio({
 
       source.start(0, activeTrimStart, exportDuration);
 
-      const noiseBufferSize = exportSampleRate * 2;
-      const noiseBuffer = offlineCtx.createBuffer(2, noiseBufferSize, exportSampleRate);
-      for (let channel = 0; channel < 2; channel++) {
-         const output = noiseBuffer.getChannelData(channel);
-         let lastOut = 0;
-         for (let i = 0; i < noiseBufferSize; i++) {
-            const white = Math.random() * 2 - 1;
-            output[i] = (lastOut + (0.02 * white)) / 1.02; 
-            lastOut = output[i];
-            output[i] *= 1.5;
-         }
+      if (sunoNoiseLevel > 0.0001) {
+        const noiseBufferSize = exportSampleRate * 2;
+        const noiseBuffer = offlineCtx.createBuffer(2, noiseBufferSize, exportSampleRate);
+        for (let channel = 0; channel < 2; channel++) {
+           const output = noiseBuffer.getChannelData(channel);
+           let lastOut = 0;
+           for (let i = 0; i < noiseBufferSize; i++) {
+              const white = Math.random() * 2 - 1;
+              output[i] = (lastOut + (0.02 * white)) / 1.02; 
+              lastOut = output[i];
+              output[i] *= 1.5;
+           }
+        }
+        const noiseSource = offlineCtx.createBufferSource();
+        noiseSource.buffer = noiseBuffer;
+        noiseSource.loop = true;
+        const noiseGain = offlineCtx.createGain();
+        noiseGain.gain.value = sunoNoiseLevel; 
+        noiseSource.connect(noiseGain);
+        noiseGain.connect(offlineCtx.destination);
+        noiseSource.start(0);
       }
-      const noiseSource = offlineCtx.createBufferSource();
-      noiseSource.buffer = noiseBuffer;
-      noiseSource.loop = true;
-      const noiseGain = offlineCtx.createGain();
-      noiseGain.gain.value = sunoNoiseLevel; 
-      noiseSource.connect(noiseGain);
-      noiseGain.connect(offlineCtx.destination);
-      noiseSource.start(0);
 
       setExportProgress(50);
       const renderedBuffer = await offlineCtx.startRendering();
@@ -1898,7 +1926,7 @@ export default function StemStudio({
          source.start(0, isAmbientLoop ? activeTrimStart % ambientBuffer.duration : activeTrimStart, exportDuration);
       }
 
-      if (isSunoBypass) {
+      if (isSunoBypass && sunoNoiseLevel > 0.0001) {
          const noiseBufferSize = exportSampleRate * 2; // 2 seconds of noise
          const noiseBuffer = offlineCtx.createBuffer(2, noiseBufferSize, exportSampleRate);
          for (let channel = 0; channel < 2; channel++) {
@@ -2358,8 +2386,8 @@ export default function StemStudio({
        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-indigo-500/[0.03] rounded-full blur-[150px] pointer-events-none z-0" />
        
        {/* HEADER BAR */}
-       <div className="flex items-center justify-between p-2 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 overflow-visible gap-2 sm:gap-4">
-          <div className="flex items-center gap-2.5 shrink-0">
+       <div className="flex flex-wrap items-center justify-between p-2 sm:p-4 border-b border-white/5 bg-black/20 backdrop-blur-md shrink-0 z-10 gap-2 sm:gap-4 overflow-visible">
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
              {!isEmbedded ? (
                 <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-wider sm:tracking-widest uppercase">
                    <ArrowLeft className="w-3.5 h-3.5" /> Back
@@ -2373,21 +2401,21 @@ export default function StemStudio({
                 Stem Studio
              </span>
  
-             {newSongTitle && onExtractNewSong && (
+             {onExtractNewSong && (
                 <button
                     onClick={onExtractNewSong}
-                    className="ml-1 px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-wider sm:tracking-widest uppercase rounded-full shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0 animate-pulse"
-                    title={`Extract stems for ${newSongTitle}`}
+                    className="ml-1 px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-wider sm:tracking-widest uppercase rounded-full shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0"
+                    title={`Extract stems for ${newSongTitle || 'current song'}`}
                 >
                     <Sparkles className="w-3 h-3" />
-                    Extract New
+                    Extract {newSongTitle ? "New" : "Current"}
                 </button>
              )}
           </div>
 
-          <div className="flex items-center gap-2 shrink-0 ml-auto">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap w-full sm:w-auto mt-2 sm:mt-0 justify-between sm:justify-end">
              {/* Engine Toggle Selection */}
-             <div className="flex items-center gap-0.5 bg-white/[0.03] p-0.5 rounded-full border border-white/5 mr-1 shrink-0 overflow-x-auto no-scrollbar max-w-full">
+             <div className="flex items-center gap-0.5 bg-white/[0.03] p-0.5 rounded-full border border-white/5 shrink-0">
                 <button
                    onClick={() => onSetSeparationMode?.("webgpu")}
                    className={`px-2.5 py-1 flex items-center justify-center gap-1.5 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
@@ -2485,91 +2513,151 @@ export default function StemStudio({
        </div>
 
        {/* SCROLLABLE CONTENT BODY */}
-       <div className="flex-1 overflow-y-auto overflow-x-hidden p-1.5 sm:p-4 md:p-5 flex flex-col gap-3 sm:gap-5 custom-scrollbar bg-transparent z-10">
+       <div className="flex-1 overflow-y-auto overflow-x-hidden p-1.5 sm:p-4 md:p-5 pb-24 sm:pb-32 flex flex-col gap-3 sm:gap-5 custom-scrollbar bg-transparent z-10">
           
-          {/* Trim Export Settings */}
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-3">
-             <div className="flex flex-col gap-3">
-             </div>
-             <div className="flex items-center justify-between">
-                 <div className="flex items-center gap-2">
-                    <input 
-                       type="checkbox" 
-                       id="trim-export"
-                       checked={isTrimming} 
-                       onChange={(e) => setIsTrimming(e.target.checked)}
-                       className="w-4 h-4 rounded bg-black/50 border-white/20 text-amber-400 focus:ring-amber-400/50"
-                    />
-                    <label htmlFor="trim-export" className="text-xs font-bold text-white uppercase tracking-wider sm:tracking-widest cursor-pointer">Trim Export Audio</label>
-                 </div>
-                 {isTrimming && (
-                    <span className="text-[10px] text-white/50 font-mono">
-                       {formatTime(trimEnd - trimStart)} / {formatTime(duration)}
-                    </span>
-                 )}
-             </div>
-             
-             {isTrimming && originalAudioUrl && (
-                <div className="mt-4 border border-amber-400/20 rounded-2xl overflow-hidden p-2 bg-black/20 relative animate-in fade-in slide-in-from-top-1">
-                   <div className="absolute top-4 right-6 z-10 flex flex-col items-end gap-0.5">
-                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest bg-black/50 px-2 py-0.5 rounded-md backdrop-blur-md">
-                         Mixdown Trim Region
-                      </span>
+          
+          {stemUrls && onClearStems && (
+             <button
+                onClick={onClearStems}
+                className="self-start flex items-center gap-2 text-[11px] uppercase font-black tracking-widest text-indigo-300 hover:text-white bg-indigo-500/10 border border-indigo-500/30 hover:bg-indigo-500/30 px-6 py-3 rounded-2xl transition-all shadow-lg hover:shadow-indigo-500/20 active:scale-95"
+             >
+                <ArrowLeft className="w-4 h-4" /> Back to Extract & Bypass Tools
+             </button>
+          )}
+          {/* Pre-Export & Bypass Tools */}
+          {stemUrls && (
+             <div className="bg-black/20 border border-white/5 rounded-2xl p-4 flex flex-col gap-4 animate-in fade-in slide-in-from-top-2">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                   <div className="flex flex-col gap-1">
+                       <h3 className="text-[10px] font-black tracking-widest uppercase text-white/70">Export Tools</h3>
+                       <p className="text-[9px] text-white/40">Trim mixdown or generate a direct bypassed track.</p>
                    </div>
-                   <AudioTrimmer 
-                      mode="select-only"
-                      audioUrl={originalAudioUrl}
-                      initialStart={trimStart}
-                      initialEnd={trimEnd > 0 ? trimEnd : duration}
-                      onRegionChange={(s, e) => {
-                         setTrimStart(s);
-                         setTrimEnd(e);
-                      }}
-                      onCancel={() => {}}
-                      onTrim={() => {}}
-                   />
+                   <div className="flex flex-wrap items-center gap-3">
+                       <div className="flex items-center gap-2">
+                          <input 
+                             type="checkbox" 
+                             id="trim-export"
+                             checked={isTrimming} 
+                             onChange={(e) => setIsTrimming(e.target.checked)}
+                             className="w-4 h-4 rounded bg-black/50 border-white/20 text-amber-400 focus:ring-amber-400/50 cursor-pointer"
+                          />
+                          <label htmlFor="trim-export" className="text-[10px] font-bold text-white uppercase tracking-wider cursor-pointer">Trim Region</label>
+                       </div>
+                       
+                       <div className="w-px h-6 bg-white/10 hidden sm:block"></div>
+                       
+                       <button
+                           type="button"
+                           onClick={handleDirectSunoBypass}
+                           disabled={isBypassingSuno || !originalAudioUrl}
+                           className="flex items-center justify-center gap-2 text-[9px] tracking-widest uppercase font-black border border-indigo-500/50 text-indigo-300 hover:text-white bg-indigo-600/10 px-4 py-2 rounded-xl hover:bg-indigo-600/30 transition-all active:scale-95 disabled:opacity-50"
+                           title="Directly bypass Suno's detection on the original track"
+                       >
+                          {isBypassingSuno ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                          {isBypassingSuno ? "Processing..." : "Direct Bypass"}
+                       </button>
+                   </div>
                 </div>
-             )}
+                
+                {isTrimming && originalAudioUrl && (
+                   <div className="mt-2 border border-amber-400/20 rounded-2xl overflow-hidden p-2 bg-black/40 relative">
+                      <AudioTrimmer 
+                         mode="select-only"
+                         audioUrl={originalAudioUrl}
+                         initialStart={trimStart}
+                         initialEnd={trimEnd > 0 ? trimEnd : duration}
+                         onRegionChange={(s, e) => {
+                            setTrimStart(s);
+                            setTrimEnd(e);
+                         }}
+                         onCancel={() => {}}
+                         onTrim={() => {}}
+                      />
+                   </div>
+                )}
+             </div>
+          )}
 
-          </div>
 
+          
+          
           {downloadLink && (
-             <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex flex-col gap-4 animate-in slide-in-from-top-2 duration-300 shadow-lg shadow-emerald-500/5">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                   <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 shrink-0">
-                         <Check className="w-4 h-4" />
+             <div ref={downloadLinkRef} className="bg-gradient-to-br from-emerald-500/20 to-emerald-900/10 border border-emerald-500/30 rounded-2xl sm:rounded-[1.5rem] p-4 sm:p-6 flex flex-col gap-4 sm:gap-6 shadow-2xl shadow-emerald-500/10 relative overflow-hidden shrink-0">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-emerald-400 via-teal-500 to-emerald-400"></div>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 relative z-10">
+                   <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0 shadow-[0_0_15px_rgba(16,185,129,0.5)]">
+                         <Check className="w-5 h-5 sm:w-6 sm:h-6" />
                       </div>
                       <div className="min-w-0">
-                         <h4 className="text-[11px] sm:text-xs font-black tracking-wider sm:tracking-widest uppercase text-white">Mixdown Completed!</h4>
-                         <p className="text-[10px] text-emerald-400 font-mono truncate max-w-[200px] xs:max-w-[250px] sm:max-w-md mt-0.5" title={downloadLink.filename}>
+                         <h4 className="text-xs sm:text-base font-black tracking-widest uppercase text-white drop-shadow-md">Mixdown Ready</h4>
+                         <p className="text-[10px] sm:text-xs text-emerald-300/80 font-mono truncate max-w-[180px] xs:max-w-[220px] sm:max-w-md mt-0.5" title={downloadLink.filename}>
                             {downloadLink.filename}
                          </p>
                       </div>
                    </div>
-                   <div className="flex flex-wrap items-center gap-2 shrink-0">
-                      <audio controls src={downloadLink.url} className="h-8 w-full sm:w-48 outline-none opacity-80 hover:opacity-100 transition-opacity" />
+                   <div className="flex items-center gap-2 sm:gap-3 shrink-0 flex-wrap sm:flex-nowrap">
+                      <button
+                         onClick={() => setIsTrimmingMixdown(!isTrimmingMixdown)}
+                         className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-black tracking-widest uppercase transition-all flex items-center gap-1.5 cursor-pointer ${isTrimmingMixdown ? 'bg-amber-500 text-black shadow-[0_0_25px_rgba(245,158,11,0.4)] hover:bg-amber-400' : 'bg-white/10 text-white hover:bg-white/20'}`}
+                      >
+                         <Scissors className="w-3.5 h-3.5" /> Trim
+                      </button>
                       <a
                          href={downloadLink.url}
                          download={downloadLink.filename}
                          onClick={() => {
-                            setTimeout(() => setDownloadLink(null), 8000);
+                            setTimeout(() => {
+                                setDownloadLink(null);
+                                setIsTrimmingMixdown(false);
+                            }, 8000);
                          }}
-                         className="px-4 py-2 bg-emerald-500 text-black rounded-xl text-[10px] font-black tracking-wider sm:tracking-widest uppercase hover:bg-emerald-400 active:scale-95 transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-500/20 cursor-pointer"
+                         className="px-3 py-2 sm:px-5 sm:py-2.5 bg-emerald-500 text-black rounded-xl text-[10px] sm:text-xs font-black tracking-widest uppercase hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all flex items-center gap-1.5 shadow-[0_0_25px_rgba(16,185,129,0.4)] cursor-pointer"
                          referrerPolicy="no-referrer"
                       >
-                         <Download className="w-3.5 h-3.5 animate-bounce" /> Save
+                         <Download className="w-3.5 h-3.5" /> Save
                       </a>
                       <button
-                         onClick={() => setDownloadLink(null)}
-                         className="p-2 hover:bg-white/5 rounded-xl text-white/40 hover:text-white transition-colors"
+                         onClick={() => {
+                             setDownloadLink(null);
+                             setIsTrimmingMixdown(false);
+                         }}
+                         className="p-2 sm:p-2.5 hover:bg-white/10 rounded-xl text-white/50 hover:text-white transition-colors"
                       >
-                         <X className="w-4 h-4" />
+                         <X className="w-4 h-4 sm:w-5 sm:h-5" />
                       </button>
                    </div>
                 </div>
+                
+                
+                <div className="w-full relative z-10 flex flex-col gap-3">
+                   {!isTrimmingMixdown ? (
+                      <div className="w-full bg-black/60 rounded-xl sm:rounded-2xl p-3 sm:p-5 border border-emerald-500/30 shadow-inner flex flex-col items-center justify-center gap-2 sm:gap-3">
+                         <div className="text-emerald-400 font-bold uppercase tracking-widest text-[10px] sm:text-xs">Preview Mixdown</div>
+                         <audio controls src={downloadLink.url} className="w-full max-w-3xl outline-none min-h-[48px] h-12 block shrink-0" />
+                      </div>
+                   ) : (
+                      <div className="w-full bg-black/60 rounded-xl sm:rounded-2xl border border-amber-500/20 shadow-inner overflow-hidden p-2">
+                         <AudioTrimmer 
+                            mode="full"
+                            audioUrl={downloadLink.url}
+                            onTrim={(newUrl, startSec, endSec) => {
+                               setDownloadLink({
+                                  url: newUrl,
+                                  filename: downloadLink.filename.replace(/\.([^.]+)$/, `_trimmed.$1`)
+                               });
+                               setIsTrimmingMixdown(false);
+                            }}
+                            onCancel={() => setIsTrimmingMixdown(false)}
+                         />
+                      </div>
+                   )}
+                </div>
+
              </div>
           )}
+
+
 
           {exportError && (
              <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-4 flex items-start justify-between gap-3 animate-in slide-in-from-top-2 duration-300">
@@ -2592,9 +2680,9 @@ export default function StemStudio({
           )}
 
           {stemmixStatus !== "ready" ? (
-             <div className="flex-1 flex flex-col items-center justify-center p-6 text-center my-auto animate-in fade-in duration-500 w-full">
+             <div className={`flex-1 flex flex-col items-center justify-center p-2 sm:p-6 text-center animate-in fade-in duration-500 w-full ${downloadLink ? 'py-2 my-1' : 'my-auto'}`}>
                 {stemmixStatus === "idle" ? (
-                   <div className="flex flex-col items-center justify-center py-16 px-4 text-center w-full">
+                   <div className={`flex flex-col items-center justify-center px-4 text-center w-full ${downloadLink ? 'py-4' : 'py-10 sm:py-16'}`}>
                       <div className="w-16 h-16 rounded-full bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 mb-6">
                          <Sparkles className="w-8 h-8" />
                       </div>
@@ -3205,7 +3293,7 @@ export default function StemStudio({
                                      <Download className="w-4 h-4 text-white" />
                                  </div>
                                  <div className="group-hover/icon:opacity-0 transition-opacity flex items-center justify-center w-full h-full">
-                                     {stem === 'vocals' && <svg className="w-5 h-5 animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>}
+                                     {stem === 'vocals' && <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>}
                                      {stem === 'drums' && <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>}
                                      {stem === 'bass' && <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><path d="M6 15H3c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h3c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2Z"/><path d="M18 13h-3c-1.1 0-2 .9-2 2v4c0 1.1.9 2 2 2h3c1.1 0 2-.9 2-2v-4c0-1.1-.9-2-2-2Z"/></svg>}
                                      {stem === 'guitar' && <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 8v8"/><path d="M12 8v8"/><path d="M16 8v8"/><rect width="20" height="12" x="2" y="6" rx="2"/></svg>}
@@ -3545,6 +3633,200 @@ export default function StemStudio({
                        ))}
                        </div>
                     </div>
+                 </div>
+              )}
+           </div>
+
+           {/* AMBIENT OVERLAY & PIXABAY */}
+           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+              <div className="flex justify-between items-center border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('overlay')}>
+                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><CloudRain className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Overlay Sound (Pixabay)</h3>
+                 <div className="flex items-center gap-2">
+                    {expandedSections.overlay ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                 </div>
+              </div>
+              
+              {expandedSections.overlay && (
+                 <div className="flex flex-col gap-2">
+                    {ambientOverlayUrl ? (
+                       <div className="flex flex-col gap-3">
+                          <div className="flex items-center justify-between bg-white/5 p-2 rounded-lg border border-white/10">
+                             <div className="flex items-center gap-2 overflow-hidden">
+                                <FileAudio className="w-4 h-4 text-blue-400 shrink-0" />
+                                <span className="text-[10px] text-white truncate font-medium">Ambient Audio Loaded</span>
+                             </div>
+                             <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                   onClick={() => setIsAmbientLoop(!isAmbientLoop)}
+                                   className={`p-1.5 rounded-md transition-colors ${isAmbientLoop ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-white/40 hover:text-white/80'}`}
+                                   title="Toggle Loop"
+                                >
+                                   <Repeat className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                   onClick={() => {
+                                      setAmbientOverlayUrl("");
+                                      setShowAmbientInput(false);
+                                   }}
+                                   className="p-1.5 rounded-md bg-white/5 text-red-400 hover:bg-red-500/20 transition-colors"
+                                   title="Remove Audio"
+                                >
+                                   <X className="w-3.5 h-3.5" />
+                                </button>
+                             </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                             <Volume2 className="w-4 h-4 text-white/40 shrink-0" />
+                             <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                value={ambientVolume}
+                                onChange={(e) => setAmbientVolume(parseFloat(e.target.value))}
+                                className="flex-1 accent-blue-400 h-1 bg-white/10 rounded-full appearance-none cursor-pointer"
+                             />
+                             <span className="text-[10px] font-mono text-white/60 w-8 text-right">{Math.round(ambientVolume * 100)}%</span>
+                          </div>
+                          
+                          <audio
+                             ref={ambientAudioRef}
+                             src={ambientOverlayUrl}
+                             loop={isAmbientLoop}
+                             className="hidden"
+                          />
+                       </div>
+                    ) : (
+                       <div className="flex flex-col gap-3">
+                          <div className="grid grid-cols-4 gap-2">
+                             {[
+                                { name: "Noise", icon: Activity, url: "https://cdn.freesound.org/previews/8/8132_18300-lq.mp3" },
+                                { name: "Ocean", icon: Waves, url: "https://cdn.freesound.org/previews/262/262593_43-lq.mp3" },
+                                { name: "Forest", icon: TreePine, url: "https://cdn.freesound.org/previews/802/802064_14408616-lq.mp3" },
+                                { name: "Storm", icon: CloudLightning, url: "https://cdn.freesound.org/previews/84/84896_988961-lq.mp3" },
+                             ].map((preset, i) => (
+                                <button
+                                   key={i}
+                                   onClick={() => setAmbientOverlayUrl(preset.url)}
+                                   className="bg-white/5 hover:bg-blue-500/20 border border-white/10 hover:border-blue-500/50 rounded-xl py-3 flex flex-col items-center justify-center gap-1.5 transition-all group"
+                                >
+                                   <preset.icon className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
+                                   <span className="text-[9px] font-bold text-white/50 group-hover:text-blue-300 transition-colors">{preset.name}</span>
+                                </button>
+                             ))}
+                          </div>
+                          <div className="flex items-center gap-2 mt-2">
+                             <button
+                                onClick={() => setShowPixabaySearch(!showPixabaySearch)}
+                                className={`flex-1 border rounded-xl p-3 flex items-center justify-center gap-2 transition-all group ${showPixabaySearch ? 'bg-blue-500/10 border-blue-500/30' : 'bg-[#00ab6b]/10 hover:bg-[#00ab6b]/20 border-[#00ab6b]/30'}`}
+                             >
+                                <Search className={`w-4 h-4 transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`} />
+                                <span className={`text-[10px] font-bold transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`}>SEARCH PIXABAY</span>
+                             </button>
+                             <button
+                                onClick={() => document.getElementById('ambient-file-upload')?.click()}
+                                className="flex-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-3 flex items-center justify-center gap-2 transition-all group"
+                             >
+                                <UploadCloud className="w-4 h-4 text-white/40 group-hover:text-blue-400 transition-colors" />
+                                <span className="text-[10px] font-bold text-white/70 group-hover:text-white transition-colors">LOCAL FILE</span>
+                             </button>
+                             <input
+                                type="file"
+                                id="ambient-file-upload"
+                                accept="audio/*"
+                                className="hidden"
+                                onChange={handleAmbientFileUpload}
+                             />
+                             <button
+                                onClick={() => setShowAmbientInput(!showAmbientInput)}
+                                className={`flex-1 border rounded-xl p-3 flex items-center justify-center gap-2 transition-all group ${showAmbientInput ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 hover:bg-white/10 border-white/10'}`}
+                             >
+                                <Link className={`w-4 h-4 transition-colors ${showAmbientInput ? 'text-blue-400' : 'text-white/40 group-hover:text-blue-400'}`} />
+                                <span className={`text-[10px] font-bold transition-colors ${showAmbientInput ? 'text-blue-400' : 'text-white/70 group-hover:text-white'}`}>AUDIO URL</span>
+                             </button>
+                          </div>
+                          
+                          {showPixabaySearch && (
+                             <div className="flex flex-col gap-2 mt-1 animate-in fade-in slide-in-from-top-2 bg-black/30 border border-white/10 rounded-xl p-3">
+                                <div className="flex items-center gap-2">
+                                   <input
+                                      type="text"
+                                      placeholder="Search Pixabay for 'rain', 'forest', 'city'..."
+                                      value={pixabayQuery}
+                                      onChange={(e) => setPixabayQuery(e.target.value)}
+                                      onKeyDown={(e) => e.key === 'Enter' && handlePixabaySearch()}
+                                      className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-[#00ab6b]/50"
+                                   />
+                                   <button
+                                      onClick={() => handlePixabaySearch()}
+                                      disabled={isPixabaySearching || !pixabayQuery}
+                                      className="bg-[#00ab6b] hover:bg-[#008f5a] disabled:opacity-50 disabled:hover:bg-[#00ab6b] text-white font-bold text-[10px] px-3 py-2 rounded-lg transition-colors flex items-center gap-1"
+                                   >
+                                      {isPixabaySearching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
+                                      SEARCH
+                                   </button>
+                                </div>
+                                {pixabayResults.length > 0 && (
+                                   <div className="flex flex-col gap-1.5 max-h-[150px] overflow-y-auto custom-scrollbar mt-2">
+                                      {pixabayResults.map((result, i) => (
+                                         <div
+                                            key={i}
+                                            className="flex items-center justify-between bg-white/5 p-2 rounded-lg text-left transition-colors border border-transparent hover:border-white/10 group"
+                                         >
+                                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                                               <button
+                                                  onClick={(e) => togglePreview(result.url || result.previewUrl, e)}
+                                                  className="p-1.5 rounded-full bg-black/40 text-white/50 hover:text-[#00ab6b] hover:bg-black/60 transition-colors shrink-0"
+                                                  title={previewingUrl === (result.url || result.previewUrl) ? "Stop Preview" : "Play Preview"}
+                                               >
+                                                  {previewingUrl === (result.url || result.previewUrl) ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                                               </button>
+                                               <span className="text-[10px] text-white/70 group-hover:text-white truncate font-medium">{result.name || result.tags || 'Sound'}</span>
+                                            </div>
+                                            <button
+                                               onClick={() => {
+                                                  setAmbientOverlayUrl(result.url || result.audioUrl || result.previewUrl);
+                                                  if (previewingUrl) {
+                                                     previewAudioRef.current?.pause();
+                                                     setPreviewingUrl(null);
+                                                  }
+                                               }}
+                                               className="text-[9px] font-bold text-white/50 hover:text-black bg-white/10 hover:bg-[#00ab6b] px-2 py-1 rounded transition-colors shrink-0 ml-2"
+                                            >
+                                               LOAD
+                                            </button>
+                                         </div>
+                                      ))}
+                                   </div>
+                                )}
+                             </div>
+                          )}
+
+                          {showAmbientInput && (
+                             <div className="flex items-center gap-2 mt-1 animate-in fade-in slide-in-from-top-2">
+                                <input
+                                   type="url"
+                                   placeholder="https://example.com/rain.mp3"
+                                   value={ambientInputUrl}
+                                   onChange={(e) => setAmbientInputUrl(e.target.value)}
+                                   className="flex-1 bg-black/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-blue-500/50"
+                                />
+                                <button
+                                   onClick={() => {
+                                      if (ambientInputUrl) {
+                                         setAmbientOverlayUrl(ambientInputUrl);
+                                         setShowAmbientInput(false);
+                                      }
+                                   }}
+                                   className="bg-blue-500 hover:bg-blue-400 text-white font-bold text-[10px] px-3 py-2 rounded-lg transition-colors"
+                                >
+                                   LOAD
+                                </button>
+                             </div>
+                          )}
+                       </div>
+                    )}
                  </div>
               )}
            </div>

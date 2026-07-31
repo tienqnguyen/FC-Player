@@ -5,7 +5,7 @@ import { Scissors, Play, Pause, RotateCcw } from 'lucide-react';
 import audioBufferToWav from 'audiobuffer-to-wav';
 
 interface AudioTrimmerProps {
-  mode?: "full" | "select-only";
+  mode?: "full" | "select-only" | "preview";
   onRegionChange?: (start: number, end: number) => void;
   initialStart?: number;
   initialEnd?: number;
@@ -48,6 +48,11 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
       progressGradient.addColorStop(1, '#d97706'); // amber-600
     }
 
+    
+    let wsPlugins = [];
+    if (mode !== "preview") {
+       wsPlugins.push(regions);
+    }
     const ws = WaveSurfer.create({
       container: containerRef.current,
       waveColor: waveGradient,
@@ -58,15 +63,16 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
       barRadius: 3,
       height: 160,
       normalize: true,
-      plugins: [regions]
+      plugins: wsPlugins
     });
+
     
     wavesurferRef.current = ws;
     
-    ws.load(audioUrl);
+    ws.load(audioUrl).catch((e: any) => { if (e && e.name !== 'AbortError' && !String(e).toLowerCase().includes('abort')) console.error('WaveSurfer load error:', e); });
+    
     
     ws.on('ready', () => {
-      
       const d = ws.getDuration();
       setDuration(d);
       
@@ -77,15 +83,17 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
       setEndSec(en);
       setIsReady(true);
       
-      regions.addRegion({
-        start: st,
-        end: en,
-        color: 'rgba(251, 191, 36, 0.25)',
-        drag: false,
-        resize: true
-      });
-
+      if (mode !== "preview") {
+        regions.addRegion({
+          start: st,
+          end: en,
+          color: 'rgba(251, 191, 36, 0.25)',
+          drag: false,
+          resize: true
+        });
+      }
     });
+
     
     ws.on('play', () => setIsPlaying(true));
     ws.on('pause', () => setIsPlaying(false));
@@ -164,14 +172,18 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
   return (
     <div className="w-full flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 duration-500">
       <div className="w-full relative bg-gradient-to-b from-black/60 to-black/30 border border-white/10 rounded-2xl p-6 shadow-2xl backdrop-blur-md">
-        <div className="absolute top-4 left-6 z-10 flex flex-col gap-0.5">
-          <span className="text-[10px] font-black text-amber-400 uppercase tracking-[0.2em]">
-            Trim Region
-          </span>
-          <span className="text-xs font-mono text-white/70">
-            {Math.max(0, endSec - startSec).toFixed(2)}s / {duration.toFixed(2)}s
-          </span>
-        </div>
+        
+        {mode !== "preview" && (
+          <div className="absolute top-4 left-6 z-10 flex flex-col gap-0.5">
+            <span className="text-[10px] font-black text-amber-400 uppercase tracking-[0.2em]">
+              Trim Region
+            </span>
+            <span className="text-xs font-mono text-white/70">
+              {Math.max(0, endSec - startSec).toFixed(2)}s / {duration.toFixed(2)}s
+            </span>
+          </div>
+        )}
+
         {(!isReady || isProcessing) && (
            <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-20 rounded-2xl">
              <div className="flex flex-col items-center gap-3">
@@ -223,6 +235,7 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
             </button>
         </div>
       )}
+      
       {mode === "select-only" && (
          <div className="flex items-center gap-2 w-full justify-center">
              <button 
@@ -235,6 +248,25 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
              </button>
          </div>
       )}
+      {mode === "preview" && (
+         <div className="flex items-center gap-3 w-full justify-center mt-2">
+             <button 
+                 onClick={() => wavesurferRef.current?.play(0)}
+                 disabled={!isReady}
+                 className="flex items-center justify-center w-12 h-12 rounded-full bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all"
+             >
+                 <RotateCcw className="w-5 h-5" />
+             </button>
+             <button 
+                 onClick={() => isPlaying ? wavesurferRef.current?.pause() : wavesurferRef.current?.play()}
+                 disabled={!isReady}
+                 className="flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500 text-black hover:bg-emerald-400 hover:scale-105 active:scale-95 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+             >
+                 {isPlaying ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current" />}
+             </button>
+         </div>
+      )}
+
     </div>
   );
 }

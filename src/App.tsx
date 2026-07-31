@@ -6526,6 +6526,10 @@ export default function App() {
                  setSeparationMode(mode);
                  handleSeparateStems(mode);
                }}
+onClearStems={() => {
+                 setStemUrls(null);
+                 setStemmixStatus("idle");
+               }}
                newSongTitle={
                  audioUrl && audioUrl !== stemSongInfo?.audioUrl && stemmixStatus !== "loading"
                    ? currentSong?.title || "Untitled Track" 

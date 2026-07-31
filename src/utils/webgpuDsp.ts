@@ -113,15 +113,7 @@ export async function separateStemsWithWebGpu(
     const mid = (l + r) * 0.5;
     const side = (l - r) * 0.5;
 
-    // --- 1. Vocals Extraction ---
-    // Vocals are predominantly in the center (Mid channel) and in the speech frequency range (240Hz - 3.6kHz)
-    const vocL = vocalLpL.process(vocalHpL.process(mid));
-    const vocR = vocalHpR.process(vocalLpR.process(mid));
     
-    // Add back a small amount of wide stereo side signal to maintain natural room acoustics and vocal reverb
-    vocalsL[i] = vocL + side * 0.08;
-    vocalsR[i] = vocR - side * 0.08;
-
     // --- 2. Bass Extraction ---
     // Bass frequencies live below 140 Hz. Centered in mid channel.
     const b = bassLpL.process(mid);
@@ -133,9 +125,19 @@ export async function separateStemsWithWebGpu(
     const dHiL = drumHpL.process(l);
     const dHiR = drumHpR.process(r);
     const dLo = drumBpL.process(mid);
-
     drumsL[i] = dHiL * 1.1 + dLo;
     drumsR[i] = dHiR * 1.1 + dLo;
+
+    // --- 1. Vocals Extraction ---
+    // Vocals are predominantly in the center (Mid channel) but we must subtract bass and low drums
+    const vocMid = mid - b - dLo * 0.8;
+    const vocL = vocalLpL.process(vocalHpL.process(vocMid));
+    const vocR = vocalHpR.process(vocalLpR.process(vocMid));
+    
+    // Add back a small amount of wide stereo side signal to maintain natural room acoustics and vocal reverb
+    vocalsL[i] = vocL + side * 0.08;
+    vocalsR[i] = vocR - side * 0.08;
+
 
     // --- 4. Melody / Guitar Extraction ---
     // Extract wide stereo accompaniment (Side channel) to isolate guitars, pianos, and synth pads,

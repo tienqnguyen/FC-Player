@@ -144,7 +144,7 @@ async function startServer() {
       }
 
       const ytDlpArgs = ["-f", "bestaudio", "-o", "-", url];
-      const subprocess = spawn(youtubedl.constants.YOUTUBE_DL_PATH, ytDlpArgs);
+      const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
       res.setHeader("Content-Type", "audio/mpeg");
       res.setHeader("Transfer-Encoding", "chunked");
       if (subprocess.stdout) {
@@ -1369,7 +1369,7 @@ async function startServer() {
 
       if (!response) {
          const ytDlpArgs = ["-f", "bestaudio", "-o", "-", url];
-         const subprocess = spawn(youtubedl.constants.YOUTUBE_DL_PATH, ytDlpArgs);
+         const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
          let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
          if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
          if (!safeTitle) safeTitle = "audio";
