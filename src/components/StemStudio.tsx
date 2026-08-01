@@ -76,11 +76,11 @@ function audioBufferToMp3(buffer: AudioBuffer): Blob {
   }
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
-import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search, Scissors } from 'lucide-react';
+import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search, Scissors, Replace, Trash2, SlidersHorizontal, Undo2, Redo2, Edit3, Eye } from 'lucide-react';
 import AudioTrimmer from "./AudioTrimmer";
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
-import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio, Wand2 } from 'lucide-react';
+import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio, Wand2, AlertTriangle } from 'lucide-react';
 import { diffWords, Change } from 'diff';
 import SpectrogramTool from "./Spectrogram";
 
@@ -407,6 +407,95 @@ export default function StemStudio({
   const [lyricDiff, setLyricDiff] = useState<Change[] | null>(null);
   const [isLyricCopied, setIsLyricCopied] = useState<boolean>(false);
 
+  // Find & Replace and Suno Bypass States
+  interface FindReplacePair {
+    id: string;
+    find: string;
+    replace: string;
+    enabled: boolean;
+  }
+
+  const [findReplacePairs, setFindReplacePairs] = useState<FindReplacePair[]>([
+    { id: '1', find: 'Anh', replace: 'anhh', enabled: true },
+    { id: '2', find: 'Em', replace: 'emm', enabled: true },
+  ]);
+
+  const [selectedQuickPickIds, setSelectedQuickPickIds] = useState<string[]>(
+    ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+  );
+
+  const [findMatchCase, setFindMatchCase] = useState<boolean>(false);
+  const [findWholeWord, setFindWholeWord] = useState<boolean>(true);
+
+  interface BypassRule {
+    id: string;
+    find: string;
+    replace: string;
+    enabled: boolean;
+  }
+
+  const initialBypassRules: BypassRule[] = [
+    { id: '1', find: 'Anh', replace: 'anhh', enabled: true },
+    { id: '2', find: 'Em', replace: 'emm', enabled: true },
+    { id: '3', find: 'anh', replace: 'anhh', enabled: true },
+    { id: '4', find: 'em', replace: 'emm', enabled: true },
+    { id: '5', find: 'thôi', replace: 'thôii', enabled: true },
+    { id: '6', find: 'yêu', replace: 'yêuu', enabled: true },
+    { id: '7', find: 'tình', replace: 'tìnhh', enabled: true },
+    { id: '8', find: 'mình', replace: 'mìnhh', enabled: true },
+    { id: '9', find: 'người', replace: 'ngườii', enabled: true },
+  ];
+
+  const [bypassRules, setBypassRules] = useState<BypassRule[]>(initialBypassRules);
+  const [showRuleManager, setShowRuleManager] = useState<boolean>(false);
+  const [newRuleFind, setNewRuleFind] = useState<string>("");
+  const [newRuleReplace, setNewRuleReplace] = useState<string>("");
+
+  // Lyric Tool History & Editing States
+  interface LyricHistoryEntry {
+    text: string;
+    diff: Change[] | null;
+  }
+  const [lyricHistory, setLyricHistory] = useState<LyricHistoryEntry[]>([]);
+  const [lyricRedoStack, setLyricRedoStack] = useState<LyricHistoryEntry[]>([]);
+  const [isEditingFormatted, setIsEditingFormatted] = useState<boolean>(true);
+
+  const recordLyricState = (newText: string, newDiff?: Change[] | null) => {
+    const baseText = lyricRaw || '';
+    const diffToUse = newDiff !== undefined ? newDiff : (baseText ? diffWords(baseText, newText) : null);
+
+    setLyricHistory(prev => {
+      if (prev.length > 0 && prev[prev.length - 1].text === lyricFormatted && prev[prev.length - 1].diff === lyricDiff) {
+        return prev;
+      }
+      return [...prev.slice(-30), { text: lyricFormatted, diff: lyricDiff }];
+    });
+    setLyricRedoStack([]);
+    setLyricFormatted(newText);
+    setLyricDiff(diffToUse);
+    if (diffToUse && diffToUse.some(p => p.added || p.removed)) {
+      setIsEditingFormatted(false);
+    }
+  };
+
+  const handleUndoLyric = () => {
+    if (lyricHistory.length === 0) return;
+    const lastState = lyricHistory[lyricHistory.length - 1];
+    setLyricHistory(prev => prev.slice(0, -1));
+    setLyricRedoStack(prev => [...prev, { text: lyricFormatted, diff: lyricDiff }]);
+    setLyricFormatted(lastState.text);
+    setLyricDiff(lastState.diff);
+  };
+
+  const handleRedoLyric = () => {
+    if (lyricRedoStack.length === 0) return;
+    const nextState = lyricRedoStack[lyricRedoStack.length - 1];
+    setLyricRedoStack(prev => prev.slice(0, -1));
+    setLyricHistory(prev => [...prev, { text: lyricFormatted, diff: lyricDiff }]);
+    setLyricFormatted(nextState.text);
+    setLyricDiff(nextState.diff);
+  };
+
   const handleCopyLyric = async () => {
     try {
       await navigator.clipboard.writeText(lyricFormatted);
@@ -429,7 +518,7 @@ export default function StemStudio({
         });
         const data = await res.json();
         if (res.ok && data.prompt) {
-           setLyricFormatted(data.prompt);
+           recordLyricState(data.prompt, null);
            if (data.style && !lyricStyle) setLyricStyle(data.style);
         } else if (data.error) {
            alert(data.error);
@@ -452,9 +541,7 @@ export default function StemStudio({
         });
         const data = await res.json();
         if (res.ok && data.lyric) {
-           const changes = diffWords(textToImprove, data.lyric);
-           setLyricDiff(changes);
-           setLyricFormatted(data.lyric);
+           recordLyricState(data.lyric);
         } else if (data.error) {
            alert(data.error);
         }
@@ -476,9 +563,7 @@ export default function StemStudio({
         });
         const data = await res.json();
         if (res.ok && data.lyric) {
-           const changes = diffWords(textToProcess, data.lyric);
-           setLyricDiff(changes);
-           setLyricFormatted(data.lyric);
+           recordLyricState(data.lyric);
         } else if (data.error) {
            alert(data.error);
         }
@@ -520,9 +605,7 @@ export default function StemStudio({
          }
      });
      
-     const changes = diffWords(textToProcess, newText);
-     setLyricDiff(changes);
-     setLyricFormatted(newText);
+     recordLyricState(newText);
   };
 
   const handleInsertRandomChars = () => {
@@ -535,9 +618,156 @@ export default function StemStudio({
            newText += chars[Math.floor(Math.random() * chars.length)] + " ";
         }
      }
-     const changes = diffWords(lyricFormatted, newText);
-     setLyricDiff(changes);
-     setLyricFormatted(newText);
+     recordLyricState(newText);
+  };
+
+  const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const executeFindReplace = (targetText: string, findStr: string, replaceStr: string, matchCase = false, wholeWord = true) => {
+    if (!targetText || !findStr) return targetText;
+    const escaped = escapeRegExp(findStr);
+    let pattern = escaped;
+    if (wholeWord) {
+      const leftBoundary = "(?:^|(?<=[^\\p{L}\\p{N}_]))";
+      const rightBoundary = "(?:$|(?=[^\\p{L}\\p{N}_]))";
+      pattern = `${leftBoundary}${escaped}${rightBoundary}`;
+    }
+    const flags = matchCase ? 'gu' : 'gui';
+    try {
+      const regex = new RegExp(pattern, flags);
+      return targetText.replace(regex, replaceStr);
+    } catch {
+      const fallbackFlags = matchCase ? 'g' : 'gi';
+      const fallbackPattern = wholeWord ? `\\b${escaped}\\b` : escaped;
+      const regex = new RegExp(fallbackPattern, fallbackFlags);
+      return targetText.replace(regex, replaceStr);
+    }
+  };
+
+  const handleSingleReplace = (findStr: string, replaceStr: string) => {
+    const textToProcess = lyricFormatted || lyricRaw;
+    if (!textToProcess || !findStr) return;
+
+    const newText = executeFindReplace(textToProcess, findStr, replaceStr, findMatchCase, findWholeWord);
+    recordLyricState(newText);
+  };
+
+  const handleAddPairRow = () => {
+    setFindReplacePairs(prev => [
+      ...prev,
+      { id: Date.now().toString() + Math.random().toString().slice(2, 5), find: '', replace: '', enabled: true }
+    ]);
+  };
+
+  const handleUpdatePairRow = (id: string, field: 'find' | 'replace' | 'enabled', value: string | boolean) => {
+    setFindReplacePairs(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+  };
+
+  const handleRemovePairRow = (id: string) => {
+    setFindReplacePairs(prev => prev.filter(p => p.id !== id));
+  };
+
+  const handleClearPairRows = () => {
+    setFindReplacePairs([]);
+  };
+
+  const handleExecuteAllPairs = () => {
+    const textToProcess = lyricFormatted || lyricRaw;
+    if (!textToProcess) return;
+
+    const activePairs = findReplacePairs.filter(p => p.enabled && p.find.trim());
+    if (activePairs.length === 0) return;
+
+    let currentText = textToProcess;
+    for (const pair of activePairs) {
+      currentText = executeFindReplace(currentText, pair.find, pair.replace, findMatchCase, findWholeWord);
+    }
+
+    recordLyricState(currentText);
+  };
+
+  // Quick Pick Functions
+  const handleToggleQuickPick = (id: string) => {
+    setSelectedQuickPickIds(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const handleSelectAllQuickPicks = () => {
+    setSelectedQuickPickIds(bypassRules.map(r => r.id));
+  };
+
+  const handleDeselectAllQuickPicks = () => {
+    setSelectedQuickPickIds([]);
+  };
+
+  const handleApplySelectedQuickPicks = () => {
+    const textToProcess = lyricFormatted || lyricRaw;
+    if (!textToProcess) return;
+
+    const selectedRules = bypassRules.filter(r => r.enabled && selectedQuickPickIds.includes(r.id));
+    if (selectedRules.length === 0) return;
+
+    let currentText = textToProcess;
+    for (const rule of selectedRules) {
+      if (!rule.find) continue;
+      currentText = executeFindReplace(currentText, rule.find, rule.replace, findMatchCase, findWholeWord);
+    }
+
+    recordLyricState(currentText);
+  };
+
+  const handleImportSelectedToPairs = () => {
+    const selectedRules = bypassRules.filter(r => selectedQuickPickIds.includes(r.id));
+    if (selectedRules.length === 0) return;
+
+    const newPairs: FindReplacePair[] = selectedRules.map(r => ({
+      id: Date.now().toString() + Math.random().toString().slice(2, 6),
+      find: r.find,
+      replace: r.replace,
+      enabled: true,
+    }));
+
+    setFindReplacePairs(prev => [...prev, ...newPairs]);
+  };
+
+  const handleApplyBypassRules = (customRuleList?: BypassRule[]) => {
+    const textToProcess = lyricFormatted || lyricRaw;
+    if (!textToProcess) return;
+    let currentText = textToProcess;
+    const rulesToRun = customRuleList || bypassRules.filter(r => r.enabled);
+
+    for (const rule of rulesToRun) {
+      if (!rule.find) continue;
+      currentText = executeFindReplace(currentText, rule.find, rule.replace, false, true);
+    }
+
+    recordLyricState(currentText);
+  };
+
+  const handleAddRule = () => {
+    if (!newRuleFind.trim()) return;
+    const newRule: BypassRule = {
+      id: Date.now().toString(),
+      find: newRuleFind.trim(),
+      replace: newRuleReplace,
+      enabled: true,
+    };
+    setBypassRules(prev => [...prev, newRule]);
+    setNewRuleFind("");
+    setNewRuleReplace("");
+  };
+
+  const handleToggleRule = (id: string) => {
+    setBypassRules(prev => prev.map(r => r.id === id ? { ...r, enabled: !r.enabled } : r));
+  };
+
+  const handleDeleteRule = (id: string) => {
+    setBypassRules(prev => prev.filter(r => r.id !== id));
+  };
+
+  const handleResetDefaultRules = () => {
+    setBypassRules(initialBypassRules);
   };
 
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -2324,7 +2554,13 @@ export default function StemStudio({
                      <textarea 
                         className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[100px]"
                         value={lyricRaw}
-                        onChange={(e) => setLyricRaw(e.target.value)}
+                        onChange={(e) => {
+                           const newRaw = e.target.value;
+                           setLyricRaw(newRaw);
+                           if (newRaw && lyricFormatted) {
+                              setLyricDiff(diffWords(newRaw, lyricFormatted));
+                           }
+                        }}
                         placeholder="Enter your lyrics here..."
                      />
                   </div>
@@ -2410,31 +2646,396 @@ export default function StemStudio({
                         Add Chars
                      </button>
                   </div>
-                  {lyricFormatted && (
-                     <div className="flex flex-col gap-1 mt-2 border-t border-white/5 pt-2">
-                        <label className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex justify-between">
-                           Formatted Output
+
+                  {/* FIND AND REPLACE & SUNO BYPASS TOOL */}
+                  <div className="flex flex-col gap-3 bg-black/40 border border-white/10 rounded-xl p-3 my-1">
+                     <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                           <Replace className="w-3.5 h-3.5 text-amber-400" />
+                           <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                              Find & Replace (Suno Lyric Bypass)
+                           </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                           <button
+                              onClick={handleAddPairRow}
+                              className="text-[9px] font-bold text-amber-300 hover:text-amber-200 uppercase tracking-wider px-2 py-0.5 rounded bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/30 transition-colors flex items-center gap-1 cursor-pointer"
+                              title="Add another Find & Replace row"
+                           >
+                              <Plus className="w-3 h-3" /> Add Pair
+                           </button>
+                           <button
+                              onClick={() => setShowRuleManager(!showRuleManager)}
+                              className="text-[9px] font-bold text-white/60 hover:text-white uppercase tracking-wider px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-1 cursor-pointer"
+                           >
+                              <SlidersHorizontal className="w-3 h-3" />
+                              {showRuleManager ? "Hide Rules" : `Manage Rules (${bypassRules.filter(r => r.enabled).length})`}
+                           </button>
+                        </div>
+                     </div>
+
+                     {/* Multiple Find & Replace Pairs */}
+                     <div className="flex flex-col gap-2">
+                        {findReplacePairs.map((pair) => (
+                           <div key={pair.id} className="grid grid-cols-12 gap-1.5 items-center bg-black/50 border border-white/10 rounded-lg p-1.5 transition-colors hover:border-white/20">
+                              <div className="col-span-1 flex items-center justify-center">
+                                 <input
+                                    type="checkbox"
+                                    checked={pair.enabled}
+                                    onChange={(e) => handleUpdatePairRow(pair.id, 'enabled', e.target.checked)}
+                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer"
+                                    title="Enable or disable this pair"
+                                 />
+                              </div>
+                              <div className="col-span-4 flex items-center gap-1 bg-black/40 border border-white/10 rounded px-2 py-1">
+                                 <span className="text-[8.5px] text-white/40 font-bold shrink-0">Find:</span>
+                                 <input
+                                    type="text"
+                                    value={pair.find}
+                                    onChange={(e) => handleUpdatePairRow(pair.id, 'find', e.target.value)}
+                                    placeholder="e.g. Anh"
+                                    className="w-full bg-transparent text-[10.5px] text-white focus:outline-none"
+                                 />
+                              </div>
+                              <div className="col-span-4 flex items-center gap-1 bg-black/40 border border-white/10 rounded px-2 py-1">
+                                 <span className="text-[8.5px] text-white/40 font-bold shrink-0">Replace:</span>
+                                 <input
+                                    type="text"
+                                    value={pair.replace}
+                                    onChange={(e) => handleUpdatePairRow(pair.id, 'replace', e.target.value)}
+                                    placeholder="e.g. anhh"
+                                    className="w-full bg-transparent text-[10.5px] text-white focus:outline-none"
+                                 />
+                              </div>
+                              <div className="col-span-3 flex items-center gap-1 justify-end">
+                                 <button
+                                    onClick={() => handleSingleReplace(pair.find, pair.replace)}
+                                    disabled={(!lyricRaw && !lyricFormatted) || !pair.find || !pair.enabled}
+                                    className="bg-amber-400 hover:bg-amber-300 disabled:opacity-30 text-black text-[8.5px] font-black uppercase tracking-wider py-1 px-2 rounded transition-colors flex items-center gap-1 cursor-pointer"
+                                    title="Replace this single pair"
+                                 >
+                                    Replace
+                                 </button>
+                                 <button
+                                    onClick={() => handleRemovePairRow(pair.id)}
+                                    className="text-white/30 hover:text-red-400 p-1 transition-colors cursor-pointer rounded hover:bg-white/5"
+                                    title="Remove this pair row"
+                                 >
+                                    <Trash2 className="w-3 h-3" />
+                                 </button>
+                              </div>
+                           </div>
+                        ))}
+
+                        {/* Pairs Action Controls */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                           <div className="flex items-center gap-3 text-[9.5px] text-white/60">
+                              <label className="flex items-center gap-1 cursor-pointer hover:text-white">
+                                 <input
+                                    type="checkbox"
+                                    checked={findMatchCase}
+                                    onChange={(e) => setFindMatchCase(e.target.checked)}
+                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer"
+                                 />
+                                 Match Case
+                              </label>
+                              <label className="flex items-center gap-1 cursor-pointer hover:text-white">
+                                 <input
+                                    type="checkbox"
+                                    checked={findWholeWord}
+                                    onChange={(e) => setFindWholeWord(e.target.checked)}
+                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer"
+                                 />
+                                 Whole Word
+                              </label>
+                           </div>
+
                            <div className="flex items-center gap-2">
-                              {lyricDiff && (
-                                 <button onClick={() => setLyricDiff(null)} className="text-white/50 hover:text-white mr-2">Clear Diff</button>
+                              {findReplacePairs.length > 0 && (
+                                 <button
+                                    onClick={handleClearPairRows}
+                                    className="text-[9px] text-white/40 hover:text-white uppercase tracking-wider px-2 py-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
+                                 >
+                                    Clear Pairs
+                                 </button>
                               )}
-                              <button 
-                                 onClick={handleCopyLyric} 
-                                 className={`flex items-center gap-1 transition-colors px-2 py-1 rounded ${isLyricCopied ? 'bg-green-500/20 text-green-400' : 'text-white/50 hover:text-white hover:bg-white/10'}`}
-                                 title="Copy to clipboard"
+                              <button
+                                 onClick={handleAddPairRow}
+                                 className="text-[9px] font-bold text-white/80 hover:text-white uppercase tracking-wider px-2.5 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-1 cursor-pointer"
                               >
-                                 {isLyricCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                 {isLyricCopied && <span className="text-[9px] uppercase tracking-wider font-bold">Copied</span>}
+                                 <Plus className="w-3 h-3 text-amber-400" /> Add Row
+                              </button>
+                              <button
+                                 onClick={handleExecuteAllPairs}
+                                 disabled={(!lyricRaw && !lyricFormatted) || findReplacePairs.filter(p => p.enabled && p.find).length === 0}
+                                 className="bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-black text-[9px] font-black uppercase tracking-wider py-1 px-3 rounded-lg transition-all flex items-center gap-1.5 shadow cursor-pointer"
+                              >
+                                 <Replace className="w-3 h-3" />
+                                 Execute All Pairs ({findReplacePairs.filter(p => p.enabled && p.find).length})
                               </button>
                            </div>
-                        </label>
-                        {lyricDiff ? (
-                           <div className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar overflow-y-auto max-h-[300px] whitespace-pre-wrap">
+                        </div>
+                     </div>
+
+                     {/* Default Quick Fix Presets (Suno Bypass Shortcuts - Multi-Pick Supported) */}
+                     <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                           <div className="flex items-center gap-1.5">
+                              <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-400/90">
+                                 Quick Pick Presets ({selectedQuickPickIds.length}/{bypassRules.length} Selected):
+                              </span>
+                              <div className="flex items-center gap-1 text-[8.5px] text-white/50">
+                                 <button
+                                    onClick={handleSelectAllQuickPicks}
+                                    className="hover:text-white underline cursor-pointer"
+                                 >
+                                    Select All
+                                 </button>
+                                 <span>•</span>
+                                 <button
+                                    onClick={handleDeselectAllQuickPicks}
+                                    className="hover:text-white underline cursor-pointer"
+                                 >
+                                    Deselect All
+                                 </button>
+                              </div>
+                           </div>
+
+                           <div className="flex items-center gap-1.5">
+                              {selectedQuickPickIds.length > 0 && (
+                                 <button
+                                    onClick={handleImportSelectedToPairs}
+                                    className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-[8.5px] font-bold uppercase tracking-wider px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer border border-indigo-400/30"
+                                    title="Copy selected quick pick rules into Find & Replace rows"
+                                 >
+                                    <Plus className="w-2.5 h-2.5" /> Import to Pairs
+                                 </button>
+                              )}
+                              <button
+                                 onClick={handleApplySelectedQuickPicks}
+                                 disabled={(!lyricRaw && !lyricFormatted) || selectedQuickPickIds.length === 0}
+                                 className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full transition-all flex items-center gap-1 shadow-sm cursor-pointer"
+                                 title="Apply selected Suno lyric bypass rules at once"
+                              >
+                                 <Sparkles className="w-3 h-3" />
+                                 Bypass Suno ({selectedQuickPickIds.length} Selected)
+                              </button>
+                           </div>
+                        </div>
+
+                        {/* Preset Chips (Toggle Multi-Pick) */}
+                        <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto custom-scrollbar p-1 bg-black/20 rounded-lg border border-white/5">
+                           {bypassRules.map((rule) => {
+                              const isSelected = selectedQuickPickIds.includes(rule.id);
+                              return (
+                                 <div
+                                    key={rule.id}
+                                    className={`group flex items-center gap-1.5 border rounded-md px-2 py-1 text-[9.5px] transition-all cursor-pointer ${
+                                       isSelected
+                                          ? 'bg-amber-400/20 border-amber-400/60 text-amber-200'
+                                          : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/60'
+                                    }`}
+                                    onClick={() => handleToggleQuickPick(rule.id)}
+                                    title="Click to toggle selection"
+                                 >
+                                    <input
+                                       type="checkbox"
+                                       checked={isSelected}
+                                       onChange={() => {}} // Handled by div onClick
+                                       className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer pointer-events-none"
+                                    />
+                                    <span className="font-semibold">{rule.find}</span>
+                                    <span className="text-amber-400/60">➔</span>
+                                    <span className="font-semibold text-amber-300">{rule.replace}</span>
+                                    <button
+                                       onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleSingleReplace(rule.find, rule.replace);
+                                       }}
+                                       disabled={!lyricRaw && !lyricFormatted}
+                                       className="ml-1 opacity-60 group-hover:opacity-100 hover:text-amber-300 p-0.5 rounded hover:bg-black/40 cursor-pointer"
+                                       title={`Run only "${rule.find} ➔ ${rule.replace}" right now`}
+                                    >
+                                       <Replace className="w-2.5 h-2.5" />
+                                    </button>
+                                 </div>
+                              );
+                           })}
+                        </div>
+                     </div>
+
+                     {/* Rule Manager Expansion */}
+                     {showRuleManager && (
+                        <div className="flex flex-col gap-2 pt-2.5 border-t border-amber-400/20 bg-black/60 p-2.5 rounded-lg">
+                           <div className="flex items-center justify-between text-[9.5px] font-bold uppercase text-white/70">
+                              <span>Active Bypass Rules ({bypassRules.length})</span>
+                              <button
+                                 onClick={handleResetDefaultRules}
+                                 className="text-white/40 hover:text-white flex items-center gap-1 text-[8.5px] cursor-pointer"
+                              >
+                                 <RotateCcw className="w-2.5 h-2.5" /> Reset Defaults
+                              </button>
+                           </div>
+
+                           {/* Rule list */}
+                           <div className="flex flex-col gap-1 max-h-[160px] overflow-y-auto custom-scrollbar pr-1">
+                              {bypassRules.map((rule) => (
+                                 <div
+                                    key={rule.id}
+                                    className="flex items-center justify-between bg-white/[0.03] hover:bg-white/[0.06] p-1.5 rounded border border-white/5 text-[10px]"
+                                 >
+                                    <div className="flex items-center gap-2">
+                                       <input
+                                          type="checkbox"
+                                          checked={rule.enabled}
+                                          onChange={() => handleToggleRule(rule.id)}
+                                          className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer"
+                                       />
+                                       <span className="text-white/90 font-mono">{rule.find}</span>
+                                       <span className="text-amber-400">➔</span>
+                                       <span className="text-amber-300 font-mono">{rule.replace}</span>
+                                    </div>
+                                    <button
+                                       onClick={() => handleDeleteRule(rule.id)}
+                                       className="text-white/30 hover:text-red-400 p-0.5 transition-colors cursor-pointer"
+                                       title="Delete rule"
+                                    >
+                                       <Trash2 className="w-3 h-3" />
+                                    </button>
+                                 </div>
+                              ))}
+                           </div>
+
+                           {/* Add new rule */}
+                           <div className="flex items-center gap-1.5 pt-1">
+                              <input
+                                 type="text"
+                                 value={newRuleFind}
+                                 onChange={(e) => setNewRuleFind(e.target.value)}
+                                 placeholder="Find (e.g. thương)"
+                                 className="w-1/2 bg-black/60 border border-white/10 rounded px-2 py-1 text-[10px] text-white focus:outline-none"
+                              />
+                              <input
+                                 type="text"
+                                 value={newRuleReplace}
+                                 onChange={(e) => setNewRuleReplace(e.target.value)}
+                                 placeholder="Replace (e.g. thươngg)"
+                                 className="w-1/2 bg-black/60 border border-white/10 rounded px-2 py-1 text-[10px] text-white focus:outline-none"
+                              />
+                              <button
+                                 onClick={handleAddRule}
+                                 disabled={!newRuleFind.trim()}
+                                 className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[9px] font-bold px-2.5 py-1 rounded transition-colors shrink-0 flex items-center gap-1 uppercase cursor-pointer"
+                              >
+                                 <Plus className="w-3 h-3" /> Add
+                              </button>
+                           </div>
+                        </div>
+                     )}
+                  </div>
+                  {lyricFormatted && (
+                     <div className="flex flex-col gap-2 mt-2 border-t border-white/5 pt-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                           <label className="text-[10px] text-amber-400 font-bold uppercase tracking-wider flex items-center gap-2">
+                              <span>Formatted Output</span>
+                              {lyricDiff && !isEditingFormatted && (
+                                 <span className="text-[9px] font-normal text-white/50 bg-amber-400/10 border border-amber-400/20 px-1.5 py-0.5 rounded">
+                                    Diff View Active
+                                 </span>
+                              )}
+                           </label>
+
+                           <div className="flex flex-wrap items-center gap-1.5">
+                              {/* Undo Button */}
+                              <button
+                                 onClick={handleUndoLyric}
+                                 disabled={lyricHistory.length === 0}
+                                 className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 text-white/80 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                                 title="Undo recent addition/replacement (Ctrl+Z)"
+                              >
+                                 <Undo2 className="w-3 h-3 text-amber-400" />
+                                 Undo {lyricHistory.length > 0 && `(${lyricHistory.length})`}
+                              </button>
+
+                              {/* Redo Button */}
+                              <button
+                                 onClick={handleRedoLyric}
+                                 disabled={lyricRedoStack.length === 0}
+                                 className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:hover:bg-white/5 text-white/80 hover:text-white border border-white/10 transition-colors cursor-pointer"
+                                 title="Redo (Ctrl+Y)"
+                              >
+                                 <Redo2 className="w-3 h-3 text-amber-400" />
+                                 Redo {lyricRedoStack.length > 0 && `(${lyricRedoStack.length})`}
+                              </button>
+
+                              {/* View Toggle (if Diff exists or raw & formatted lyrics exist) */}
+                              {(lyricDiff || (lyricRaw && lyricFormatted)) && (
+                                 <button
+                                    onClick={() => {
+                                       if (isEditingFormatted) {
+                                          if (lyricRaw && lyricFormatted) {
+                                             setLyricDiff(diffWords(lyricRaw, lyricFormatted));
+                                          }
+                                          setIsEditingFormatted(false);
+                                       } else {
+                                          setIsEditingFormatted(true);
+                                       }
+                                    }}
+                                    className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded bg-amber-400/20 hover:bg-amber-400/30 text-amber-300 border border-amber-400/30 transition-colors cursor-pointer"
+                                    title={isEditingFormatted ? "Switch to Highlighted Diff View" : "Switch to Direct Text Editor"}
+                                 >
+                                    {isEditingFormatted ? (
+                                       <>
+                                          <Eye className="w-3 h-3" /> Diff View
+                                       </>
+                                    ) : (
+                                       <>
+                                          <Edit3 className="w-3 h-3" /> Edit Text
+                                       </>
+                                    )}
+                                 </button>
+                              )}
+
+                              {/* Clear Diff */}
+                              {lyricDiff && (
+                                 <button
+                                    onClick={() => setLyricDiff(null)}
+                                    className="text-[9px] font-bold uppercase tracking-wider px-2 py-1 rounded text-white/50 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                                    title="Clear highlighted diff marks"
+                                 >
+                                    Clear Diff
+                                 </button>
+                              )}
+
+                              {/* Copy Button */}
+                              <button 
+                                 onClick={handleCopyLyric} 
+                                 className={`flex items-center gap-1 transition-colors px-2 py-1 rounded ${isLyricCopied ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'text-white/60 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10'}`}
+                                 title="Copy formatted lyric to clipboard"
+                              >
+                                 {isLyricCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                 <span className="text-[9px] uppercase tracking-wider font-bold">
+                                    {isLyricCopied ? "Copied" : "Copy"}
+                                 </span>
+                              </button>
+                           </div>
+                        </div>
+
+                        {/* Content Render: Either Diff view or Editable Textarea */}
+                        {lyricDiff && !isEditingFormatted ? (
+                           <div 
+                              onClick={() => setIsEditingFormatted(true)}
+                              className="group relative w-full bg-black/40 border border-amber-400/30 hover:border-amber-400/60 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar overflow-y-auto max-h-[300px] whitespace-pre-wrap cursor-pointer transition-colors"
+                              title="Click anywhere to edit text"
+                           >
+                              <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 bg-amber-400/90 text-black font-extrabold text-[9px] uppercase tracking-wider px-2 py-0.5 rounded shadow transition-opacity flex items-center gap-1">
+                                 <Edit3 className="w-3 h-3" /> Click to edit
+                              </div>
                               {lyricDiff.map((part, index) => (
                                  <span 
                                     key={index} 
                                     className={
-                                       part.added ? 'bg-green-500/30 text-green-200 rounded px-1' :
+                                       part.added ? 'bg-green-500/30 text-green-200 rounded px-1 font-semibold' :
                                        part.removed ? 'bg-red-500/30 text-red-200 line-through rounded px-1' :
                                        ''
                                     }
@@ -2445,11 +3046,35 @@ export default function StemStudio({
                            </div>
                         ) : (
                            <textarea 
-                              className="w-full bg-black/40 border border-amber-400/30 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/80 min-h-[150px]"
+                              className="w-full bg-black/40 border border-amber-400/40 focus:border-amber-400 rounded-xl p-3 text-white text-sm leading-relaxed custom-scrollbar focus:outline-none min-h-[160px] font-mono transition-colors"
                               value={lyricFormatted}
+                              placeholder="Formatted lyrics will appear here. You can edit this text directly..."
+                              onFocus={() => {
+                                 if (lyricHistory.length === 0 || lyricHistory[lyricHistory.length - 1].text !== lyricFormatted) {
+                                    setLyricHistory(prev => [...prev.slice(-30), { text: lyricFormatted, diff: lyricDiff }]);
+                                 }
+                              }}
                               onChange={(e) => {
-                                 setLyricFormatted(e.target.value);
-                                 setLyricDiff(null);
+                                 const val = e.target.value;
+                                 setLyricFormatted(val);
+                                 if (lyricRaw) {
+                                    setLyricDiff(diffWords(lyricRaw, val));
+                                 } else {
+                                    setLyricDiff(null);
+                                 }
+                              }}
+                              onKeyDown={(e) => {
+                                 if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                                    e.preventDefault();
+                                    if (e.shiftKey) {
+                                       handleRedoLyric();
+                                    } else {
+                                       handleUndoLyric();
+                                    }
+                                 } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+                                    e.preventDefault();
+                                    handleRedoLyric();
+                                 }
                               }}
                            />
                         )}
@@ -2475,154 +3100,150 @@ export default function StemStudio({
        <div className="absolute top-0 left-1/4 w-96 h-96 bg-amber-400/[0.03] rounded-full blur-[120px] pointer-events-none z-0" />
        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-indigo-500/[0.03] rounded-full blur-[150px] pointer-events-none z-0" />
        {/* HEADER BAR */}
-       <div className="flex flex-wrap items-center justify-between p-2 sm:p-3.5 border-b border-white/5 bg-black/30 backdrop-blur-md shrink-0 z-50 gap-2 overflow-visible">
-          <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 flex-wrap">
-             {!isEmbedded ? (
-                <button onClick={onClose} className="flex items-center gap-1 text-white/60 hover:text-white transition-colors text-[10px] font-black tracking-wider sm:tracking-widest uppercase">
-                   <ArrowLeft className="w-3.5 h-3.5" /> Back
-                </button>
-             ) : (
-                <button onClick={onClose} className="p-1.5 rounded-lg bg-white/5 text-white/50 hover:bg-white/10 hover:text-white transition-colors">
-                   <ArrowLeft className="w-4 h-4" />
-                </button>
-             )}
-             <span className="text-[9px] font-black tracking-[0.15em] text-amber-400 uppercase bg-amber-400/5 px-2 py-0.5 rounded border border-amber-400/10 hidden xs:inline-block">
-                Stem Studio
-             </span>
+       <div className="flex items-center gap-1.5 sm:gap-2 p-2 sm:p-3 border-b border-white/10 bg-black/50 backdrop-blur-xl shrink-0 z-50 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden whitespace-nowrap w-full">
+          {/* Back Button */}
+          {!isEmbedded ? (
+             <button onClick={onClose} className="p-1.5 sm:px-2.5 sm:py-1 rounded-full bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition-colors text-[10px] font-black tracking-wider uppercase flex items-center gap-1 shrink-0 cursor-pointer">
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Back</span>
+             </button>
+          ) : (
+             <button onClick={onClose} className="p-1.5 rounded-lg bg-white/5 text-white/50 hover:bg-white/10 hover:text-white transition-colors shrink-0 cursor-pointer">
+                <ArrowLeft className="w-4 h-4" />
+             </button>
+          )}
 
-             {onExtractNewSong && (
-                <button
-                    onClick={() => {
-                        setIsPlaying(false);
-                        Object.values(audioElementsRef.current).forEach((a: HTMLAudioElement) => {
+          {/* Stem Studio Badge */}
+          <span className="text-[9px] font-black tracking-[0.12em] text-amber-400 uppercase bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20 shrink-0 hidden md:inline-block">
+             Stem Studio
+          </span>
+
+          {/* Extract New Song Button */}
+          {onExtractNewSong && (
+             <button
+                 onClick={() => {
+                     setIsPlaying(false);
+                     Object.values(audioElementsRef.current).forEach((a: HTMLAudioElement) => {
+                        try { a.pause(); } catch {}
+                     });
+                     if (typeof document !== 'undefined') {
+                        document.querySelectorAll('audio').forEach((a: HTMLAudioElement) => {
                            try { a.pause(); } catch {}
                         });
-                        if (typeof document !== 'undefined') {
-                           document.querySelectorAll('audio').forEach((a: HTMLAudioElement) => {
-                              try { a.pause(); } catch {}
-                           });
-                        }
-                        onExtractNewSong();
-                    }}
-                    className="ml-0.5 px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-wider sm:tracking-widest uppercase rounded-full shadow-[0_0_15px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0"
-                    title={`Extract stems for ${newSongTitle || 'current song'}`}
-                >
-                    <Sparkles className="w-3 h-3" />
-                    EXTract new
-                </button>
-             )}
+                     }
+                     onExtractNewSong();
+                 }}
+                 className="px-2.5 py-1 bg-amber-400 text-black text-[9px] font-black tracking-wider uppercase rounded-full shadow-[0_0_12px_rgba(251,191,36,0.3)] hover:scale-105 active:scale-95 transition-all flex items-center gap-1 shrink-0 cursor-pointer"
+                 title={`Extract stems for ${newSongTitle || 'current song'}`}
+             >
+                 <Sparkles className="w-3 h-3 shrink-0" />
+                 <span className="hidden sm:inline">EXTRACT NEW</span>
+                 <span className="inline sm:hidden">NEW</span>
+             </button>
+          )}
+
+          {/* Export Buttons */}
+          <div className="flex items-center gap-1 shrink-0 ml-auto">
+             <button
+                onClick={() => handleExportMix("mp3")}
+                disabled={stemmixStatus !== "ready" || isExporting}
+                className={`flex items-center gap-1 text-[9px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full transition-all active:scale-95 shadow-md cursor-pointer ${
+                   stemmixStatus === "ready"
+                     ? isExporting && exportFormat === "mp3"
+                       ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
+                       : "bg-white/[0.06] text-white hover:bg-white/[0.12] hover:text-amber-400 border border-white/10"
+                     : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
+                }`}
+                title="Export Mix as MP3 (192kbps)"
+             >
+                {isExporting && exportFormat === "mp3" ? (
+                   <Loader2 className="w-3 h-3 animate-spin text-black" />
+                ) : (
+                   <Download className="w-3 h-3 text-amber-400" />
+                )}
+                <span>{isExporting && exportFormat === "mp3" ? `${exportProgress}%` : "MP3"}</span>
+             </button>
+
+             <button
+                onClick={() => handleExportMix("wav")}
+                disabled={stemmixStatus !== "ready" || isExporting}
+                className={`flex items-center gap-1 text-[9px] font-black tracking-wider uppercase px-2.5 py-1 rounded-full transition-all active:scale-95 shadow-md cursor-pointer ${
+                   stemmixStatus === "ready"
+                     ? isExporting && exportFormat === "wav"
+                       ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
+                       : "bg-white/[0.06] text-white hover:bg-white/[0.12] hover:text-amber-400 border border-white/10"
+                     : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
+                }`}
+                title="Export Mix as Lossless WAV"
+             >
+                {isExporting && exportFormat === "wav" ? (
+                   <Loader2 className="w-3 h-3 animate-spin text-black" />
+                ) : (
+                   <Download className="w-3 h-3 text-amber-400" />
+                )}
+                <span>{isExporting && exportFormat === "wav" ? `${exportProgress}%` : "WAV"}</span>
+             </button>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0 flex-wrap justify-end">
-             {/* WebGPU Quality Dropdown Header Selector */}
-             {separationMode === "webgpu" && (
-                <div className="flex items-center gap-1 bg-[#12131C] px-2 py-1 rounded-full border border-amber-400/30 shadow-md shrink-0">
-                   <Settings2 className="w-3 h-3 text-amber-400 shrink-0" />
-                   <span className="text-[9px] font-black uppercase text-amber-400/80 hidden lg:inline">Quality:</span>
-                   <select
-                      value={webgpuQuality || "ultra"}
-                      onChange={(e) => {
-                         const val = e.target.value as 'fast' | 'high' | 'ultra' | 'pro';
-                         onWebgpuQualityChange?.(val);
-                      }}
-                      className="bg-transparent text-[9px] font-black uppercase tracking-wider text-amber-400 focus:outline-none cursor-pointer"
-                      title="WebGPU Separation Quality & Filter Slope"
-                   >
-                      <option value="fast" className="bg-[#12131A] text-white">Fast (255 taps)</option>
-                      <option value="high" className="bg-[#12131A] text-white">High (1023 taps)</option>
-                      <option value="ultra" className="bg-[#12131A] text-white">Ultra (4095 taps)</option>
-                      <option value="pro" className="bg-[#12131A] text-white">Max Pro (8191 taps)</option>
-                   </select>
-                </div>
-             )}
-
-             {/* Engine Toggle Selection */}
-             <div className="flex items-center gap-0.5 bg-white/[0.03] p-0.5 rounded-full border border-white/5 shrink-0">
-                <button
-                   onClick={() => onSetSeparationMode?.("webgpu")}
-                   className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
-                     separationMode === "webgpu"
-                       ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
-                       : "text-white/40 hover:text-white/70"
-                   }`}
-                   title="Use high-performance client-side WebGPU DSP isolation"
+          {/* WebGPU Quality Dropdown */}
+          {separationMode === "webgpu" && (
+             <div className="flex items-center gap-1 bg-[#12131C] px-2 py-1 rounded-full border border-amber-400/30 shadow-md shrink-0">
+                <Settings2 className="w-3 h-3 text-amber-400 shrink-0" />
+                <select
+                   value={webgpuQuality || "ultra"}
+                   onChange={(e) => {
+                      const val = e.target.value as 'fast' | 'high' | 'ultra' | 'pro';
+                      onWebgpuQualityChange?.(val);
+                   }}
+                   className="bg-transparent text-[9px] font-black uppercase tracking-wider text-amber-400 focus:outline-none cursor-pointer"
+                   title="WebGPU Separation Quality & Filter Slope"
                 >
-                   <Zap className="w-3 h-3 shrink-0" />
-                   <span>WebGPU</span>
-                </button>
-                <button
-                   onClick={() => onSetSeparationMode?.("ai")}
-                   className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
-                     separationMode === "ai"
-                       ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
-                       : "text-white/40 hover:text-white/70"
-                   }`}
-                   title="Use server-side AI Cloud"
-                >
-                   <Cloud className="w-3 h-3 shrink-0" />
-                   <span>AI Cloud</span>
-                </button>
-                <button
-                   onClick={() => onSetSeparationMode?.("onnx")}
-                   className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 ${
-                     separationMode === "onnx"
-                       ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
-                       : "text-white/40 hover:text-white/70"
-                   }`}
-                   title="Use client-side ONNX neural network"
-                >
-                   <Brain className="w-3 h-3 shrink-0" />
-                   <span>ONNX</span>
-                </button>
+                   <option value="fast" className="bg-[#12131A] text-white">Fast (255t)</option>
+                   <option value="high" className="bg-[#12131A] text-white">High (1023t)</option>
+                   <option value="ultra" className="bg-[#12131A] text-white">Ultra (4095t)</option>
+                   <option value="pro" className="bg-[#12131A] text-white">Pro (8191t)</option>
+                </select>
              </div>
+          )}
 
-             <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-                {/* MP3 Export Button */}
-                <button
-                   onClick={() => handleExportMix("mp3")}
-                   disabled={stemmixStatus !== "ready" || isExporting}
-                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-wider sm:tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
-                      stemmixStatus === "ready"
-                        ? isExporting && exportFormat === "mp3"
-                          ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
-                          : "bg-white/[0.04] text-white hover:bg-white/[0.1] hover:text-amber-400 border border-white/5"
-                        : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
-                   }`}
-                   title="Export Mix as MP3 (192kbps)"
-                >
-                   {isExporting && exportFormat === "mp3" ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-black" />
-                   ) : (
-                      <Download className="w-3 h-3 text-amber-400" />
-                   )}
-                   <span>
-                      {isExporting && exportFormat === "mp3" ? `${exportProgress}%` : "MP3"}
-                   </span>
-                </button>
-
-                {/* WAV Export Button */}
-                <button
-                   onClick={() => handleExportMix("wav")}
-                   disabled={stemmixStatus !== "ready" || isExporting}
-                   className={`flex items-center gap-1 sm:gap-1.5 text-[9px] font-black tracking-wider sm:tracking-widest uppercase px-2.5 sm:px-3 py-1.5 rounded-full transition-all active:scale-95 shadow-md ${
-                      stemmixStatus === "ready"
-                        ? isExporting && exportFormat === "wav"
-                          ? "bg-amber-400 text-black shadow-amber-400/25 animate-pulse"
-                          : "bg-white/[0.04] text-white hover:bg-white/[0.1] hover:text-amber-400 border border-white/5"
-                        : "bg-white/5 text-white/20 border border-white/5 cursor-not-allowed shadow-none"
-                   }`}
-                   title="Export Mix as Lossless WAV"
-                >
-                   {isExporting && exportFormat === "wav" ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-black" />
-                   ) : (
-                      <Download className="w-3 h-3 text-amber-400" />
-                   )}
-                   <span>
-                      {isExporting && exportFormat === "wav" ? `${exportProgress}%` : "WAV"}
-                   </span>
-                </button>
-             </div>
+          {/* Engine Toggle Selection */}
+          <div className="flex items-center gap-0.5 bg-white/[0.04] p-0.5 rounded-full border border-white/10 shrink-0">
+             <button
+                onClick={() => onSetSeparationMode?.("webgpu")}
+                className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 cursor-pointer ${
+                  separationMode === "webgpu"
+                    ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
+                    : "text-white/40 hover:text-white/70"
+                }`}
+                title="Use high-performance client-side WebGPU DSP isolation"
+             >
+                <Zap className="w-3 h-3 shrink-0" />
+                <span>WebGPU</span>
+             </button>
+             <button
+                onClick={() => onSetSeparationMode?.("ai")}
+                className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 cursor-pointer ${
+                  separationMode === "ai"
+                    ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
+                    : "text-white/40 hover:text-white/70"
+                }`}
+                title="Use server-side AI Cloud"
+             >
+                <Cloud className="w-3 h-3 shrink-0" />
+                <span>AI</span>
+             </button>
+             <button
+                onClick={() => onSetSeparationMode?.("onnx")}
+                className={`px-2 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 cursor-pointer ${
+                  separationMode === "onnx"
+                    ? "bg-amber-400 text-black shadow-md shadow-amber-400/25 scale-100"
+                    : "text-white/40 hover:text-white/70"
+                }`}
+                title="Use client-side ONNX neural network"
+             >
+                <Brain className="w-3 h-3 shrink-0" />
+                <span>ONNX</span>
+             </button>
           </div>
        </div>
 
@@ -2822,14 +3443,34 @@ export default function StemStudio({
           {stemmixStatus !== "ready" ? (
              <div className={`flex-1 flex flex-col items-center justify-center p-2 sm:p-6 text-center animate-in fade-in duration-500 w-full ${downloadLink ? 'py-2 my-1' : 'my-auto'}`}>
                 {stemmixStatus === "idle" ? (
-                   <div className={`flex flex-col items-center justify-center px-4 text-center w-full ${downloadLink ? 'py-4' : 'py-10 sm:py-16'}`}>
-                      <div className="w-16 h-16 rounded-full bg-amber-400/10 border border-amber-400/20 flex items-center justify-center text-amber-400 mb-6">
-                         <Sparkles className="w-8 h-8" />
-                      </div>
-                      <h3 className="text-sm sm:text-base tracking-[0.2em] uppercase font-black text-white mb-3">Extract Stems</h3>
-                      <p className="text-[11px] sm:text-xs text-white/40 text-center max-w-sm leading-relaxed mb-8">
-                         Isolate vocals, drums, bass, and other instruments using AI or WebGPU processing.
-                      </p>
+                   <div className={`flex flex-col items-center justify-center px-4 text-center w-full max-w-3xl sm:max-w-4xl mx-auto ${downloadLink ? 'py-4' : 'py-8 sm:py-12'}`}>
+                      <div className="w-full bg-gradient-to-b from-neutral-900/90 via-black/80 to-black/95 border border-white/10 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl relative overflow-hidden flex flex-col items-center">
+                         {/* Ambient Glow background */}
+                         <div className="absolute -top-24 -left-24 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+                         <div className="absolute -bottom-24 -right-24 w-72 h-72 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                         {/* Header Icon Badge */}
+                         <div className="relative mb-5 flex items-center justify-center">
+                            <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-amber-500/20 to-indigo-500/20 blur-xl animate-pulse" />
+                            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-br from-amber-400/20 via-amber-500/10 to-indigo-500/20 border border-amber-400/30 flex items-center justify-center text-amber-300 shadow-xl relative z-10 backdrop-blur-md">
+                               <Waves className="w-8 h-8 sm:w-10 sm:h-10 text-amber-400" />
+                            </div>
+                         </div>
+
+                         <h3 className="text-base sm:text-xl tracking-[0.25em] uppercase font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-amber-100 to-amber-300 mb-2">
+                            Extract Stems
+                         </h3>
+                         <p className="text-xs sm:text-sm text-white/50 text-center max-w-lg leading-relaxed mb-4">
+                            Isolate vocals, drums, bass, and other instruments using AI or WebGPU processing.
+                         </p>
+
+                         <div className="w-full max-w-xl mb-8 p-3.5 sm:p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-200/90 text-[11px] sm:text-xs leading-relaxed text-center backdrop-blur-md shadow-lg flex items-start sm:items-center justify-center gap-2.5">
+                            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
+                            <p className="text-left sm:text-center">
+                               <span className="font-bold text-amber-300 uppercase tracking-wider text-[10px] sm:text-[11px] block sm:inline mr-1">⚠️ Cảnh báo hệ thống:</span>
+                               Không hỗ trợ tách STEM với tệp âm thanh quá dài. Tuyệt đối không dùng công cụ tự động để cào/tải nhạc hàng loạt — hành vi này sẽ gây <strong>kiệt bộ nhớ (RAM)</strong>, <strong>quá tải băng thông</strong> và dẫn tới việc <strong>IP của server bị khóa bởi Tiktok hay YT. Không sử dụng search YT quá nhiều dẫn đến hết memory của Free server</strong>.
+                            </p>
+                         </div>
                       {isTrimmingBeforeExtract ? (
                          <div className="w-full max-w-lg">
                             <AudioTrimmer 
@@ -2842,157 +3483,188 @@ export default function StemStudio({
                             />
                          </div>
                       ) : (
-                         <div className="flex flex-col items-center justify-center gap-4">
-                            <div className="flex flex-col items-center gap-2">
-                               <button
-                                   type="button"
-                                   onClick={handleDirectSunoBypass}
-                                   disabled={isBypassingSuno || !originalAudioUrl}
-                                   className="flex items-center justify-center gap-2 text-[10px] tracking-wider sm:tracking-widest uppercase font-black border-2 border-indigo-500 text-white bg-indigo-600 px-8 py-3 rounded-full hover:bg-indigo-500 hover:border-indigo-400 transition-all active:scale-95 shadow-[0_0_20px_rgba(99,102,241,0.4)] disabled:opacity-50 disabled:cursor-not-allowed"
-                                   title="Applies a slight speed shift and imperceptible noise to bypass Suno's detection."
-                               >
-                                  {isBypassingSuno ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                                  {isBypassingSuno ? "Processing Bypass..." : "Bypass Suno Detection (Mixdown)"}
-                               </button>
-                               <button
-                                   type="button"
-                                   onClick={() => setShowSunoSettings(!showSunoSettings)}
-                                   className="text-[9px] uppercase tracking-wider font-bold text-white/50 hover:text-white/80 transition-colors flex items-center gap-1"
-                               >
-                                  <Settings2 className="w-3 h-3" />
-                                  Bypass Settings
-                               </button>
+                         <div className="flex flex-col items-center justify-center w-full max-w-2xl gap-6">
+                            {/* Primary Suno Bypass Action Area */}
+                            <div className="flex flex-col items-center gap-3 w-full">
+                               <div className="flex flex-wrap items-center justify-center gap-3 w-full">
+                                  <button
+                                      type="button"
+                                      onClick={handleDirectSunoBypass}
+                                      disabled={isBypassingSuno || !originalAudioUrl}
+                                      className="flex items-center justify-center gap-2.5 text-xs tracking-wider sm:tracking-widest uppercase font-black border-2 border-indigo-500/80 text-white bg-gradient-to-r from-indigo-600 to-indigo-700 px-7 py-3.5 rounded-2xl hover:from-indigo-500 hover:to-indigo-600 hover:border-indigo-400 transition-all active:scale-95 shadow-[0_0_25px_rgba(99,102,241,0.35)] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                                      title="Applies a slight speed shift and imperceptible noise to bypass Suno detection."
+                                  >
+                                     {isBypassingSuno ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4 text-indigo-200" />}
+                                     {isBypassingSuno ? "Processing Bypass..." : "Bypass Suno Detection (Mixdown)"}
+                                  </button>
+
+                                  <button
+                                      type="button"
+                                      onClick={() => setShowSunoSettings(!showSunoSettings)}
+                                      className={`text-xs uppercase tracking-wider font-bold transition-all flex items-center gap-2 px-4 py-3.5 rounded-2xl border cursor-pointer ${
+                                         showSunoSettings 
+                                            ? "bg-indigo-500/20 text-indigo-300 border-indigo-400/50 shadow-lg" 
+                                            : "bg-white/5 hover:bg-white/10 text-white/70 hover:text-white border-white/10"
+                                      }`}
+                                  >
+                                     <Settings2 className="w-4 h-4 text-indigo-400" />
+                                     Bypass Settings
+                                  </button>
+                               </div>
+
+                               {/* Wide, Organized Bypass Settings Box */}
                                {showSunoSettings && (
-                                   <div className="mt-2 p-3 bg-black/40 border border-white/10 rounded-xl flex flex-col gap-3 w-64 animate-in fade-in slide-in-from-top-2">
-                                       <div className="flex items-center gap-2 pb-1 border-b border-white/10">
-                                           <button
-                                               type="button"
-                                               onClick={handleResetSunoSystemDefault}
-                                               className="flex-1 py-1.5 px-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
-                                               title="Reset to System Default (1.045x Speed, +6.5 Pitch, +6.5dB EQ)"
-                                           >
-                                               <RotateCcw className="w-3 h-3" />
-                                               Default
-                                           </button>
-                                           <button
-                                               type="button"
-                                               onClick={handleResetSunoOriginal}
-                                               className="flex-1 py-1.5 px-2 bg-white/10 hover:bg-white/20 text-white/80 border border-white/15 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
-                                               title="Reset to Original Audio (1.000x Speed, 0 Pitch, 0dB EQ)"
-                                           >
-                                               <FileAudio className="w-3 h-3" />
-                                               Original
-                                           </button>
-                                       </div>
-                                       <div className="flex flex-col gap-1">
-                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                               <span>Speed Shift</span>
-                                               <span className="text-amber-400">{sunoSpeedFactor.toFixed(3)}x</span>
+                                   <div className="my-4 p-5 sm:p-6 bg-black/70 border border-indigo-500/30 rounded-2xl flex flex-col gap-5 w-full animate-in fade-in slide-in-from-top-3 shadow-2xl backdrop-blur-md text-left">
+                                       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
+                                           <div className="flex items-center gap-2">
+                                              <SlidersHorizontal className="w-4 h-4 text-indigo-400" />
+                                              <span className="text-xs font-black uppercase tracking-wider text-white">Suno Bypass Controls</span>
                                            </div>
-                                           <input 
-                                               type="range" 
-                                               min="0.5" 
-                                               max="1.5" 
-                                               step="0.005" 
-                                               value={sunoSpeedFactor}
-                                               onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
-                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                                           />
-                                       </div>
-                                       <div className="flex flex-col gap-1">
-                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                               <span>Pitch Shift (Semitones)</span>
-                                               <span className="text-amber-400">{sunoPitchShift.toFixed(1)}</span>
+                                           <div className="flex items-center gap-2">
+                                               <button
+                                                   type="button"
+                                                   onClick={handleResetSunoSystemDefault}
+                                                   className="py-1.5 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
+                                                   title="Reset to System Default (1.045x Speed, +6.5 Pitch, +6.5dB EQ)"
+                                               >
+                                                   <RotateCcw className="w-3 h-3" />
+                                                   Default
+                                               </button>
+                                               <button
+                                                   type="button"
+                                                   onClick={handleResetSunoOriginal}
+                                                   className="py-1.5 px-3 bg-white/10 hover:bg-white/20 text-white/80 border border-white/15 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer"
+                                                   title="Reset to Original Audio (1.000x Speed, 0 Pitch, 0dB EQ)"
+                                               >
+                                                   <FileAudio className="w-3 h-3" />
+                                                   Original
+                                               </button>
                                            </div>
-                                           <input 
-                                               type="range" 
-                                               min="-12" 
-                                               max="12" 
-                                               step="0.1" 
-                                               value={sunoPitchShift}
-                                               onChange={(e) => setSunoPitchShift(parseFloat(e.target.value))}
-                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                                           />
                                        </div>
-                                       <div className="flex flex-col gap-1">
-                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                               <span>Noise Level</span>
-                                               <span className="text-amber-400">{sunoNoiseLevel.toFixed(4)}</span>
+
+                                       {/* Grid Layout for Sliders */}
+                                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                                           <div className="flex flex-col gap-2 p-3 bg-white/5 border border-white/5 rounded-xl">
+                                               <div className="flex justify-between items-center text-xs font-bold text-white/80">
+                                                   <span>Speed Shift</span>
+                                                   <span className="text-amber-400 font-mono bg-amber-400/10 px-2 py-0.5 rounded text-[10px]">{sunoSpeedFactor.toFixed(3)}x</span>
+                                               </div>
+                                               <input 
+                                                   type="range" 
+                                                   min="0.5" 
+                                                   max="1.5" 
+                                                   step="0.005" 
+                                                   value={sunoSpeedFactor}
+                                                   onChange={(e) => setSunoSpeedFactor(parseFloat(e.target.value))}
+                                                   className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                               />
                                            </div>
-                                           <input 
-                                               type="range" 
-                                               min="0" 
-                                               max="0.05" 
-                                               step="0.0005" 
-                                               value={sunoNoiseLevel}
-                                               onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
-                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                                           />
-                                       </div>
-                                       <div className="flex flex-col gap-1">
-                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                               <span>EQ Low (320Hz)</span>
-                                               <span className="text-amber-400">{sunoEqLow.toFixed(1)} dB</span>
+
+                                           <div className="flex flex-col gap-2 p-3 bg-white/5 border border-white/5 rounded-xl">
+                                               <div className="flex justify-between items-center text-xs font-bold text-white/80">
+                                                   <span>Pitch Shift (Semitones)</span>
+                                                   <span className="text-amber-400 font-mono bg-amber-400/10 px-2 py-0.5 rounded text-[10px]">{sunoPitchShift.toFixed(1)}</span>
+                                               </div>
+                                               <input 
+                                                   type="range" 
+                                                   min="-12" 
+                                                   max="12" 
+                                                   step="0.1" 
+                                                   value={sunoPitchShift}
+                                                   onChange={(e) => setSunoPitchShift(parseFloat(e.target.value))}
+                                                   className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                               />
                                            </div>
-                                           <input 
-                                               type="range" 
-                                               min="-24" max="24" step="0.5" 
-                                               value={sunoEqLow}
-                                               onChange={(e) => setSunoEqLow(parseFloat(e.target.value))}
-                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                                           />
-                                       </div>
-                                       <div className="flex flex-col gap-1">
-                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                               <span>EQ Mid (1kHz)</span>
-                                               <span className="text-amber-400">{sunoEqMid.toFixed(1)} dB</span>
+
+                                           <div className="flex flex-col gap-2 p-3 bg-white/5 border border-white/5 rounded-xl">
+                                               <div className="flex justify-between items-center text-xs font-bold text-white/80">
+                                                   <span>Noise Level</span>
+                                                   <span className="text-amber-400 font-mono bg-amber-400/10 px-2 py-0.5 rounded text-[10px]">{sunoNoiseLevel.toFixed(4)}</span>
+                                               </div>
+                                               <input 
+                                                   type="range" 
+                                                   min="0" 
+                                                   max="0.05" 
+                                                   step="0.0005" 
+                                                   value={sunoNoiseLevel}
+                                                   onChange={(e) => setSunoNoiseLevel(parseFloat(e.target.value))}
+                                                   className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                               />
                                            </div>
-                                           <input 
-                                               type="range" 
-                                               min="-24" max="24" step="0.5" 
-                                               value={sunoEqMid}
-                                               onChange={(e) => setSunoEqMid(parseFloat(e.target.value))}
-                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                                           />
-                                       </div>
-                                       <div className="flex flex-col gap-1">
-                                           <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
-                                               <span>EQ High (3.2kHz)</span>
-                                               <span className="text-amber-400">{sunoEqHigh.toFixed(1)} dB</span>
+
+                                           <div className="flex flex-col gap-2 p-3 bg-white/5 border border-white/5 rounded-xl">
+                                               <div className="flex justify-between items-center text-xs font-bold text-white/80">
+                                                   <span>EQ Low (320Hz)</span>
+                                                   <span className="text-amber-400 font-mono bg-amber-400/10 px-2 py-0.5 rounded text-[10px]">{sunoEqLow.toFixed(1)} dB</span>
+                                               </div>
+                                               <input 
+                                                   type="range" 
+                                                   min="-24" max="24" step="0.5" 
+                                                   value={sunoEqLow}
+                                                   onChange={(e) => setSunoEqLow(parseFloat(e.target.value))}
+                                                   className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                               />
                                            </div>
-                                           <input 
-                                               type="range" 
-                                               min="-24" max="24" step="0.5" 
-                                               value={sunoEqHigh}
-                                               onChange={(e) => setSunoEqHigh(parseFloat(e.target.value))}
-                                               className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                                           />
+
+                                           <div className="flex flex-col gap-2 p-3 bg-white/5 border border-white/5 rounded-xl">
+                                               <div className="flex justify-between items-center text-xs font-bold text-white/80">
+                                                   <span>EQ Mid (1kHz)</span>
+                                                   <span className="text-amber-400 font-mono bg-amber-400/10 px-2 py-0.5 rounded text-[10px]">{sunoEqMid.toFixed(1)} dB</span>
+                                               </div>
+                                               <input 
+                                                   type="range" 
+                                                   min="-24" max="24" step="0.5" 
+                                                   value={sunoEqMid}
+                                                   onChange={(e) => setSunoEqMid(parseFloat(e.target.value))}
+                                                   className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                               />
+                                           </div>
+
+                                           <div className="flex flex-col gap-2 p-3 bg-white/5 border border-white/5 rounded-xl">
+                                               <div className="flex justify-between items-center text-xs font-bold text-white/80">
+                                                   <span>EQ High (3.2kHz)</span>
+                                                   <span className="text-amber-400 font-mono bg-amber-400/10 px-2 py-0.5 rounded text-[10px]">{sunoEqHigh.toFixed(1)} dB</span>
+                                               </div>
+                                               <input 
+                                                   type="range" 
+                                                   min="-24" max="24" step="0.5" 
+                                                   value={sunoEqHigh}
+                                                   onChange={(e) => setSunoEqHigh(parseFloat(e.target.value))}
+                                                   className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                                               />
+                                           </div>
                                        </div>
                                    </div>
                                )}
                             </div>
-                            <div className="flex items-center justify-center gap-3">
+
+                            {/* Divider */}
+                            <div className="w-full h-px bg-gradient-to-r from-transparent via-white/10 to-transparent my-1" />
+
+                            {/* Trim & Extraction Action Buttons */}
+                            <div className="flex flex-wrap items-center justify-center gap-4 w-full">
                                <button
                                    type="button"
                                    onClick={() => setIsTrimmingBeforeExtract(true)}
-                                   className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border border-white/20 text-white/70 bg-transparent px-8 py-3 rounded-full hover:bg-white/5 transition-all active:scale-95"
+                                   className="flex items-center gap-2 text-xs tracking-wider sm:tracking-widest uppercase font-black border border-white/20 text-white/80 bg-white/5 px-7 py-3.5 rounded-2xl hover:bg-white/10 hover:text-white transition-all active:scale-95 cursor-pointer"
                                >
+                                  <Scissors className="w-4 h-4 text-white/60" />
                                   Trim Audio
                                </button>
                                {onRetrySeparate && (
                                   <button
                                       type="button"
                                       onClick={onRetrySeparate}
-                                      className="text-[10px] tracking-wider sm:tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-amber-400 px-8 py-3 rounded-full hover:bg-amber-300 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_20px_rgba(251,191,36,0.3)]"
+                                      className="flex items-center gap-2 text-xs tracking-wider sm:tracking-widest uppercase font-black border-2 border-amber-400 text-black bg-gradient-to-r from-amber-400 to-amber-500 px-8 py-3.5 rounded-2xl hover:from-amber-300 hover:to-amber-400 hover:border-amber-300 transition-all active:scale-95 shadow-[0_0_25px_rgba(251,191,36,0.35)] cursor-pointer"
                                   >
+                                     <Sparkles className="w-4 h-4 text-black" />
                                      Run Stem Extraction
                                   </button>
                                )}
                             </div>
                          </div>
                       )}
-                      
-                      {/* PREVIEW & TRANSCRIPT SECTION */}
+                       {/* PREVIEW & TRANSCRIPT SECTION */}
                       {originalAudioUrl && !isTrimmingBeforeExtract && (
                         <div className="w-full max-w-4xl xl:max-w-5xl mt-6 sm:mt-12 flex flex-col gap-4 items-center bg-black/20 p-3 sm:p-5 rounded-[20px] sm:rounded-3xl border border-white/5 shadow-2xl">
                            <h4 className="text-[10px] font-bold text-white/50 uppercase tracking-[0.2em] mb-2">Original Audio Preview & Tools</h4>
@@ -3027,7 +3699,8 @@ export default function StemStudio({
                         </div>
                       )}
                    </div>
-                ) : stemmixStatus === "loading" ? (
+                </div>
+             ) : stemmixStatus === "loading" ? (
                    <div className="flex flex-col items-center justify-center py-12 px-4 text-white/50">
                       <div className="w-12 h-12 border-4 border-amber-400 rounded-full border-t-transparent animate-spin mb-6 shadow-[0_0_15px_rgba(251,191,36,0.2)]" />
                       <h3 className="text-sm sm:text-base tracking-[0.2em] uppercase font-black text-amber-400 mb-2 animate-pulse">{separationMode === "webgpu" ? "WebGPU DSP Processing..." : separationMode === "onnx" ? "ONNX Neural Net Processing..." : "AI Cloud Processing..."}</h3>
