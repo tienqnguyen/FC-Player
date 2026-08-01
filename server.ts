@@ -143,7 +143,7 @@ async function startServer() {
          console.warn("[Stream Proxy] direct url failed, falling back to yt-dlp");
       }
 
-      const ytDlpArgs = ["-f", "bestaudio", "-o", "-", url];
+      const ytDlpArgs = ["-f", "ba[ext=m4a]/b[ext=mp4]/ba/b/best", "-o", "-", url];
       const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
       res.setHeader("Content-Type", "audio/mpeg");
       res.setHeader("Transfer-Encoding", "chunked");
@@ -1320,6 +1320,42 @@ async function startServer() {
     }
   });
 
+  // API to transcode stream to clean WAV for reliable decoding
+  app.get("/api/clean-wav", async (req, res) => {
+    try {
+      let url = req.query.url as string;
+      if (!url) {
+        return res.status(400).json({ error: "URL is required" });
+      }
+      url = await resolveFacebookRedirect(url);
+      console.log(`[Clean WAV API] Transcoding to WAV: ${url}`);
+      
+      const ytDlpArgs = ["-f", "ba[ext=m4a]/b[ext=mp4]/ba/b/best", "-o", "-", url];
+      const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
+      
+      const ffmpegArgs = [
+        "-i", "pipe:0",
+        "-f", "wav",
+        "-acodec", "pcm_s16le",
+        "-ar", "44100",
+        "-ac", "2",
+        "pipe:1"
+      ];
+      const ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
+
+      subprocess.stdout.pipe(ffmpegProcess.stdin);
+      
+      res.setHeader("Content-Type", "audio/wav");
+      ffmpegProcess.stdout.pipe(res);
+
+      subprocess.on("error", (err) => console.error("[Clean WAV] yt-dlp error:", err));
+      ffmpegProcess.on("error", (err) => console.error("[Clean WAV] ffmpeg error:", err));
+    } catch (err: any) {
+      console.error("[Clean WAV API Error]", err);
+      res.status(500).json({ error: err.message || "Failed to transcode" });
+    }
+  });
+
   // API to download and proxy audio files from url with proper content type and attachment headers
   app.get("/api/download", async (req, res) => {
     try {
@@ -1366,7 +1402,7 @@ async function startServer() {
       }
 
       if (!response) {
-         const ytDlpArgs = ["-f", "bestaudio", "-o", "-", url];
+         const ytDlpArgs = ["-f", "ba[ext=m4a]/b[ext=mp4]/ba/b/best", "-o", "-", url];
          const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
          let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
          if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();

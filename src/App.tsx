@@ -4199,7 +4199,10 @@ export default function App() {
   };
 
   const handleSeparateStems = async (forceEngine?: "webgpu" | "onnx" | "ai") => {
-    const targetAudioUrl = audioUrl || currentSong?.audioUrl || currentSong?.url;
+    let targetAudioUrl = audioUrl || currentSong?.audioUrl || currentSong?.url;
+    if (targetAudioUrl && targetAudioUrl.includes("/api/stream") && (targetAudioUrl.includes("facebook.com") || targetAudioUrl.includes("fb.watch") || targetAudioUrl.includes("facebook"))) {
+      targetAudioUrl = targetAudioUrl.replace("/api/stream", "/api/clean-wav");
+    }
     if (!targetAudioUrl) return;
     
     setShowStemmix(true);

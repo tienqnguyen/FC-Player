@@ -891,6 +891,15 @@ export default function StemStudio({
   const [showAmbientInput, setShowAmbientInput] = useState<boolean>(false);
   const [ambientInputUrl, setAmbientInputUrl] = useState<string>("");
   const [showSpectrogram, setShowSpectrogram] = useState<boolean>(false);
+  
+  const decodeAudioUrl = useMemo(() => {
+     let url = originalAudioUrl;
+     if (url && url.includes("/api/stream") && (url.includes("facebook.com") || url.includes("fb.watch") || url.includes("facebook"))) {
+       url = url.replace("/api/stream", "/api/clean-wav");
+     }
+     return url;
+  }, [originalAudioUrl]);
+
   const [showPixabaySearch, setShowPixabaySearch] = useState<boolean>(false);
   const [pixabayQuery, setPixabayQuery] = useState<string>("rain");
   const [pixabayResults, setPixabayResults] = useState<any[]>([]);
@@ -1922,7 +1931,11 @@ export default function StemStudio({
     setExportProgress(0);
 
     try {
-      const res = await fetch(originalAudioUrl);
+      let fetchUrl = originalAudioUrl;
+      if (fetchUrl.includes("/api/stream") && (fetchUrl.includes("facebook.com") || fetchUrl.includes("fb.watch") || fetchUrl.includes("facebook"))) {
+        fetchUrl = fetchUrl.replace("/api/stream", "/api/clean-wav");
+      }
+      const res = await fetch(fetchUrl);
       const arrayBuffer = await res.arrayBuffer();
       if (!audioContextRef.current) {
         initAudio();
@@ -2473,7 +2486,7 @@ export default function StemStudio({
                <div className="flex flex-col gap-2.5">
                 {cohereTranscript && isEditingTranscript && (
                     <textarea 
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[200px]"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-[16px] sm:text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[200px]"
                         value={cohereTranscript || ""}
                         onChange={(e) => setCohereTranscript(e.target.value)}
                     />
@@ -2552,7 +2565,7 @@ export default function StemStudio({
                   <div className="flex flex-col gap-1">
                      <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Raw Lyrics</label>
                      <textarea 
-                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[100px]"
+                        className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-[16px] sm:text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[100px]"
                         value={lyricRaw}
                         onChange={(e) => {
                            const newRaw = e.target.value;
@@ -2568,7 +2581,7 @@ export default function StemStudio({
                      <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Style Request (Optional)</label>
                      <input 
                         type="text"
-                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/90 text-sm focus:outline-none focus:border-amber-400/50"
+                        className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white/90 text-[16px] sm:text-sm focus:outline-none focus:border-amber-400/50"
                         value={lyricStyle}
                         onChange={(e) => setLyricStyle(e.target.value)}
                         placeholder="e.g. Acoustic Pop, fast tempo"
@@ -2618,7 +2631,7 @@ export default function StemStudio({
                            type="text"
                            value={swapWordA}
                            onChange={(e) => setSwapWordA(e.target.value)}
-                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[16px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
                            placeholder="A"
                         />
                         <RotateCcw className="w-3 h-3 text-white/40 cursor-pointer hover:text-white" onClick={() => { const temp = swapWordA; setSwapWordA(swapWordB); setSwapWordB(temp); }} />
@@ -2626,7 +2639,7 @@ export default function StemStudio({
                            type="text"
                            value={swapWordB}
                            onChange={(e) => setSwapWordB(e.target.value)}
-                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[8.5px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
+                           className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 sm:py-1.5 text-[16px] sm:text-[10px] text-white w-9 sm:w-12 focus:outline-none focus:border-amber-400/50"
                            placeholder="B"
                         />
                         <button 
@@ -2648,80 +2661,80 @@ export default function StemStudio({
                   </div>
 
                   {/* FIND AND REPLACE & SUNO BYPASS TOOL */}
-                  <div className="flex flex-col gap-3 bg-black/40 border border-white/10 rounded-xl p-3 my-1">
+                  <div className="flex flex-col gap-2 sm:gap-3 bg-black/40 border-y sm:border border-white/10 sm:rounded-xl p-2 sm:p-3 my-1 -mx-4 sm:mx-0">
                      <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1.5">
                            <Replace className="w-3.5 h-3.5 text-amber-400" />
-                           <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                           <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-wider text-amber-400">
                               Find & Replace (Suno Lyric Bypass)
                            </span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 sm:gap-2">
                            <button
                               onClick={handleAddPairRow}
-                              className="text-[9px] font-bold text-amber-300 hover:text-amber-200 uppercase tracking-wider px-2 py-0.5 rounded bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/30 transition-colors flex items-center gap-1 cursor-pointer"
+                              className="text-[8px] sm:text-[9px] font-bold text-amber-300 hover:text-amber-200 uppercase tracking-wider px-1.5 sm:px-2 py-0.5 rounded bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/30 transition-colors flex items-center gap-1 cursor-pointer"
                               title="Add another Find & Replace row"
                            >
-                              <Plus className="w-3 h-3" /> Add Pair
+                              <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3" /> Add Pair
                            </button>
                            <button
                               onClick={() => setShowRuleManager(!showRuleManager)}
-                              className="text-[9px] font-bold text-white/60 hover:text-white uppercase tracking-wider px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-1 cursor-pointer"
+                              className="text-[8px] sm:text-[9px] font-bold text-white/60 hover:text-white uppercase tracking-wider px-1.5 sm:px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-1 cursor-pointer"
                            >
-                              <SlidersHorizontal className="w-3 h-3" />
+                              <SlidersHorizontal className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                               {showRuleManager ? "Hide Rules" : `Manage Rules (${bypassRules.filter(r => r.enabled).length})`}
                            </button>
                         </div>
                      </div>
 
                      {/* Multiple Find & Replace Pairs */}
-                     <div className="flex flex-col gap-2">
+                     <div className="flex flex-col gap-1.5 sm:gap-2">
                         {findReplacePairs.map((pair) => (
-                           <div key={pair.id} className="grid grid-cols-12 gap-1.5 items-center bg-black/50 border border-white/10 rounded-lg p-1.5 transition-colors hover:border-white/20">
-                              <div className="col-span-1 flex items-center justify-center">
+                           <div key={pair.id} className="flex flex-wrap sm:grid sm:grid-cols-12 gap-1 sm:gap-1.5 items-center bg-black/50 border border-white/10 rounded-lg p-1 sm:p-1.5 transition-colors hover:border-white/20">
+                              <div className="flex items-center justify-center w-5 sm:w-auto sm:col-span-1">
                                  <input
                                     type="checkbox"
                                     checked={pair.enabled}
                                     onChange={(e) => handleUpdatePairRow(pair.id, 'enabled', e.target.checked)}
-                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer"
+                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-2.5 h-2.5 sm:w-3 sm:h-3 cursor-pointer"
                                     title="Enable or disable this pair"
                                  />
                               </div>
-                              <div className="col-span-4 flex items-center gap-1 bg-black/40 border border-white/10 rounded px-2 py-1">
-                                 <span className="text-[8.5px] text-white/40 font-bold shrink-0">Find:</span>
+                              <div className="flex-1 flex items-center gap-1 bg-black/40 border border-white/10 rounded px-1.5 sm:px-2 py-0.5 sm:py-1 sm:col-span-4 min-w-[70px]">
+                                 <span className="text-[7.5px] sm:text-[8.5px] text-white/40 font-bold shrink-0">Find:</span>
                                  <input
                                     type="text"
                                     value={pair.find}
                                     onChange={(e) => handleUpdatePairRow(pair.id, 'find', e.target.value)}
                                     placeholder="e.g. Anh"
-                                    className="w-full bg-transparent text-[10.5px] text-white focus:outline-none"
+                                    className="w-full bg-transparent text-[16px] sm:text-[10.5px] text-white focus:outline-none min-w-0"
                                  />
                               </div>
-                              <div className="col-span-4 flex items-center gap-1 bg-black/40 border border-white/10 rounded px-2 py-1">
-                                 <span className="text-[8.5px] text-white/40 font-bold shrink-0">Replace:</span>
+                              <div className="flex-1 flex items-center gap-1 bg-black/40 border border-white/10 rounded px-1.5 sm:px-2 py-0.5 sm:py-1 sm:col-span-4 min-w-[70px]">
+                                 <span className="text-[7.5px] sm:text-[8.5px] text-white/40 font-bold shrink-0">Replace:</span>
                                  <input
                                     type="text"
                                     value={pair.replace}
                                     onChange={(e) => handleUpdatePairRow(pair.id, 'replace', e.target.value)}
                                     placeholder="e.g. anhh"
-                                    className="w-full bg-transparent text-[10.5px] text-white focus:outline-none"
+                                    className="w-full bg-transparent text-[16px] sm:text-[10.5px] text-white focus:outline-none min-w-0"
                                  />
                               </div>
-                              <div className="col-span-3 flex items-center gap-1 justify-end">
+                              <div className="flex items-center gap-1 justify-end shrink-0 sm:col-span-3 ml-auto">
                                  <button
                                     onClick={() => handleSingleReplace(pair.find, pair.replace)}
                                     disabled={(!lyricRaw && !lyricFormatted) || !pair.find || !pair.enabled}
-                                    className="bg-amber-400 hover:bg-amber-300 disabled:opacity-30 text-black text-[8.5px] font-black uppercase tracking-wider py-1 px-2 rounded transition-colors flex items-center gap-1 cursor-pointer"
+                                    className="bg-amber-400 hover:bg-amber-300 disabled:opacity-30 text-black text-[7.5px] sm:text-[8.5px] font-black uppercase tracking-wider py-0.5 sm:py-1 px-1.5 sm:px-2 rounded transition-colors flex items-center gap-1 cursor-pointer"
                                     title="Replace this single pair"
                                  >
                                     Replace
                                  </button>
                                  <button
                                     onClick={() => handleRemovePairRow(pair.id)}
-                                    className="text-white/30 hover:text-red-400 p-1 transition-colors cursor-pointer rounded hover:bg-white/5"
+                                    className="text-white/30 hover:text-red-400 p-0.5 sm:p-1 transition-colors cursor-pointer rounded hover:bg-white/5"
                                     title="Remove this pair row"
                                  >
-                                    <Trash2 className="w-3 h-3" />
+                                    <Trash2 className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
                                  </button>
                               </div>
                            </div>
@@ -2729,13 +2742,13 @@ export default function StemStudio({
 
                         {/* Pairs Action Controls */}
                         <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                           <div className="flex items-center gap-3 text-[9.5px] text-white/60">
+                           <div className="flex items-center gap-2 sm:gap-3 text-[8px] sm:text-[9.5px] text-white/60">
                               <label className="flex items-center gap-1 cursor-pointer hover:text-white">
                                  <input
                                     type="checkbox"
                                     checked={findMatchCase}
                                     onChange={(e) => setFindMatchCase(e.target.checked)}
-                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer"
+                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-2.5 h-2.5 sm:w-3 sm:h-3 cursor-pointer"
                                  />
                                  Match Case
                               </label>
@@ -2744,93 +2757,93 @@ export default function StemStudio({
                                     type="checkbox"
                                     checked={findWholeWord}
                                     onChange={(e) => setFindWholeWord(e.target.checked)}
-                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer"
+                                    className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-2.5 h-2.5 sm:w-3 sm:h-3 cursor-pointer"
                                  />
                                  Whole Word
                               </label>
                            </div>
 
-                           <div className="flex items-center gap-2">
+                           <div className="flex items-center gap-1.5 sm:gap-2">
                               {findReplacePairs.length > 0 && (
                                  <button
                                     onClick={handleClearPairRows}
-                                    className="text-[9px] text-white/40 hover:text-white uppercase tracking-wider px-2 py-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
+                                    className="text-[8px] sm:text-[9px] text-white/40 hover:text-white uppercase tracking-wider px-1.5 sm:px-2 py-0.5 sm:py-1 rounded hover:bg-white/5 transition-colors cursor-pointer"
                                  >
                                     Clear Pairs
                                  </button>
                               )}
                               <button
                                  onClick={handleAddPairRow}
-                                 className="text-[9px] font-bold text-white/80 hover:text-white uppercase tracking-wider px-2.5 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-1 cursor-pointer"
+                                 className="text-[8px] sm:text-[9px] font-bold text-white/80 hover:text-white uppercase tracking-wider px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors flex items-center gap-1 cursor-pointer"
                               >
-                                 <Plus className="w-3 h-3 text-amber-400" /> Add Row
+                                 <Plus className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-amber-400" /> Add Row
                               </button>
                               <button
                                  onClick={handleExecuteAllPairs}
                                  disabled={(!lyricRaw && !lyricFormatted) || findReplacePairs.filter(p => p.enabled && p.find).length === 0}
-                                 className="bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-black text-[9px] font-black uppercase tracking-wider py-1 px-3 rounded-lg transition-all flex items-center gap-1.5 shadow cursor-pointer"
+                                 className="bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-black text-[8px] sm:text-[9px] font-black uppercase tracking-wider py-0.5 sm:py-1 px-2 sm:px-3 rounded-lg transition-all flex items-center gap-1 sm:gap-1.5 shadow cursor-pointer"
                               >
-                                 <Replace className="w-3 h-3" />
-                                 Execute All Pairs ({findReplacePairs.filter(p => p.enabled && p.find).length})
+                                 <Replace className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                                 Execute All ({findReplacePairs.filter(p => p.enabled && p.find).length})
                               </button>
                            </div>
                         </div>
                      </div>
 
                      {/* Default Quick Fix Presets (Suno Bypass Shortcuts - Multi-Pick Supported) */}
-                     <div className="flex flex-col gap-2 pt-2 border-t border-white/10">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                           <div className="flex items-center gap-1.5">
-                              <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-400/90">
-                                 Quick Pick Presets ({selectedQuickPickIds.length}/{bypassRules.length} Selected):
+                     <div className="flex flex-col gap-1.5 sm:gap-2 pt-1.5 sm:pt-2 border-t border-white/10">
+                        <div className="flex flex-wrap items-center justify-between gap-1 sm:gap-2">
+                           <div className="flex items-center gap-1 sm:gap-1.5">
+                              <span className="text-[8px] sm:text-[9px] font-extrabold uppercase tracking-wider text-amber-400/90">
+                                 Quick Pick Presets ({selectedQuickPickIds.length}/{bypassRules.length}):
                               </span>
-                              <div className="flex items-center gap-1 text-[8.5px] text-white/50">
+                              <div className="flex items-center gap-1 text-[7.5px] sm:text-[8.5px] text-white/50">
                                  <button
                                     onClick={handleSelectAllQuickPicks}
                                     className="hover:text-white underline cursor-pointer"
                                  >
-                                    Select All
+                                    All
                                  </button>
                                  <span>•</span>
                                  <button
                                     onClick={handleDeselectAllQuickPicks}
                                     className="hover:text-white underline cursor-pointer"
                                  >
-                                    Deselect All
+                                    None
                                  </button>
                               </div>
                            </div>
 
-                           <div className="flex items-center gap-1.5">
+                           <div className="flex items-center gap-1 sm:gap-1.5 mt-1 sm:mt-0 w-full sm:w-auto justify-end">
                               {selectedQuickPickIds.length > 0 && (
                                  <button
                                     onClick={handleImportSelectedToPairs}
-                                    className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-[8.5px] font-bold uppercase tracking-wider px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer border border-indigo-400/30"
+                                    className="bg-indigo-600/80 hover:bg-indigo-500 text-white text-[7.5px] sm:text-[8.5px] font-bold uppercase tracking-wider px-1.5 sm:px-2 py-0.5 sm:py-1 rounded transition-colors flex items-center gap-1 cursor-pointer border border-indigo-400/30"
                                     title="Copy selected quick pick rules into Find & Replace rows"
                                  >
-                                    <Plus className="w-2.5 h-2.5" /> Import to Pairs
+                                    <Plus className="w-2 h-2 sm:w-2.5 sm:h-2.5" /> Import
                                  </button>
                               )}
                               <button
                                  onClick={handleApplySelectedQuickPicks}
                                  disabled={(!lyricRaw && !lyricFormatted) || selectedQuickPickIds.length === 0}
-                                 className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black text-[9px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full transition-all flex items-center gap-1 shadow-sm cursor-pointer"
+                                 className="bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-black text-[8px] sm:text-[9px] font-black uppercase tracking-wider px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full transition-all flex items-center gap-1 shadow-sm cursor-pointer"
                                  title="Apply selected Suno lyric bypass rules at once"
                               >
-                                 <Sparkles className="w-3 h-3" />
-                                 Bypass Suno ({selectedQuickPickIds.length} Selected)
+                                 <Sparkles className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
+                                 Bypass ({selectedQuickPickIds.length})
                               </button>
                            </div>
                         </div>
 
                         {/* Preset Chips (Toggle Multi-Pick) */}
-                        <div className="flex flex-wrap gap-1.5 max-h-[120px] overflow-y-auto custom-scrollbar p-1 bg-black/20 rounded-lg border border-white/5">
+                        <div className="flex flex-wrap gap-1 sm:gap-1.5 max-h-[120px] overflow-y-auto custom-scrollbar p-1 bg-black/20 rounded-lg border border-white/5">
                            {bypassRules.map((rule) => {
                               const isSelected = selectedQuickPickIds.includes(rule.id);
                               return (
                                  <div
                                     key={rule.id}
-                                    className={`group flex items-center gap-1.5 border rounded-md px-2 py-1 text-[9.5px] transition-all cursor-pointer ${
+                                    className={`group flex items-center gap-1 sm:gap-1.5 border rounded-md px-1.5 sm:px-2 py-0.5 sm:py-1 text-[8.5px] sm:text-[9.5px] transition-all cursor-pointer ${
                                        isSelected
                                           ? 'bg-amber-400/20 border-amber-400/60 text-amber-200'
                                           : 'bg-white/5 hover:bg-white/10 border-white/10 text-white/60'
@@ -2842,7 +2855,7 @@ export default function StemStudio({
                                        type="checkbox"
                                        checked={isSelected}
                                        onChange={() => {}} // Handled by div onClick
-                                       className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-3 h-3 cursor-pointer pointer-events-none"
+                                       className="rounded border-white/20 bg-black/40 text-amber-400 focus:ring-0 w-2.5 h-2.5 sm:w-3 sm:h-3 cursor-pointer pointer-events-none"
                                     />
                                     <span className="font-semibold">{rule.find}</span>
                                     <span className="text-amber-400/60">➔</span>
@@ -2853,10 +2866,10 @@ export default function StemStudio({
                                           handleSingleReplace(rule.find, rule.replace);
                                        }}
                                        disabled={!lyricRaw && !lyricFormatted}
-                                       className="ml-1 opacity-60 group-hover:opacity-100 hover:text-amber-300 p-0.5 rounded hover:bg-black/40 cursor-pointer"
+                                       className="ml-0.5 sm:ml-1 opacity-60 group-hover:opacity-100 hover:text-amber-300 p-0.5 rounded hover:bg-black/40 cursor-pointer"
                                        title={`Run only "${rule.find} ➔ ${rule.replace}" right now`}
                                     >
-                                       <Replace className="w-2.5 h-2.5" />
+                                       <Replace className="w-2 h-2 sm:w-2.5 sm:h-2.5" />
                                     </button>
                                  </div>
                               );
@@ -3311,7 +3324,7 @@ export default function StemStudio({
                    <div className="mt-2 border border-amber-400/20 rounded-2xl overflow-hidden p-2 bg-black/40 relative">
                       <AudioTrimmer 
                          mode="select-only"
-                         audioUrl={originalAudioUrl}
+                         audioUrl={decodeAudioUrl!}
                          initialStart={trimStart}
                          initialEnd={trimEnd > 0 ? trimEnd : duration}
                          onRegionChange={(s, e) => {
@@ -3474,7 +3487,7 @@ export default function StemStudio({
                       {isTrimmingBeforeExtract ? (
                          <div className="w-full max-w-lg">
                             <AudioTrimmer 
-                               audioUrl={originalAudioUrl!}
+                               audioUrl={decodeAudioUrl!}
                                onTrim={(newUrl) => {
                                   if (onUpdateAudioUrl) onUpdateAudioUrl(newUrl);
                                   setIsTrimmingBeforeExtract(false);
@@ -4778,7 +4791,7 @@ export default function StemStudio({
 
        {showSpectrogram && (
           <SpectrogramTool 
-             initialAudioUrl1={originalAudioUrl} 
+             initialAudioUrl1={decodeAudioUrl} 
              initialAudioUrl2={downloadLink?.url}
              title1="Original Audio"
              title2="Exported Mixdown"
