@@ -563,6 +563,24 @@ export default function StemStudio({
   const [sunoEqHigh, setSunoEqHigh] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_high") || "6.5"));
   const [showSunoSettings, setShowSunoSettings] = useState<boolean>(false);
 
+  const handleResetSunoSystemDefault = () => {
+    setSunoSpeedFactor(1.045);
+    setSunoPitchShift(6.5);
+    setSunoNoiseLevel(0);
+    setSunoEqLow(6.5);
+    setSunoEqMid(6.5);
+    setSunoEqHigh(6.5);
+  };
+
+  const handleResetSunoOriginal = () => {
+    setSunoSpeedFactor(1.0);
+    setSunoPitchShift(0);
+    setSunoNoiseLevel(0);
+    setSunoEqLow(0);
+    setSunoEqMid(0);
+    setSunoEqHigh(0);
+  };
+
   useEffect(() => {
     localStorage.setItem("suno_bypass", isSunoBypass.toString());
     localStorage.setItem("suno_speed", sunoSpeedFactor.toString());
@@ -2846,6 +2864,26 @@ export default function StemStudio({
                                </button>
                                {showSunoSettings && (
                                    <div className="mt-2 p-3 bg-black/40 border border-white/10 rounded-xl flex flex-col gap-3 w-64 animate-in fade-in slide-in-from-top-2">
+                                       <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+                                           <button
+                                               type="button"
+                                               onClick={handleResetSunoSystemDefault}
+                                               className="flex-1 py-1.5 px-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                                               title="Reset to System Default (1.045x Speed, +6.5 Pitch, +6.5dB EQ)"
+                                           >
+                                               <RotateCcw className="w-3 h-3" />
+                                               Default
+                                           </button>
+                                           <button
+                                               type="button"
+                                               onClick={handleResetSunoOriginal}
+                                               className="flex-1 py-1.5 px-2 bg-white/10 hover:bg-white/20 text-white/80 border border-white/15 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                                               title="Reset to Original Audio (1.000x Speed, 0 Pitch, 0dB EQ)"
+                                           >
+                                               <FileAudio className="w-3 h-3" />
+                                               Original
+                                           </button>
+                                       </div>
                                        <div className="flex flex-col gap-1">
                                            <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
                                                <span>Speed Shift</span>
@@ -3550,6 +3588,26 @@ export default function StemStudio({
                  </div>
                  
                  <div className={`flex flex-col gap-3 p-3 bg-black/20 border border-white/5 rounded-xl transition-all duration-300 ${isSunoBypass ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                     <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+                         <button
+                             type="button"
+                             onClick={handleResetSunoSystemDefault}
+                             className="flex-1 py-1.5 px-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                             title="Reset to System Default (1.045x Speed, +6.5 Pitch, +6.5dB EQ)"
+                         >
+                             <RotateCcw className="w-3 h-3" />
+                             Default
+                         </button>
+                         <button
+                             type="button"
+                             onClick={handleResetSunoOriginal}
+                             className="flex-1 py-1.5 px-2 bg-white/10 hover:bg-white/20 text-white/80 border border-white/15 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
+                             title="Reset to Original Audio (1.000x Speed, 0 Pitch, 0dB EQ)"
+                         >
+                             <FileAudio className="w-3 h-3" />
+                             Original
+                         </button>
+                     </div>
                      <div className="flex flex-col gap-1">
                          <div className="flex justify-between items-center text-[10px] font-bold text-white/70">
                              <span>Speed Shift</span>
