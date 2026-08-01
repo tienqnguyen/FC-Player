@@ -347,27 +347,25 @@ async function startServer() {
           console.warn(`[Stemmix] Primary space ${primarySpace} failed or is offline:`, e.message || e);
         }
 
-        // Fallback: run remaining spaces in parallel
-        const remainingSpaces = spaces.filter(s => s !== primarySpace);
-        const promises = remainingSpaces.map(async (space) => {
-          console.log(`[Stemmix] Attempting fallback Hugging Face Space: ${space}`);
-          const hfApp = await client(space as any);
-          const res = await hfApp.predict("/separate_stems", {
-            audio_file: handle_file(blob),
-          });
-          if (res && res.data) {
-            console.log(`[Stemmix] Successfully separated stems using fallback Space: ${space}`);
-            return { res, space, hfApp };
+        // Fallback: run remaining top spaces sequentially to save bandwidth and prevent parallel spam
+        const remainingSpaces = spaces.filter(s => s !== primarySpace).slice(0, 3);
+        for (const space of remainingSpaces) {
+          try {
+            console.log(`[Stemmix] Attempting fallback Hugging Face Space: ${space}`);
+            const hfApp = await client(space as any);
+            const res = await hfApp.predict("/separate_stems", {
+              audio_file: handle_file(blob),
+            });
+            if (res && res.data) {
+              console.log(`[Stemmix] Successfully separated stems using fallback Space: ${space}`);
+              return { res, space, hfApp };
+            }
+          } catch (e: any) {
+            console.warn(`[Stemmix] Fallback space ${space} failed:`, e.message || e);
           }
-          throw new Error("No data");
-        });
-        
-        try {
-          return await Promise.any(promises);
-        } catch (e) {
-          console.log(`[Stemmix] All AI models unavailable, switching to local DSP/WebGPU mode`);
-          return null;
         }
+        console.log(`[Stemmix] All AI models unavailable, switching to local DSP/WebGPU mode`);
+        return null;
       };
 
       try {

@@ -4289,60 +4289,158 @@ export default function App() {
       }
     } else if (activeEngine === "ai") {
       try {
-        console.log("[AI Cloud] Sending current song audio to remote server for separation...");
-        const formData = new FormData();
+        console.log("[AI Cloud] Preparing audio for Hugging Face separation...");
 
         let audioFileToSend: Blob | null = null;
         if (uploadedFile && currentSong?.id?.startsWith("local_")) {
           audioFileToSend = uploadedFile;
         } else if (targetAudioUrl) {
           try {
-            console.log("[AI Cloud] Fetching current audioUrl as blob for extraction:", targetAudioUrl);
+            console.log("[AI Cloud] Fetching audioUrl as blob:", targetAudioUrl);
             const fetchRes = await fetch(targetAudioUrl);
             if (fetchRes.ok) {
               audioFileToSend = await fetchRes.blob();
-            } else {
-              console.warn("[AI Cloud] Fetch audioUrl status:", fetchRes.status);
             }
           } catch (e) {
             console.warn("[AI Cloud] Could not fetch audioUrl directly as blob:", e);
           }
         }
 
-        if (audioFileToSend && audioFileToSend.size > 0) {
-          const safeTitle = (currentSong?.title || "audio").replace(/[^a-zA-Z0-9_.-]/g, "_");
-          formData.append("audio_file", audioFileToSend, `${safeTitle}.mp3`);
-        } else {
-          formData.append("audioUrl", targetAudioUrl || "");
-        }
-        
         let customSpace = "";
         try {
           customSpace = localStorage.getItem("stemmix_custom_space_url") || "";
         } catch {}
-        if (customSpace) {
-          formData.append("customSpace", customSpace);
+
+        let directSuccess = false;
+
+        // --- DIRECT BROWSER-TO-HUGGINGFACE CONNECTION (BYPASSES SERVER BANDWIDTH) ---
+        if (audioFileToSend && audioFileToSend.size > 0) {
+          try {
+            console.log("[Direct HF] Attempting direct browser connection to Hugging Face Space to save server bandwidth...");
+            const { client, handle_file } = await import("@gradio/client");
+
+            const spacesToTry = customSpace 
+              ? [customSpace, "tienqnguyen95/Stemmix", "PeachJed/Stemmix"] 
+              : ["tienqnguyen95/Stemmix", "PeachJed/Stemmix"];
+
+            let hfRes: any = null;
+            let usedSpace = "";
+
+            for (const space of spacesToTry) {
+              try {
+                console.log(`[Direct HF] Connecting browser directly to Hugging Face Space: ${space}`);
+                const hfApp = await client(space as any);
+                hfRes = await hfApp.predict("/separate_stems", {
+                  audio_file: handle_file(audioFileToSend),
+                });
+                if (hfRes && hfRes.data) {
+                  usedSpace = space;
+                  console.log(`[Direct HF] Direct browser separation succeeded using Space: ${space}`);
+                  break;
+                }
+              } catch (spaceErr: any) {
+                console.warn(`[Direct HF] Space ${space} direct connection failed:`, spaceErr?.message || spaceErr);
+              }
+            }
+
+            if (hfRes && hfRes.data) {
+              const spaceUrl = `https://${usedSpace.replace("/", "-").toLowerCase()}.hf.space`;
+              const getUrl = (item: any) => {
+                if (!item) return null;
+                let u = typeof item === 'string' ? item : (item.url || item.path);
+                if (!u || typeof u !== 'string') return null;
+                if (u.startsWith('http://127.0.0.1') || u.startsWith('http://localhost') || u.startsWith('http://0.0.0.0')) {
+                  const urlObj = new URL(u);
+                  u = `${spaceUrl}${urlObj.pathname}${urlObj.search}`;
+                } else if (u.startsWith('/')) {
+                  u = `${spaceUrl}${u}`;
+                }
+                return u;
+              };
+
+              let vocals, drums, bass, guitar, piano, other;
+              if (Array.isArray(hfRes.data)) {
+                for (const item of hfRes.data) {
+                  if (item && typeof item === 'object' && item.orig_name) {
+                    const name = item.orig_name.toLowerCase();
+                    const u = getUrl(item);
+                    if (!u) continue;
+                    if (name.includes('vocal')) vocals = u;
+                    else if (name.includes('drum')) drums = u;
+                    else if (name.includes('bass')) bass = u;
+                    else if (name.includes('guitar')) guitar = u;
+                    else if (name.includes('piano')) piano = u;
+                    else if (name.includes('other')) other = u;
+                  }
+                }
+              }
+              if (!vocals && !drums && !bass && !other && Array.isArray(hfRes.data)) {
+                let offset = 0;
+                if (hfRes.data.length > 2 && (typeof hfRes.data[0] === 'string' || (hfRes.data[0] && hfRes.data[0].__type__ === 'update'))) {
+                  offset = 2;
+                }
+                vocals = getUrl(hfRes.data[offset]);
+                drums = getUrl(hfRes.data[offset+1]);
+                bass = getUrl(hfRes.data[offset+2]);
+                other = getUrl(hfRes.data[offset+3]);
+                guitar = getUrl(hfRes.data[offset+4]);
+                piano = getUrl(hfRes.data[offset+5]);
+              }
+
+              if (vocals || drums || bass || other) {
+                console.log("[Direct HF] Stems retrieved directly in browser without server bandwidth!");
+                setStemUrls({
+                  vocals,
+                  drums,
+                  bass,
+                  guitar: guitar || other,
+                  piano: piano || other,
+                  other,
+                  isDspFallback: false
+                } as any);
+                setStemmixStatus("ready");
+                directSuccess = true;
+              }
+            }
+          } catch (directErr) {
+            console.warn("[Direct HF] Direct browser connection encountered error, falling back to server API:", directErr);
+          }
         }
 
-        const res = await fetch("/api/stemmix", {
-            method: "POST",
-            body: formData
-        });
-        if (!res.ok) throw new Error("AI Cloud request failed");
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        
-        console.log("[AI Cloud] Stems successfully separated remotely!");
-        setStemUrls({
-            vocals: data.stems?.vocals,
-            drums: data.stems?.drums,
-            bass: data.stems?.bass,
-            guitar: data.stems?.guitar || data.stems?.other,
-            piano: data.stems?.piano || data.stems?.other,
-            other: data.stems?.other,
-            isDspFallback: false
-        } as any);
-        setStemmixStatus("ready");
+        // --- FALLBACK SERVER PROXY ROUTE IF DIRECT BROWSER CONNECTION FAILS ---
+        if (!directSuccess) {
+          console.log("[AI Cloud] Direct browser connection failed or unavailable. Routing through server API...");
+          const formData = new FormData();
+          if (audioFileToSend && audioFileToSend.size > 0) {
+            const safeTitle = (currentSong?.title || "audio").replace(/[^a-zA-Z0-9_.-]/g, "_");
+            formData.append("audio_file", audioFileToSend, `${safeTitle}.mp3`);
+          } else {
+            formData.append("audioUrl", targetAudioUrl || "");
+          }
+          if (customSpace) {
+            formData.append("customSpace", customSpace);
+          }
+
+          const res = await fetch("/api/stemmix", {
+              method: "POST",
+              body: formData
+          });
+          if (!res.ok) throw new Error("AI Cloud request failed");
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+          
+          console.log("[AI Cloud] Stems successfully separated remotely via server!");
+          setStemUrls({
+              vocals: data.stems?.vocals,
+              drums: data.stems?.drums,
+              bass: data.stems?.bass,
+              guitar: data.stems?.guitar || data.stems?.other,
+              piano: data.stems?.piano || data.stems?.other,
+              other: data.stems?.other,
+              isDspFallback: false
+          } as any);
+          setStemmixStatus("ready");
+        }
       } catch (err: any) {
          console.error("[AI Cloud error]", err);
          setStemmixError(err.message || "AI Cloud separation failed.");
