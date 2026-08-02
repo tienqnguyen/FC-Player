@@ -2204,6 +2204,8 @@ export default function App() {
   const [stemSongInfo, setStemSongInfo] = useState<{title: string, duration: number, cover?: string, audioUrl?: string} | null>(null);
   const [stemmixError, setStemmixError] = useState("");
   const [showStemmix, setShowStemmix] = useState(true);
+  const [showDurationWarning, setShowDurationWarning] = useState(false);
+  const [pendingEngineForce, setPendingEngineForce] = useState<"webgpu" | "onnx" | "ai" | undefined>(undefined);
 
   // Audio elements for playback of stems
   const stemsAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
@@ -2552,7 +2554,7 @@ export default function App() {
 
   const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search">("upnext");
 
-  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tkaraoke">("youtube");
+  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tkaraoke">("sound");
   const [tiktokSearchQuery, setTiktokSearchQuery] = useState("");
   const [tiktokSearchResults, setTiktokSearchResults] = useState<any[]>([]);
   const [tiktokSearchPage, setTiktokSearchPage] = useState(1);
@@ -4222,7 +4224,7 @@ export default function App() {
     };
   };
 
-  const handleSeparateStems = async (forceEngine?: "webgpu" | "onnx" | "ai") => {
+  const handleSeparateStems = async (forceEngine?: "webgpu" | "onnx" | "ai", bypassWarning?: boolean) => {
     let targetAudioUrl = audioUrl || currentSong?.audioUrl || currentSong?.url;
     if (targetAudioUrl && targetAudioUrl.includes("/api/stream") && (targetAudioUrl.includes("facebook.com") || targetAudioUrl.includes("fb.watch") || targetAudioUrl.includes("facebook"))) {
       targetAudioUrl = targetAudioUrl.replace("/api/stream", "/api/clean-wav");
@@ -4315,6 +4317,12 @@ export default function App() {
         setStemmixStatus("error");
       }
     } else if (activeEngine === "ai") {
+      if (targetDuration > 60 && !bypassWarning) {
+        setPendingEngineForce(forceEngine);
+        setShowDurationWarning(true);
+        setStemmixStatus("idle");
+        return;
+      }
       try {
         console.log("[AI Cloud] Preparing audio for Hugging Face separation...");
 
@@ -5024,7 +5032,7 @@ export default function App() {
 
 
                    {bgPlayBypass && (
-                     <div className="p-3 bg-amber-500/10 border border-amber-500/10 rounded-[14px] text-amber-300 text-[10.5px] leading-relaxed relative overflow-hidden backdrop-blur-sm shadow-[inset_0_0_12px_rgba(251,191,36,0.03)] select-none animate-in fade-in slide-in-from-top-1 duration-300">
+                     <div className="p-3 bg-amber-500/10 border border-amber-500/10 rounded-[14px] text-amber-300 text-[10.5px] leading-relaxed relative overflow-hidden backdrop-blur-sm shadow-[inset_0_0_12px_rgba(251,191,36,0.03)] select-none animate-in fade-in slide-in-from-top-1 duration-300 shrink-0">
                         <div className="font-extrabold uppercase tracking-widest text-[9.5px] text-amber-400 mb-0.5 flex items-center gap-1.5">
                           <span className="flex items-center gap-1.5"><Lightbulb className="w-3.5 h-3.5" /> iOS BG MODE ACTIVE</span>
                         </div>
@@ -6705,12 +6713,12 @@ onClearStems={() => {
                  localStorage.setItem("stemmix_webgpu_quality", val);
                }}
                onExtractNewSong={() => handleSeparateStems()}
-               onUpdateAudioUrl={(newUrl) => {
+               onUpdateAudioUrl={(newUrl, newDuration) => {
                  setAudioUrl(newUrl);
                  if (currentSong) {
-                   setCurrentSong({ ...currentSong, audioUrl: newUrl });
+                   setCurrentSong({ ...currentSong, audioUrl: newUrl, ...(newDuration !== undefined ? { duration: newDuration } : {}) });
                  }
-                 setStemSongInfo(prev => prev ? { ...prev, url: newUrl } : null);
+                 setStemSongInfo(prev => prev ? { ...prev, url: newUrl, ...(newDuration !== undefined ? { duration: newDuration } : {}) } : null);
                }}
             />
           </div>
@@ -7044,6 +7052,37 @@ onClearStems={() => {
           className="hidden"
         />
         
+        {showDurationWarning && (
+           <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-md px-4 fade-in">
+              <div className="bg-[#111] border border-amber-400/20 rounded-2xl p-6 max-w-sm w-full shadow-[0_10px_40px_rgba(251,191,36,0.15)] flex flex-col gap-4">
+                 <h3 className="text-amber-400 font-black text-lg uppercase tracking-wider flex items-center gap-2">
+                    Cảnh báo thời lượng
+                 </h3>
+                 <div className="text-white/80 text-[13px] leading-relaxed flex flex-col gap-3">
+                    <p>Audio của bạn dài hơn <strong>1 phút</strong>.</p>
+                    <p>Hãy sử dụng tính năng <strong>Trim</strong> (biểu tượng chiếc kéo) để cắt ngắn audio nếu có thể.</p>
+                    <p><strong>Lưu ý:</strong> Cảnh báo này chỉ áp dụng cho <strong>AI Cloud mode (Hugging Face)</strong>. Quá trình tải tách nền (stem) qua Cloud có thể mất <strong>hơn 2 phút</strong> cho audio dài vài phút.</p>
+                 </div>
+                 <div className="flex justify-end gap-3 mt-4">
+                    <button 
+                       onClick={() => setShowDurationWarning(false)}
+                       className="px-5 py-2.5 rounded-xl text-white/50 hover:text-white hover:bg-white/5 transition-colors text-xs tracking-wider font-bold"
+                    >
+                       HỦY
+                    </button>
+                    <button 
+                       onClick={() => {
+                           setShowDurationWarning(false);
+                           handleSeparateStems(pendingEngineForce, true);
+                       }}
+                       className="px-5 py-2.5 rounded-xl bg-amber-400 text-black hover:bg-amber-300 transition-colors text-xs tracking-wider font-black shadow-lg shadow-amber-400/20 active:scale-95"
+                    >
+                       TIẾP TỤC
+                    </button>
+                 </div>
+              </div>
+           </div>
+        )}
       </div>
   );
 }

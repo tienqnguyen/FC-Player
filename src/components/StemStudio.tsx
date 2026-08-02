@@ -102,7 +102,7 @@ interface StemStudioProps {
   onSetSeparationMode?: (mode: "webgpu" | "onnx" | "ai") => void;
   newSongTitle?: string | null;
   onExtractNewSong?: () => void;
-  onUpdateAudioUrl?: (newUrl: string) => void;
+  onUpdateAudioUrl?: (newUrl: string, newDuration?: number) => void;
   onClearStems?: () => void;
   webgpuQuality?: 'fast' | 'high' | 'ultra' | 'pro';
   onWebgpuQualityChange?: (quality: 'fast' | 'high' | 'ultra' | 'pro') => void;
@@ -3488,9 +3488,15 @@ export default function StemStudio({
                          <div className="w-full max-w-lg">
                             <AudioTrimmer 
                                audioUrl={decodeAudioUrl!}
-                               onTrim={(newUrl) => {
-                                  if (onUpdateAudioUrl) onUpdateAudioUrl(newUrl);
+                               showExtractAction={true}
+                               onTrim={(newUrl, startSec, endSec, autoExtract) => {
+                                  const newDuration = endSec - startSec;
+                                  if (onUpdateAudioUrl) onUpdateAudioUrl(newUrl, newDuration);
                                   setIsTrimmingBeforeExtract(false);
+                                  if (autoExtract && onRetrySeparate) {
+                                      // Give it a tiny delay to update state before triggering
+                                      setTimeout(() => onRetrySeparate(), 100);
+                                  }
                                }}
                                onCancel={() => setIsTrimmingBeforeExtract(false)}
                             />
@@ -3528,12 +3534,12 @@ export default function StemStudio({
                                {/* Wide, Organized Bypass Settings Box */}
                                {showSunoSettings && (
                                    <div className="my-4 p-5 sm:p-6 bg-black/70 border border-indigo-500/30 rounded-2xl flex flex-col gap-5 w-full animate-in fade-in slide-in-from-top-3 shadow-2xl backdrop-blur-md text-left">
-                                       <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-white/10">
-                                           <div className="flex items-center gap-2">
+                                       <div className="flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3 pb-3 border-b border-white/10 text-center sm:text-left">
+                                           <div className="flex items-center justify-center sm:justify-start gap-2">
                                               <SlidersHorizontal className="w-4 h-4 text-indigo-400" />
                                               <span className="text-xs font-black uppercase tracking-wider text-white">Suno Bypass Controls</span>
                                            </div>
-                                           <div className="flex items-center gap-2">
+                                           <div className="flex items-center justify-center gap-2 w-full sm:w-auto">
                                                <button
                                                    type="button"
                                                    onClick={handleResetSunoSystemDefault}
@@ -3690,14 +3696,26 @@ export default function StemStudio({
                                  onPlay={() => setIsPlaying(true)}
                                  onPause={() => setIsPlaying(false)}
                               />
-                              <button
-                                 onClick={handleCohereTranscribe}
-                                 className="h-10 px-6 rounded-full flex items-center justify-center text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-amber-400/10 border-amber-400/30 text-amber-400 hover:bg-amber-400/20 hover:border-amber-400/50 shrink-0 shadow-[0_0_15px_rgba(251,191,36,0.15)]"
-                                 title="Transcribe Audio"
-                              >
-                                 {isTranscribing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                                 Generate Lyrics
-                              </button>
+                              <div className="flex items-center gap-2 shrink-0">
+                                 {onRetrySeparate && (
+                                    <button
+                                       onClick={onRetrySeparate}
+                                       className="h-10 px-6 rounded-full flex items-center justify-center text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-indigo-500/10 border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/20 hover:border-indigo-500/50 shadow-[0_0_15px_rgba(99,102,241,0.15)]"
+                                       title="Extract Stems from this audio"
+                                    >
+                                       <Sparkles className="w-4 h-4 mr-2" />
+                                       Extract
+                                    </button>
+                                 )}
+                                 <button
+                                    onClick={handleCohereTranscribe}
+                                    className="h-10 px-6 rounded-full flex items-center justify-center text-[10px] font-bold uppercase tracking-wider transition-all duration-300 border bg-amber-400/10 border-amber-400/30 text-amber-400 hover:bg-amber-400/20 hover:border-amber-400/50 shadow-[0_0_15px_rgba(251,191,36,0.15)]"
+                                    title="Transcribe Audio"
+                                 >
+                                    {isTranscribing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Type className="w-4 h-4 mr-2" />}
+                                    Lyrics
+                                 </button>
+                              </div>
                            </div>
                            
                            { (cohereTranscript || isTranscribing) && (

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.js';
-import { Scissors, Play, Pause, RotateCcw } from 'lucide-react';
+import { Scissors, Play, Pause, RotateCcw, Sparkles, Plus, Minus } from 'lucide-react';
 import audioBufferToWav from 'audiobuffer-to-wav';
 
 interface AudioTrimmerProps {
@@ -10,11 +10,12 @@ interface AudioTrimmerProps {
   initialStart?: number;
   initialEnd?: number;
   audioUrl: string;
-  onTrim: (trimmedAudioUrl: string, trimStart: number, trimEnd: number) => void;
+  onTrim: (trimmedAudioUrl: string, trimStart: number, trimEnd: number, autoExtract?: boolean) => void;
   onCancel: () => void;
+  showExtractAction?: boolean;
 }
 
-export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full", onRegionChange, initialStart, initialEnd }: AudioTrimmerProps) {
+export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full", onRegionChange, initialStart, initialEnd, showExtractAction = false }: AudioTrimmerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const regionsRef = useRef<RegionsPlugin | null>(null);
@@ -135,7 +136,7 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
     }
   };
   
-  const handleApply = async () => {
+  const handleApply = async (autoExtract: boolean = false) => {
     setIsProcessing(true);
     try {
       const res = await fetch(audioUrl);
@@ -162,15 +163,51 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
       const blob = new Blob([new DataView(wavArrayBuffer)], { type: 'audio/wav' });
       const newUrl = URL.createObjectURL(blob);
       
-      onTrim(newUrl, startSec, endSec);
+      onTrim(newUrl, startSec, endSec, autoExtract);
     } catch (e) {
       console.error("Trim failed", e);
     }
     setIsProcessing(false);
   };
   
+  const handleNudge = (type: 'start' | 'end', amount: number) => {
+    const regions = regionsRef.current?.getRegions();
+    if (!regions || regions.length === 0) return;
+    
+    const region = regions[0];
+    let newStart = region.start;
+    let newEnd = region.end;
+    
+    if (type === 'start') {
+        newStart = Math.max(0, Math.min(newStart + amount, newEnd - 0.2));
+    } else {
+        newEnd = Math.max(newStart + 0.2, Math.min(newEnd + amount, duration));
+    }
+    
+    region.setOptions({
+        start: newStart,
+        end: newEnd
+    });
+    
+    setStartSec(newStart);
+    setEndSec(newEnd);
+  };
+  
   return (
     <div className="w-full flex flex-col items-center gap-6 animate-in fade-in zoom-in-95 duration-500">
+      <style>{`
+        ::part(region-handle) {
+          width: 30px !important;
+        }
+        ::part(region-handle-right) {
+          border-right: 3px solid #fbbf24 !important;
+          background: linear-gradient(to right, transparent, rgba(251,191,36,0.3)) !important;
+        }
+        ::part(region-handle-left) {
+          border-left: 3px solid #fbbf24 !important;
+          background: linear-gradient(to left, transparent, rgba(251,191,36,0.3)) !important;
+        }
+      `}</style>
       <div className="w-full relative bg-gradient-to-b from-black/60 to-black/30 border border-white/10 rounded-2xl p-6 shadow-2xl backdrop-blur-md">
         
         {mode !== "preview" && (
@@ -179,7 +216,15 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
               Trim Region
             </span>
             <span className="text-xs font-mono text-white/70">
-              {Math.max(0, endSec - startSec).toFixed(2)}s / {duration.toFixed(2)}s
+              {(() => {
+                const formatTime = (sec: number) => {
+                  const m = Math.floor(sec / 60);
+                  const s = sec % 60;
+                  if (m > 0) return `${m}'${s.toFixed(2).padStart(5, '0')}`;
+                  return `${s.toFixed(2)}s`;
+                };
+                return `${formatTime(Math.max(0, endSec - startSec))} / ${formatTime(duration)}`;
+              })()}
             </span>
           </div>
         )}
@@ -192,47 +237,97 @@ export default function AudioTrimmer({ audioUrl, onTrim, onCancel, mode = "full"
              </div>
            </div>
         )}
-        <div ref={containerRef} className="w-full mt-8 rounded-lg overflow-hidden" />
+        <div ref={containerRef} className="w-full mt-8 rounded-lg overflow-hidden touch-none select-none" />
+        
+        {/* Nudgers for mobile precision */}
+        {mode !== "preview" && (
+           <div className="flex w-full items-center justify-between mt-6 gap-2 sm:gap-4">
+               <div className="flex flex-col items-start gap-1 sm:gap-1.5 flex-1">
+                   <span className="text-[9px] sm:text-[10px] text-white/50 uppercase font-bold tracking-wider pl-1">Start Time</span>
+                   <div className="flex items-center w-full bg-black/40 rounded-xl p-1 border border-white/10 shadow-inner">
+                       <button className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-white/50 hover:text-amber-400 hover:bg-white/5 rounded-lg transition-all active:scale-95 shrink-0" onClick={() => handleNudge('start', -0.1)}><Minus className="w-3 h-3 sm:w-4 sm:h-4" /></button>
+                       <span className="text-[10px] sm:text-xs font-mono text-white/90 flex-1 text-center font-medium">
+                          {(() => {
+                            const sec = startSec;
+                            const m = Math.floor(sec / 60);
+                            const s = sec % 60;
+                            if (m > 0) return `${m}'${s.toFixed(2).padStart(5, '0')}`;
+                            return `${s.toFixed(2)}s`;
+                          })()}
+                       </span>
+                       <button className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-white/50 hover:text-amber-400 hover:bg-white/5 rounded-lg transition-all active:scale-95 shrink-0" onClick={() => handleNudge('start', 0.1)}><Plus className="w-3 h-3 sm:w-4 sm:h-4" /></button>
+                   </div>
+               </div>
+               
+               <div className="flex flex-col items-start gap-1 sm:gap-1.5 flex-1">
+                   <span className="text-[9px] sm:text-[10px] text-white/50 uppercase font-bold tracking-wider pl-1">End Time</span>
+                   <div className="flex items-center w-full bg-black/40 rounded-xl p-1 border border-white/10 shadow-inner">
+                       <button className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-white/50 hover:text-amber-400 hover:bg-white/5 rounded-lg transition-all active:scale-95 shrink-0" onClick={() => handleNudge('end', -0.1)}><Minus className="w-3 h-3 sm:w-4 sm:h-4" /></button>
+                       <span className="text-[10px] sm:text-xs font-mono text-white/90 flex-1 text-center font-medium">
+                          {(() => {
+                            const sec = endSec;
+                            const m = Math.floor(sec / 60);
+                            const s = sec % 60;
+                            if (m > 0) return `${m}'${s.toFixed(2).padStart(5, '0')}`;
+                            return `${s.toFixed(2)}s`;
+                          })()}
+                       </span>
+                       <button className="w-8 h-8 sm:w-10 sm:h-10 flex items-center justify-center text-white/50 hover:text-amber-400 hover:bg-white/5 rounded-lg transition-all active:scale-95 shrink-0" onClick={() => handleNudge('end', 0.1)}><Plus className="w-3 h-3 sm:w-4 sm:h-4" /></button>
+                   </div>
+               </div>
+           </div>
+        )}
       </div>
       
 
       {mode === "full" && (
-        <div className="flex flex-wrap items-center justify-center gap-3 w-full">
+        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 w-full">
             <button
               onClick={onCancel}
               disabled={isProcessing}
-              className="px-6 py-3 rounded-full font-bold text-[10px] tracking-widest uppercase border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white transition-all"
+              className="px-4 py-2 sm:px-6 sm:py-2.5 rounded-full font-bold text-[9px] sm:text-[10px] tracking-widest uppercase border border-white/10 bg-white/5 text-white/70 hover:bg-white/10 hover:text-white transition-all shrink-0"
             >
               Cancel
             </button>
             
-            <div className="flex items-center gap-2 p-1 bg-white/5 border border-white/10 rounded-full">
+            <div className="flex items-center gap-1.5 p-1 bg-white/5 border border-white/10 rounded-full shrink-0">
                <button 
                  onClick={handleReplay}
                  disabled={!isReady || isProcessing}
-                 className="flex items-center justify-center w-10 h-10 rounded-full text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-50 transition-all"
+                 className="flex items-center justify-center w-8 h-8 sm:w-9 sm:h-9 rounded-full text-white/70 hover:text-white hover:bg-white/10 disabled:opacity-50 transition-all"
                  title="Replay from start"
                >
-                 <RotateCcw className="w-4 h-4" />
+                 <RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                </button>
                <button 
                  onClick={handlePlayPause}
                  disabled={!isReady || isProcessing}
-                 className="flex items-center gap-2 bg-blue-500 text-white pl-4 pr-5 py-2.5 rounded-full font-bold text-[10px] tracking-widest uppercase hover:bg-blue-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)]"
+                 className="flex items-center gap-1.5 bg-blue-500 text-white pl-3 pr-4 py-1.5 sm:pl-4 sm:pr-5 sm:py-2 rounded-full font-bold text-[9px] sm:text-[10px] tracking-widest uppercase hover:bg-blue-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(59,130,246,0.3)]"
                >
-                 {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                 {isPlaying ? <Pause className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
                  {isPlaying ? "Pause" : "Play Preview"}
                </button>
             </div>
-
+            
             <button
-              onClick={handleApply}
+              onClick={() => handleApply(false)}
               disabled={!isReady || isProcessing}
-              className="flex items-center gap-2 bg-amber-400 text-black px-6 py-3 rounded-full font-bold text-[10px] tracking-widest uppercase hover:bg-amber-300 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(251,191,36,0.3)] ml-auto sm:ml-0"
+              className="flex items-center gap-1.5 bg-amber-400 text-black px-4 py-2 sm:px-6 sm:py-2.5 rounded-full font-bold text-[9px] sm:text-[10px] tracking-widest uppercase hover:bg-amber-300 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(251,191,36,0.3)] shrink-0"
             >
-              <Scissors className="w-4 h-4" />
+              <Scissors className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
               Apply Trim
             </button>
+            
+            {showExtractAction && (
+              <button
+                onClick={() => handleApply(true)}
+                disabled={!isReady || isProcessing}
+                className="flex items-center gap-1.5 bg-indigo-500 text-white px-4 py-2 sm:px-6 sm:py-2.5 rounded-full font-bold text-[9px] sm:text-[10px] tracking-widest uppercase hover:bg-indigo-400 disabled:opacity-50 transition-all shadow-[0_0_15px_rgba(99,102,241,0.3)] shrink-0 w-full sm:w-auto justify-center mt-1 sm:mt-0"
+              >
+                <Sparkles className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                Apply & Extract Stems
+              </button>
+            )}
         </div>
       )}
       
