@@ -1572,6 +1572,8 @@ function useAudioProcessor(eqSettings: any[], spatialSettings: any) {
     }
   });
   const isSignatureSoundRef = useRef(isSignatureSound);
+
+
   useEffect(() => {
     isSignatureSoundRef.current = isSignatureSound;
     localStorage.setItem("acoustic_presence_is_signature_sound", String(isSignatureSound));
@@ -3732,6 +3734,15 @@ export default function App() {
   const isCompact = uiLayoutMode === "compact" || uiLayoutMode === "hidden";
 
   const [showVideoIframe, setShowVideoIframe] = useState(false);
+
+  useEffect(() => {
+    if (showVideoIframe && videoRef.current && audioRef.current) {
+      videoRef.current.muted = true;
+      if (Math.abs(videoRef.current.currentTime - audioRef.current.currentTime) > 0.3) {
+        videoRef.current.currentTime = audioRef.current.currentTime;
+      }
+    }
+  }, [showVideoIframe, currentSong?.videoUrl]);
   const [bgPlayBypass, setBgPlayBypass] = useState(() => {
     try {
       const saved = localStorage.getItem("acoustic_presence_bg_bypass");
@@ -4035,6 +4046,19 @@ export default function App() {
 
       const currentTime = audioRef.current.currentTime;
       const duration = audioRef.current.duration;
+
+      // SYNC VIDEO: Ensure video is muted and synced to avoid double audio
+      if (showVideoIframe && videoRef.current) {
+        if (!videoRef.current.muted) videoRef.current.muted = true;
+        if (Math.abs(videoRef.current.currentTime - currentTime) > 0.3) {
+          videoRef.current.currentTime = currentTime;
+        }
+        if (isPlaying && videoRef.current.paused) {
+          videoRef.current.play().catch(() => {});
+        } else if (!isPlaying && !videoRef.current.paused) {
+          videoRef.current.pause();
+        }
+      }
       
       // Calculate smooth volume
       let targetVolume = 1.0;
