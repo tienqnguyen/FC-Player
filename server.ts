@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import youtubedl from "youtube-dl-exec";
@@ -11,27 +12,44 @@ import { spawn } from "child_process";
 import ytSearch from "yt-search";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { fetchNctPlaylistWithProxyRace, parseNctHtml } from "./server/nctParser";
-import { fetchTKaraokePlaylist, fetchTKaraokeSongDetails } from "./server/tkaraokeParser";
-import { hasYoutubeCookies, getCookiesFilePath, saveYoutubeCookies, getYoutubeCookiesStatus } from "./server/youtubeCookieHelper";
-import { getCachedData, setCachedData, invalidateCache } from "./server/cacheHelper";
+import {
+  fetchNctPlaylistWithProxyRace,
+  parseNctHtml,
+} from "./server/nctParser";
+import {
+  fetchTKaraokePlaylist,
+  fetchTKaraokeSongDetails,
+} from "./server/tkaraokeParser";
+import {
+  hasYoutubeCookies,
+  getCookiesFilePath,
+  saveYoutubeCookies,
+  getYoutubeCookiesStatus,
+} from "./server/youtubeCookieHelper";
+import {
+  getCachedData,
+  setCachedData,
+  invalidateCache,
+} from "./server/cacheHelper";
 
 async function resolveFacebookRedirect(url: string): Promise<string> {
   const isFb = url.includes("facebook.com") || url.includes("fb.watch");
   if (!isFb) return url;
 
   try {
-    const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    const userAgent =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     const response = await fetch(url, {
       method: "GET",
       headers: {
         "User-Agent": userAgent,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
       },
-      redirect: "follow"
+      redirect: "follow",
     });
-    
+
     if (response.url && response.url !== url) {
       console.log(`[Facebook Redirect] Resolved: ${url} -> ${response.url}`);
       return response.url;
@@ -42,7 +60,10 @@ async function resolveFacebookRedirect(url: string): Promise<string> {
   return url;
 }
 
-const directStreamMemoryCache = new Map<string, { url: string; expiresAt: number }>();
+const directStreamMemoryCache = new Map<
+  string,
+  { url: string; expiresAt: number }
+>();
 const directStreamInFlightPromises = new Map<string, Promise<string>>();
 
 async function getDirectMediaUrl(url: string): Promise<string> {
@@ -76,7 +97,7 @@ async function getDirectMediaUrl(url: string): Promise<string> {
 
         directStreamMemoryCache.set(url, {
           url: info.url,
-          expiresAt: Date.now() + (2 * 60 * 60 * 1000) // cache for 2 hours
+          expiresAt: Date.now() + 2 * 60 * 60 * 1000, // cache for 2 hours
         });
 
         return info.url;
@@ -90,7 +111,11 @@ async function getDirectMediaUrl(url: string): Promise<string> {
   return inFlightPromise;
 }
 
-import { formatLyric, improveLyric, addChordsLyric } from "./server/lyricProcessor";
+import {
+  formatLyric,
+  improveLyric,
+  addChordsLyric,
+} from "./server/lyricProcessor";
 
 async function startServer() {
   const app = express();
@@ -99,7 +124,10 @@ async function startServer() {
   app.use(cors());
   app.use(express.json({ limit: "15mb" }));
   app.use(express.urlencoded({ limit: "15mb", extended: true }));
-  app.use("/stems-cache", express.static(path.join(process.cwd(), "stems_cache")));
+  app.use(
+    "/stems-cache",
+    express.static(path.join(process.cwd(), "stems_cache")),
+  );
 
   // API to stream audio of YouTube, Facebook, SoundCloud, etc.
   app.get("/api/stream", async (req, res) => {
@@ -110,17 +138,22 @@ async function startServer() {
         return;
       }
       url = await resolveFacebookRedirect(url);
-      
+
       try {
         const directUrl = await getDirectMediaUrl(url);
-        console.log(`[Stream Range Proxy] Streaming direct URL: ${directUrl.substring(0, 80)}...`);
+        console.log(
+          `[Stream Range Proxy] Streaming direct URL: ${directUrl.substring(0, 80)}...`,
+        );
         const headers: Record<string, string> = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         };
         if (req.headers.range) headers["Range"] = req.headers.range;
         const response = await fetch(directUrl, { headers });
         if (!response.ok) {
-           throw new Error(`Direct fetch failed with status: ${response.status}`);
+          throw new Error(
+            `Direct fetch failed with status: ${response.status}`,
+          );
         }
         res.status(response.status);
         let contentType = response.headers.get("content-type");
@@ -129,31 +162,45 @@ async function startServer() {
         if (contentLength) res.setHeader("Content-Length", contentLength);
         const contentRange = response.headers.get("content-range");
         if (contentRange) res.setHeader("Content-Range", contentRange);
-        res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
+        res.setHeader(
+          "Accept-Ranges",
+          response.headers.get("accept-ranges") || "bytes",
+        );
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
         if (response.body) {
-            const nodeStream = Readable.fromWeb(response.body as any);
-            nodeStream.pipe(res);
-            res.on("close", () => nodeStream.destroy());
-            return;
+          const nodeStream = Readable.fromWeb(response.body as any);
+          nodeStream.pipe(res);
+          res.on("close", () => nodeStream.destroy());
+          return;
         }
-      } catch(err) {
-         console.warn("[Stream Proxy] direct url failed, falling back to yt-dlp");
+      } catch (err) {
+        console.warn(
+          "[Stream Proxy] direct url failed, falling back to yt-dlp",
+        );
       }
 
-      const ytDlpArgs = ["-f", "ba[ext=m4a]/b[ext=mp4]/ba/b/best", "-o", "-", url];
-      const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
+      const ytDlpArgs = [
+        "-f",
+        "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+        "-o",
+        "-",
+        url,
+      ];
+      const subprocess = spawn(
+        (youtubedl as any).constants.YOUTUBE_DL_PATH,
+        ytDlpArgs,
+      );
       res.setHeader("Content-Type", "audio/mpeg");
       res.setHeader("Transfer-Encoding", "chunked");
       if (subprocess.stdout) {
-          subprocess.stdout.pipe(res);
+        subprocess.stdout.pipe(res);
       } else {
-          res.status(500).json({ error: "Failed to create audio stream" });
+        res.status(500).json({ error: "Failed to create audio stream" });
       }
     } catch (error: any) {
-       res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -164,7 +211,8 @@ async function startServer() {
         return res.status(400).json({ error: "URL is required" });
       }
       const headers: Record<string, string> = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       };
       if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
         headers["Referer"] = "https://www.nhaccuatui.com/";
@@ -175,7 +223,9 @@ async function startServer() {
       }
       const response = await fetch(url, { headers });
       if (!response.ok) {
-        console.error(`[Proxy Stream] HTTP error fetching ${url}: ${response.status} ${response.statusText}`);
+        console.error(
+          `[Proxy Stream] HTTP error fetching ${url}: ${response.status} ${response.statusText}`,
+        );
       }
       res.status(response.status);
       let contentType = response.headers.get("content-type");
@@ -185,7 +235,10 @@ async function startServer() {
       if (contentLength) res.setHeader("Content-Length", contentLength);
       const contentRange = response.headers.get("content-range");
       if (contentRange) res.setHeader("Content-Range", contentRange);
-      res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
+      res.setHeader(
+        "Accept-Ranges",
+        response.headers.get("accept-ranges") || "bytes",
+      );
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
@@ -197,9 +250,14 @@ async function startServer() {
         res.status(500).json({ error: "No body in audio stream source." });
       }
     } catch (error: any) {
-      console.error(`[Proxy Stream] Exception fetching ${req.query.url}:`, error);
+      console.error(
+        `[Proxy Stream] Exception fetching ${req.query.url}:`,
+        error,
+      );
       if (!res.headersSent) {
-        res.status(500).json({ error: error.message || "Failed to proxy stream." });
+        res
+          .status(500)
+          .json({ error: error.message || "Failed to proxy stream." });
       } else if (!res.writableEnded) {
         res.end();
       }
@@ -216,8 +274,10 @@ async function startServer() {
         return res.status(400).json({ error: "URL is required" });
       }
 
-      console.log(`[Proxy Stem] Fetching "${url}" via hfApp on space "${space}"`);
-      
+      console.log(
+        `[Proxy Stem] Fetching "${url}" via hfApp on space "${space}"`,
+      );
+
       let hfApp = hfClientCache.get(space);
       if (!hfApp) {
         const { client } = await import("@gradio/client");
@@ -227,21 +287,26 @@ async function startServer() {
 
       const response = await hfApp.fetch(url);
       if (!response.ok) {
-        throw new Error(`Failed to fetch from HF: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Failed to fetch from HF: ${response.status} ${response.statusText}`,
+        );
       }
 
       res.status(response.status);
-      
+
       let contentType = response.headers.get("content-type") || "audio/wav";
       res.setHeader("Content-Type", contentType);
-      
+
       const contentLength = response.headers.get("content-length");
       if (contentLength) res.setHeader("Content-Length", contentLength);
 
       const contentRange = response.headers.get("content-range");
       if (contentRange) res.setHeader("Content-Range", contentRange);
-      
-      res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
+
+      res.setHeader(
+        "Accept-Ranges",
+        response.headers.get("accept-ranges") || "bytes",
+      );
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
@@ -256,7 +321,9 @@ async function startServer() {
     } catch (error: any) {
       console.error(`[Proxy Stem Error]`, error);
       if (!res.headersSent) {
-        res.status(500).json({ error: error.message || "Failed to proxy HF stem." });
+        res
+          .status(500)
+          .json({ error: error.message || "Failed to proxy HF stem." });
       } else if (!res.writableEnded) {
         res.end();
       }
@@ -264,7 +331,7 @@ async function startServer() {
   });
 
   const upload = multer({ storage: multer.memoryStorage() });
-  app.post("/api/stemmix", upload.single('audio_file'), async (req, res) => {
+  app.post("/api/stemmix", upload.single("audio_file"), async (req, res) => {
     try {
       let audioUrl = req.body.audioUrl;
       let targetUrl = audioUrl;
@@ -273,19 +340,29 @@ async function startServer() {
       if (req.file) {
         // Uploaded file
         blob = new Blob([req.file.buffer]);
-        console.log(`[Stemmix] Received uploaded file: ${req.file.originalname} (${blob.size} bytes)`);
+        console.log(
+          `[Stemmix] Received uploaded file: ${req.file.originalname} (${blob.size} bytes)`,
+        );
         targetUrl = "uploaded_file";
       } else {
         if (!audioUrl) {
-          return res.status(400).json({ error: "No audio URL or file provided" });
+          return res
+            .status(400)
+            .json({ error: "No audio URL or file provided" });
         }
         if (targetUrl && targetUrl.startsWith("blob:")) {
-          return res.status(400).json({ error: "Cannot process browser local blob URLs on the server. Please ensure the local file is uploaded." });
+          return res
+            .status(400)
+            .json({
+              error:
+                "Cannot process browser local blob URLs on the server. Please ensure the local file is uploaded.",
+            });
         }
         console.log(`[Stemmix] Separating stems for: ${audioUrl}`);
-        
+
         const headers = {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         };
         if (targetUrl.includes("/api/proxy-stream?url=")) {
           targetUrl = decodeURIComponent(targetUrl.split("url=")[1]);
@@ -297,11 +374,15 @@ async function startServer() {
         console.log(`[Stemmix] Fetching audio from: ${targetUrl}`);
         const audioResponse = await fetch(targetUrl, { headers });
         if (!audioResponse.ok) {
-           throw new Error(`Failed to fetch audio for Stemmix. Status: ${audioResponse.status}`);
+          throw new Error(
+            `Failed to fetch audio for Stemmix. Status: ${audioResponse.status}`,
+          );
         }
         const arrayBuffer = await audioResponse.arrayBuffer();
         blob = new Blob([arrayBuffer]);
-        console.log(`[Stemmix] Downloaded audio blob: ${blob.size} bytes. Initiating HF separation...`);
+        console.log(
+          `[Stemmix] Downloaded audio blob: ${blob.size} bytes. Initiating HF separation...`,
+        );
       }
 
       const { client, handle_file } = await import("@gradio/client");
@@ -316,10 +397,14 @@ async function startServer() {
         "tienqnguyen95/Stemmix",
         "vumichien/demucs",
         "akhaliq/demucs",
-        "fabiocarrilho/demucs"
+        "fabiocarrilho/demucs",
       ];
       const customSpace = req.body.customSpace;
-      if (customSpace && typeof customSpace === "string" && customSpace.trim()) {
+      if (
+        customSpace &&
+        typeof customSpace === "string" &&
+        customSpace.trim()
+      ) {
         const cleaned = customSpace.trim();
         if (!spaces.includes(cleaned)) {
           spaces.unshift(cleaned);
@@ -329,106 +414,161 @@ async function startServer() {
       const runSeparation = async () => {
         // Find primary space to try first
         let primarySpace = "tienqnguyen95/Stemmix";
-        if (customSpace && typeof customSpace === "string" && customSpace.trim()) {
+        if (
+          customSpace &&
+          typeof customSpace === "string" &&
+          customSpace.trim()
+        ) {
           primarySpace = customSpace.trim();
         }
 
         try {
-          console.log(`[Stemmix] Attempting primary Hugging Face Space: ${primarySpace}`);
+          console.log(
+            `[Stemmix] Attempting primary Hugging Face Space: ${primarySpace}`,
+          );
           const hfApp = await client(primarySpace as any);
           const res = await hfApp.predict("/separate_stems", {
             audio_file: handle_file(blob),
           });
           if (res && res.data) {
-            console.log(`[Stemmix] Successfully separated stems using primary Space: ${primarySpace}`);
+            console.log(
+              `[Stemmix] Successfully separated stems using primary Space: ${primarySpace}`,
+            );
             return { res, space: primarySpace, hfApp };
           }
         } catch (e: any) {
-          console.warn(`[Stemmix] Primary space ${primarySpace} failed or is offline:`, e.message || e);
+          console.warn(
+            `[Stemmix] Primary space ${primarySpace} failed or is offline:`,
+            e.message || e,
+          );
         }
 
         // Fallback: run remaining top spaces sequentially to save bandwidth and prevent parallel spam
-        const remainingSpaces = spaces.filter(s => s !== primarySpace).slice(0, 3);
+        const remainingSpaces = spaces
+          .filter((s) => s !== primarySpace)
+          .slice(0, 3);
         for (const space of remainingSpaces) {
           try {
-            console.log(`[Stemmix] Attempting fallback Hugging Face Space: ${space}`);
+            console.log(
+              `[Stemmix] Attempting fallback Hugging Face Space: ${space}`,
+            );
             const hfApp = await client(space as any);
             const res = await hfApp.predict("/separate_stems", {
               audio_file: handle_file(blob),
             });
             if (res && res.data) {
-              console.log(`[Stemmix] Successfully separated stems using fallback Space: ${space}`);
+              console.log(
+                `[Stemmix] Successfully separated stems using fallback Space: ${space}`,
+              );
               return { res, space, hfApp };
             }
           } catch (e: any) {
-            console.warn(`[Stemmix] Fallback space ${space} failed:`, e.message || e);
+            console.warn(
+              `[Stemmix] Fallback space ${space} failed:`,
+              e.message || e,
+            );
           }
         }
-        console.log(`[Stemmix] All AI models unavailable, switching to local DSP/WebGPU mode`);
+        console.log(
+          `[Stemmix] All AI models unavailable, switching to local DSP/WebGPU mode`,
+        );
         return null;
       };
 
       try {
-         result = await Promise.race([
-             runSeparation(),
-             new Promise((_, reject) => setTimeout(() => reject(new Error("AI Cloud processing took too long. Falling back to local DSP.")), 180000))
-         ]);
-         if (result && result.res && result.res.data) {
-             success = true;
-         }
+        result = await Promise.race([
+          runSeparation(),
+          new Promise((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    "AI Cloud processing took too long. Falling back to local DSP.",
+                  ),
+                ),
+              180000,
+            ),
+          ),
+        ]);
+        if (result && result.res && result.res.data) {
+          success = true;
+        }
       } catch (timeoutErr) {
-         console.warn("[Stemmix] Timeout:", timeoutErr.message);
+        console.warn("[Stemmix] Timeout:", timeoutErr.message);
       }
 
       if (success && result && result.res && result.res.data) {
-        console.log(`[Stemmix] AI separation result data:`, JSON.stringify(result.res.data, null, 2));
-        const spaceUrl = `https://${result.space.replace('/', '-')}.hf.space`;
+        console.log(
+          `[Stemmix] AI separation result data:`,
+          JSON.stringify(result.res.data, null, 2),
+        );
+        const spaceUrl = `https://${result.space.replace("/", "-")}.hf.space`;
         const getUrl = (item: any) => {
-            if (!item) return null;
-            let u = typeof item === 'string' ? item : (item.url || item.path);
-            if (!u || typeof u !== 'string' || !u.includes('hf.space') && !u.startsWith('http') && !u.startsWith('/')) {
-              return null; // Ignore non-url strings
-            }
-            if (u.startsWith('http://127.0.0.1') || u.startsWith('http://localhost') || u.startsWith('http://0.0.0.0')) {
-              const urlObj = new URL(u);
-              u = `${spaceUrl}${urlObj.pathname}${urlObj.search}`;
-            } else if (u.startsWith('/')) {
-              u = `${spaceUrl}${u}`;
-            }
-            return u;
+          if (!item) return null;
+          let u = typeof item === "string" ? item : item.url || item.path;
+          if (
+            !u ||
+            typeof u !== "string" ||
+            (!u.includes("hf.space") &&
+              !u.startsWith("http") &&
+              !u.startsWith("/"))
+          ) {
+            return null; // Ignore non-url strings
+          }
+          if (
+            u.startsWith("http://127.0.0.1") ||
+            u.startsWith("http://localhost") ||
+            u.startsWith("http://0.0.0.0")
+          ) {
+            const urlObj = new URL(u);
+            u = `${spaceUrl}${urlObj.pathname}${urlObj.search}`;
+          } else if (u.startsWith("/")) {
+            u = `${spaceUrl}${u}`;
+          }
+          return u;
         };
-        
+
         let vocals, drums, bass, guitar, piano, other;
         if (Array.isArray(result.res.data)) {
           for (const item of result.res.data) {
-            if (item && typeof item === 'object' && item.orig_name) {
+            if (item && typeof item === "object" && item.orig_name) {
               const name = item.orig_name.toLowerCase();
               const u = getUrl(item);
               if (!u) continue;
-              
-              if (name.includes('vocal')) vocals = u;
-              else if (name.includes('drum')) drums = u;
-              else if (name.includes('bass')) bass = u;
-              else if (name.includes('guitar')) guitar = u;
-              else if (name.includes('piano')) piano = u;
-              else if (name.includes('other')) other = u;
+
+              if (name.includes("vocal")) vocals = u;
+              else if (name.includes("drum")) drums = u;
+              else if (name.includes("bass")) bass = u;
+              else if (name.includes("guitar")) guitar = u;
+              else if (name.includes("piano")) piano = u;
+              else if (name.includes("other")) other = u;
             }
           }
         }
-        
-        if (!vocals && !drums && !bass && !other && Array.isArray(result.res.data)) {
+
+        if (
+          !vocals &&
+          !drums &&
+          !bass &&
+          !other &&
+          Array.isArray(result.res.data)
+        ) {
           // Fallback if the space doesn't use orig_name or returns strings/simple objects
           // Assuming typical output order if the first item isn't a string message
           let offset = 0;
-          if (result.res.data.length > 2 && (typeof result.res.data[0] === 'string' || (result.res.data[0] && result.res.data[0].__type__ === 'update'))) {
-              offset = 2;
+          if (
+            result.res.data.length > 2 &&
+            (typeof result.res.data[0] === "string" ||
+              (result.res.data[0] && result.res.data[0].__type__ === "update"))
+          ) {
+            offset = 2;
           }
           vocals = getUrl(result.res.data[offset]);
-          drums = getUrl(result.res.data[offset+1]);
-          bass = getUrl(result.res.data[offset+2]);
-          other = getUrl(result.res.data[offset+3]);
-          guitar = getUrl(result.res.data[offset+4]);
-          piano = getUrl(result.res.data[offset+5]);
+          drums = getUrl(result.res.data[offset + 1]);
+          bass = getUrl(result.res.data[offset + 2]);
+          other = getUrl(result.res.data[offset + 3]);
+          guitar = getUrl(result.res.data[offset + 4]);
+          piano = getUrl(result.res.data[offset + 5]);
         }
 
         // Cache the hfApp client instance for instant proxying
@@ -440,37 +580,44 @@ async function startServer() {
         };
 
         const stems = {
-            status: "Success",
-            vocals: formatProxyUrl(vocals),
-            drums: formatProxyUrl(drums),
-            bass: formatProxyUrl(bass),
-            guitar: formatProxyUrl(guitar),
-            piano: formatProxyUrl(piano),
-            other: formatProxyUrl(other),
-            isDspFallback: false
+          status: "Success",
+          vocals: formatProxyUrl(vocals),
+          drums: formatProxyUrl(drums),
+          bass: formatProxyUrl(bass),
+          guitar: formatProxyUrl(guitar),
+          piano: formatProxyUrl(piano),
+          other: formatProxyUrl(other),
+          isDspFallback: false,
         };
-        console.log(`[Stemmix] AI separation succeeded using Space: ${result.space}. Returned instant streaming URLs.`);
+        console.log(
+          `[Stemmix] AI separation succeeded using Space: ${result.space}. Returned instant streaming URLs.`,
+        );
         return res.json({ success: true, stems });
       }
 
       console.log(`[Stemmix] AI separation spaces failed.`);
-      return res.status(400).json({ 
-        success: false, 
-        error: "AI Cloud servers are currently overloaded or offline. Please select the ⚡ WebGPU mode to process it locally." 
+      return res.status(400).json({
+        success: false,
+        error:
+          "AI Cloud servers are currently overloaded or offline. Please select the ⚡ WebGPU mode to process it locally.",
       });
     } catch (error) {
       console.error("[Stemmix Error]", error);
-      res.status(500).json({ error: error.message || "Failed to separate stems" });
+      res
+        .status(500)
+        .json({ error: error.message || "Failed to separate stems" });
     }
   });
 
   app.get("/api/nhaccuatui/playlist", async (req, res) => {
     try {
       const playlistUrl = req.query.url as string;
-      const forceRefresh = req.query.refresh === 'true';
+      const forceRefresh = req.query.refresh === "true";
 
       if (!playlistUrl) {
-        return res.status(400).json({ error: "NhacCuaTui playlist URL is required." });
+        return res
+          .status(400)
+          .json({ error: "NhacCuaTui playlist URL is required." });
       }
 
       if (forceRefresh) {
@@ -478,7 +625,9 @@ async function startServer() {
       } else {
         const cached = await getCachedData<any>("nct_playlist", playlistUrl);
         if (cached) {
-          console.log(`[API] Serving CACHED NhacCuaTui playlist: ${playlistUrl}`);
+          console.log(
+            `[API] Serving CACHED NhacCuaTui playlist: ${playlistUrl}`,
+          );
           return res.json({ success: true, data: cached });
         }
       }
@@ -493,13 +642,15 @@ async function startServer() {
 
       res.json({
         success: true,
-        data: parsedData
+        data: parsedData,
       });
     } catch (error: any) {
       console.error("[API NCT Error]", error.message);
       res.status(500).json({
         success: false,
-        error: error.message || "Failed to retrieve NhacCuaTui playlist details. The service might be temporarily geoblocked or overloaded."
+        error:
+          error.message ||
+          "Failed to retrieve NhacCuaTui playlist details. The service might be temporarily geoblocked or overloaded.",
       });
     }
   });
@@ -517,13 +668,15 @@ async function startServer() {
 
       res.json({
         success: true,
-        data: parsedData
+        data: parsedData,
       });
     } catch (error: any) {
       console.error("[API NCT Manual Error]", error.message);
       res.status(400).json({
         success: false,
-        error: error.message || "Failed to parse NhacCuaTui page source HTML. Make sure you copied the correct source."
+        error:
+          error.message ||
+          "Failed to parse NhacCuaTui page source HTML. Make sure you copied the correct source.",
       });
     }
   });
@@ -533,33 +686,63 @@ async function startServer() {
     try {
       const { url, songs } = req.body;
       let songsToSave = songs;
-      
+
       if (url) {
         console.log(`[API Save Default] Fetching and parsing NCT URL: ${url}`);
         const rawHtml = await fetchNctPlaylistWithProxyRace(url);
         const parsedData = parseNctHtml(rawHtml);
         songsToSave = parsedData.songs;
       }
-      
-      if (!songsToSave || !Array.isArray(songsToSave) || songsToSave.length === 0) {
-        return res.status(400).json({ error: "Song list is empty or invalid. Make sure the playlist contains tracks." });
+
+      if (
+        !songsToSave ||
+        !Array.isArray(songsToSave) ||
+        songsToSave.length === 0
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              "Song list is empty or invalid. Make sure the playlist contains tracks.",
+          });
       }
-      
-      const configPath = path.join(process.cwd(), "default_playlist_config.json");
-      await fs.writeFile(configPath, JSON.stringify(songsToSave, null, 2), "utf8");
-      
-      console.log(`[API] Default playlist updated with ${songsToSave.length} songs and saved to file.`);
-      res.json({ success: true, message: "Playlist successfully set as default!", songs: songsToSave });
+
+      const configPath = path.join(
+        process.cwd(),
+        "default_playlist_config.json",
+      );
+      await fs.writeFile(
+        configPath,
+        JSON.stringify(songsToSave, null, 2),
+        "utf8",
+      );
+
+      console.log(
+        `[API] Default playlist updated with ${songsToSave.length} songs and saved to file.`,
+      );
+      res.json({
+        success: true,
+        message: "Playlist successfully set as default!",
+        songs: songsToSave,
+      });
     } catch (error: any) {
       console.error("[API NCT Save Default Error]", error.message);
-      res.status(500).json({ success: false, error: error.message || "Failed to save playlist as default." });
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: error.message || "Failed to save playlist as default.",
+        });
     }
   });
 
   // API to retrieve the set default songs list
   app.get("/api/default-songs", async (req, res) => {
     try {
-      const configPath = path.join(process.cwd(), "default_playlist_config.json");
+      const configPath = path.join(
+        process.cwd(),
+        "default_playlist_config.json",
+      );
       if (existsSync(configPath)) {
         const content = await fs.readFile(configPath, "utf8");
         const songs = JSON.parse(content);
@@ -568,7 +751,13 @@ async function startServer() {
       res.json({ success: true, songs: [] });
     } catch (error: any) {
       console.error("[API Get Default Songs Error]", error.message);
-      res.status(500).json({ success: false, error: error.message || "Failed to retrieve default songs.", songs: [] });
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: error.message || "Failed to retrieve default songs.",
+          songs: [],
+        });
     }
   });
 
@@ -585,26 +774,30 @@ async function startServer() {
             id: "comm_seed1",
             title: "Em (feat. SOOBIN) - Classic Vibe",
             author: "Binz, SOOBIN",
-            cover: "https://image-cdn.nct.vn/song/2026/05/21/t/a/x/v/1779370796566.jpg",
+            cover:
+              "https://image-cdn.nct.vn/song/2026/05/21/t/a/x/v/1779370796566.jpg",
             duration: 296,
-            audioUrl: "/api/proxy-stream?url=https%3A%2F%2Fstream.nct.vn%2Fresa%2F2605%2Fa4%2F52%2F96myxlw2bg.mp3%3Fst%3DG5iXoDQWnWgHmtXbfr2ucQ%26e%3D1781276871%26a%3D6%26p%3D0%26r%3D885ad4649ef1d80dd7233f228343a253",
+            audioUrl:
+              "/api/proxy-stream?url=https%3A%2F%2Fstream.nct.vn%2Fresa%2F2605%2Fa4%2F52%2F96myxlw2bg.mp3%3Fst%3DG5iXoDQWnWgHmtXbfr2ucQ%26e%3D1781276871%26a%3D6%26p%3D0%26r%3D885ad4649ef1d80dd7233f228343a253",
             originalUrl: "https://www.nhaccuatui.com/song/xLLyzXlyrRLa.html",
             sharedBy: "Acoustic System",
             sharedAt: new Date().toISOString(),
-            likes: 15
+            likes: 15,
           },
           {
             id: "comm_seed2",
             title: "Lofi Hip Hop Radio 📚 Beats to Study/Relax to",
             author: "Lofi Girl",
-            cover: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300",
+            cover:
+              "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=300",
             duration: 3600,
-            audioUrl: "/api/stream?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DjfKfPfyJRdk",
+            audioUrl:
+              "/api/stream?url=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3DjfKfPfyJRdk",
             originalUrl: "https://www.youtube.com/watch?v=jfKfPfyJRdk",
             sharedBy: "Lofi Team",
             sharedAt: new Date().toISOString(),
-            likes: 24
-          }
+            likes: 24,
+          },
         ];
         await fs.writeFile(dbPath, JSON.stringify(tracks, null, 2), "utf-8");
       } else {
@@ -615,7 +808,13 @@ async function startServer() {
       res.json({ success: true, tracks });
     } catch (error: any) {
       console.error("[API GET Tracks Error]", error.message);
-      res.status(500).json({ success: false, error: error.message || "Failed to retrieve community tracks.", tracks: [] });
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: error.message || "Failed to retrieve community tracks.",
+          tracks: [],
+        });
     }
   });
 
@@ -624,7 +823,9 @@ async function startServer() {
     try {
       let { url, title, author, cover, duration, sharedBy } = req.body;
       if (!url || typeof url !== "string") {
-        return res.status(400).json({ success: false, error: "Valid URL is required." });
+        return res
+          .status(400)
+          .json({ success: false, error: "Valid URL is required." });
       }
 
       url = url.trim();
@@ -645,7 +846,10 @@ async function startServer() {
               duration = duration || firstSong.duration;
             }
           } catch (e: any) {
-            console.warn("[Community Share] Fallback NCT parsing issue:", e.message);
+            console.warn(
+              "[Community Share] Fallback NCT parsing issue:",
+              e.message,
+            );
           }
         } else {
           try {
@@ -667,7 +871,10 @@ async function startServer() {
             author = author || info.uploader || info.artist;
             duration = duration || info.duration;
           } catch (e: any) {
-            console.warn("[Community Share] Fallback yt-dlp metadata issue:", e.message);
+            console.warn(
+              "[Community Share] Fallback yt-dlp metadata issue:",
+              e.message,
+            );
           }
         }
       }
@@ -675,7 +882,9 @@ async function startServer() {
       // Default fallbacks in case both parsing and direct values are missing
       title = title || "Shared Web Clip";
       author = author || "Acoustic Community";
-      cover = cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300";
+      cover =
+        cover ||
+        "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300";
       duration = duration || 180;
 
       // Unify stream routes cleanly
@@ -687,7 +896,11 @@ async function startServer() {
       }
 
       const songObj = {
-        id: "comm_" + Math.random().toString(36).substring(2, 10) + "_" + Date.now(),
+        id:
+          "comm_" +
+          Math.random().toString(36).substring(2, 10) +
+          "_" +
+          Date.now(),
         title,
         author,
         cover,
@@ -696,7 +909,7 @@ async function startServer() {
         originalUrl: url,
         sharedBy,
         sharedAt: new Date().toISOString(),
-        likes: 0
+        likes: 0,
       };
 
       const dbPath = path.join(process.cwd(), "community_tracks.json");
@@ -711,7 +924,7 @@ async function startServer() {
       }
 
       // Check if URL is already shared
-      const existingIndex = tracks.findIndex(t => t.originalUrl === url);
+      const existingIndex = tracks.findIndex((t) => t.originalUrl === url);
       if (existingIndex !== -1) {
         // Update contributor or bump shared time
         tracks[existingIndex] = {
@@ -720,7 +933,7 @@ async function startServer() {
           author: songObj.author,
           cover: songObj.cover,
           sharedBy: songObj.sharedBy,
-          sharedAt: songObj.sharedAt
+          sharedAt: songObj.sharedAt,
         };
       } else {
         tracks.unshift(songObj);
@@ -730,7 +943,12 @@ async function startServer() {
       res.json({ success: true, track: songObj });
     } catch (error: any) {
       console.error("[API Community Share Error]", error.message);
-      res.status(500).json({ success: false, error: error.message || "Failed to share track to community." });
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: error.message || "Failed to share track to community.",
+        });
     }
   });
 
@@ -768,10 +986,21 @@ async function startServer() {
       }
       const loaded = await saveYoutubeCookies(cookiesText);
       const status = await getYoutubeCookiesStatus();
-      res.json({ success: true, message: loaded ? "Cookies saved and parsed successfully!" : "Cookies cleared.", status });
+      res.json({
+        success: true,
+        message: loaded
+          ? "Cookies saved and parsed successfully!"
+          : "Cookies cleared.",
+        status,
+      });
     } catch (error: any) {
       console.error("[API Cookies Error]", error.message);
-      res.status(500).json({ success: false, error: error.message || "Failed to save cookies" });
+      res
+        .status(500)
+        .json({
+          success: false,
+          error: error.message || "Failed to save cookies",
+        });
     }
   });
 
@@ -791,12 +1020,12 @@ async function startServer() {
       const unique_id = req.query.unique_id as string;
       const clientCursor = (req.query.cursor as string) || "0";
       const clientCount = (req.query.count as string) || "50";
-      const forceRefresh = req.query.refresh === 'true';
-      
+      const forceRefresh = req.query.refresh === "true";
+
       if (!unique_id) {
         return res.status(400).json({ error: "Username is required" });
       }
-      
+
       const cacheKey = `${unique_id}_${clientCursor}_${clientCount}`;
       if (forceRefresh) {
         await invalidateCache("tiktok_user", cacheKey);
@@ -811,11 +1040,15 @@ async function startServer() {
       const strategies = [
         // Strategy 1: tikwm user posts API with pagination
         async () => {
-          const params = new URLSearchParams({ unique_id, count: clientCount, cursor: clientCursor });
+          const params = new URLSearchParams({
+            unique_id,
+            count: clientCount,
+            cursor: clientCursor,
+          });
           const response = await fetch("https://www.tikwm.com/api/user/posts", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: params.toString()
+            body: params.toString(),
           });
           const text = await response.text();
           const data = JSON.parse(text);
@@ -823,7 +1056,7 @@ async function startServer() {
             return {
               videos: data.data.videos,
               cursor: (data.data.cursor || "").toString(),
-              hasMore: !!data.data.hasMore
+              hasMore: !!data.data.hasMore,
             };
           }
           throw new Error("TikWM user API failed");
@@ -833,82 +1066,108 @@ async function startServer() {
           let allVideos: any[] = [];
           let currentCursor = clientCursor;
           let hasMoreResult = false;
-          
+
           for (let i = 0; i < 4; i++) {
-            const params = new URLSearchParams({ keywords: `@${unique_id}`, count: "30", cursor: currentCursor });
-            const response = await fetch("https://www.tikwm.com/api/feed/search", {
-              method: "POST",
-              headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: params.toString()
+            const params = new URLSearchParams({
+              keywords: `@${unique_id}`,
+              count: "30",
+              cursor: currentCursor,
             });
+            const response = await fetch(
+              "https://www.tikwm.com/api/feed/search",
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: params.toString(),
+              },
+            );
             const text = await response.text();
             let data;
-            try { data = JSON.parse(text); } catch (e) { break; }
-            
+            try {
+              data = JSON.parse(text);
+            } catch (e) {
+              break;
+            }
+
             if (data.code === 0 && data.data?.videos?.length > 0) {
-              const filtered = data.data.videos.filter((v: any) => 
-                 v.author?.unique_id?.toLowerCase() === unique_id.toLowerCase()
+              const filtered = data.data.videos.filter(
+                (v: any) =>
+                  v.author?.unique_id?.toLowerCase() ===
+                  unique_id.toLowerCase(),
               );
-              
-              const currentIds = new Set(allVideos.map(v => v.video_id || v.id));
-              const newVideos = filtered.filter((v: any) => !currentIds.has(v.video_id || v.id));
+
+              const currentIds = new Set(
+                allVideos.map((v) => v.video_id || v.id),
+              );
+              const newVideos = filtered.filter(
+                (v: any) => !currentIds.has(v.video_id || v.id),
+              );
               allVideos.push(...newVideos);
-              
+
               currentCursor = (data.data.cursor || 0).toString();
               hasMoreResult = !!data.data.hasMore;
-              if (allVideos.length >= parseInt(clientCount) || !data.data.hasMore) {
+              if (
+                allVideos.length >= parseInt(clientCount) ||
+                !data.data.hasMore
+              ) {
                 break;
               }
             } else {
               break;
             }
           }
-          
+
           if (allVideos.length > 0) {
             return {
               videos: allVideos,
               cursor: currentCursor,
-              hasMore: hasMoreResult
+              hasMore: hasMoreResult,
             };
           }
           throw new Error("TikWM search fallback failed");
         },
         // Strategy 3: HTML fetch + proxy via AllOrigins
         async () => {
-           const audioUrl = `https://www.tiktok.com/@${unique_id}`;
-           const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(audioUrl)}`;
-           const response = await fetch(proxyUrl);
-           const data = await response.json();
-           const html = data.contents;
-           if (typeof html !== 'string') throw new Error("Html proxy failed");
-           
-           const match = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)<\/script>/);
-           if (match) {
-             const parsed = JSON.parse(match[1]);
-             const itemList = parsed?.__DEFAULT_SCOPE__?.['webapp.user-detail']?.userInfo?.itemList;
-             if (itemList && Array.isArray(itemList) && itemList.length > 0) {
-                return {
-                  videos: itemList,
-                  cursor: "0",
-                  hasMore: false
-                };
-             }
-           }
-           throw new Error("HTML fetch scraping failed or returned 0 items");
-        }
+          const audioUrl = `https://www.tiktok.com/@${unique_id}`;
+          const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(audioUrl)}`;
+          const response = await fetch(proxyUrl);
+          const data = await response.json();
+          const html = data.contents;
+          if (typeof html !== "string") throw new Error("Html proxy failed");
+
+          const match = html.match(
+            /<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>(.*?)<\/script>/,
+          );
+          if (match) {
+            const parsed = JSON.parse(match[1]);
+            const itemList =
+              parsed?.__DEFAULT_SCOPE__?.["webapp.user-detail"]?.userInfo
+                ?.itemList;
+            if (itemList && Array.isArray(itemList) && itemList.length > 0) {
+              return {
+                videos: itemList,
+                cursor: "0",
+                hasMore: false,
+              };
+            }
+          }
+          throw new Error("HTML fetch scraping failed or returned 0 items");
+        },
       ];
 
       for (const executeStrategy of strategies) {
         try {
           const result = await executeStrategy();
           if (result && result.videos && result.videos.length > 0) {
-            const finalResult = { 
-              code: 0, 
-              data: { 
-                videos: result.videos, 
-                cursor: result.cursor, 
-                hasMore: result.hasMore 
-              } 
+            const finalResult = {
+              code: 0,
+              data: {
+                videos: result.videos,
+                cursor: result.cursor,
+                hasMore: result.hasMore,
+              },
             };
             await setCachedData("tiktok_user", cacheKey, finalResult);
             res.json(finalResult);
@@ -920,12 +1179,12 @@ async function startServer() {
       }
 
       // If all strategies fail
-      res.status(500).json({ 
-        error: "Failed to extract user posts. Cloudflare/Captcha blocked all scraping strategies (Direct API, Proxy, and HTML Fetch).",
-        isCloudflareBlock: true
+      res.status(500).json({
+        error:
+          "Failed to extract user posts. Cloudflare/Captcha blocked all scraping strategies (Direct API, Proxy, and HTML Fetch).",
+        isCloudflareBlock: true,
       });
       return;
-      
     } catch (err: any) {
       res.status(500).json({ error: err.message });
       return;
@@ -939,22 +1198,24 @@ async function startServer() {
       if (!keywords) {
         return res.status(400).json({ error: "Search query is required" });
       }
-      
+
       // Add timeout to ytSearch to prevent infinite hanging
-      const r = await Promise.race([
+      const r = (await Promise.race([
         ytSearch(keywords),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("YouTube search timeout")), 8000))
-      ]) as any;
-      
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("YouTube search timeout")), 8000),
+        ),
+      ])) as any;
+
       const videos = r.videos.slice(0, 30).map((v: any) => ({
-         id: v.videoId,
-         title: v.title,
-         url: v.url,
-         author: v.author.name,
-         duration: v.duration.seconds,
-         cover: v.thumbnail
+        id: v.videoId,
+        title: v.title,
+        url: v.url,
+        author: v.author.name,
+        duration: v.duration.seconds,
+        cover: v.thumbnail,
       }));
-      
+
       res.json({ videos });
     } catch (error: any) {
       console.error("[YouTube Search Error]", error.message);
@@ -969,33 +1230,33 @@ async function startServer() {
       const clientCursor = (req.query.cursor as string) || "0";
       const clientCount = (req.query.count as string) || "30";
       const searchType = (req.query.type as string) || "video"; // "video" or "sound"
-      
+
       if (!keywords) {
         return res.status(400).json({ error: "Search query is required" });
       }
-      
+
       // Tikwm mapping: type 1 = video, type 'music' = sound
-      const params = new URLSearchParams({ 
-        keywords, 
-        count: clientCount, 
-        cursor: clientCursor, 
-        type: searchType === "sound" ? "music" : "1" 
+      const params = new URLSearchParams({
+        keywords,
+        count: clientCount,
+        cursor: clientCursor,
+        type: searchType === "sound" ? "music" : "1",
       });
-      
+
       const response = await fetch("https://www.tikwm.com/api/feed/search", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString()
+        body: params.toString(),
       });
-      
+
       const text = await response.text();
       const data = JSON.parse(text);
-      
+
       if (data.code === 0 && data.data?.videos?.length > 0) {
         return res.json({
           videos: data.data.videos,
           cursor: (data.data.cursor || "").toString(),
-          hasMore: !!data.data.hasMore
+          hasMore: !!data.data.hasMore,
         });
       }
       return res.json({ videos: [], cursor: "0", hasMore: false });
@@ -1005,42 +1266,46 @@ async function startServer() {
     }
   });
 
-  // 3. Real NCT (Nhaccuatui) Proxy Search 
-  app.get('/api/nct-search', async (req, res) => {
+  // 3. Real NCT (Nhaccuatui) Proxy Search
+  app.get("/api/nct-search", async (req, res) => {
     try {
       const { q, pageindex = 1, pagesize = 50 } = req.query;
-      if (!q || typeof q !== 'string') {
+      if (!q || typeof q !== "string") {
         return res.status(400).json({ error: "Query 'q' is required" });
       }
-      
+
       const url = `https://graph.nhaccuatui.com/api/v1/search/song?keyword=${encodeURIComponent(q)}&pageindex=${pageindex}&pagesize=${pagesize}&correct=false&timestamp=${Date.now()}`;
-            
+
       const response = await axios.get(url, {
         timeout: 15000,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*'
-        }
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          Accept: "application/json, text/plain, */*",
+        },
       });
-            
+
       const songs = response.data?.data?.songs || [];
       const videos = songs.map((s: any) => {
         let bestStreamUrl = "";
         let bestScore = -1;
         let qualityLabel = "STD";
-        
+
         if (s.streamURL && Array.isArray(s.streamURL)) {
           for (const st of s.streamURL) {
             if (!st.stream) continue;
             let score = 0;
-            if (st.type === "320") score = 3; // 320kbps is best playable
-            else if (st.type === "128") score = 2; 
+            if (st.type === "320")
+              score = 3; // 320kbps is best playable
+            else if (st.type === "128") score = 2;
             else if (st.type === "lossless") score = 1; // Demote FLAC to lowest priority (usually VIP/fails)
-                        
+
             if (score > bestScore) {
               bestScore = score;
               bestStreamUrl = st.stream;
-              qualityLabel = st.typeUI || (st.type === "lossless" ? "LOSSLESS" : `${st.type}kbps`);
+              qualityLabel =
+                st.typeUI ||
+                (st.type === "lossless" ? "LOSSLESS" : `${st.type}kbps`);
             }
           }
         }
@@ -1052,7 +1317,7 @@ async function startServer() {
           duration: s.duration || 0,
           url: bestStreamUrl,
           nctLink: s.linkShare,
-          quality: qualityLabel
+          quality: qualityLabel,
         };
       });
       res.json({ videos });
@@ -1069,22 +1334,27 @@ async function startServer() {
       if (!keywords) {
         return res.status(400).json({ error: "Search query is required" });
       }
-            
-      // NCT API is occasionally down due to Cloudflare updates, 
+
+      // NCT API is occasionally down due to Cloudflare updates,
       // routing to YouTube as a high-quality fallback for Vietnamese music
-      const r = await Promise.race([
+      const r = (await Promise.race([
         ytSearch(`${keywords} nhaccuatui`),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("YouTube search timeout (NCT fallback)")), 8000))
-      ]) as any;
-      
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("YouTube search timeout (NCT fallback)")),
+            8000,
+          ),
+        ),
+      ])) as any;
+
       const videos = r.videos.slice(0, 30).map((v: any) => ({
-         id: "nct_" + v.videoId,
-         title: v.title.replace(/nhaccuatui/ig, '').trim() || v.title,
-         url: v.url, // Keep as youtube URL so the audio streamer yt-dlp can play it!
-         nctLink: `https://www.nhaccuatui.com/tim-kiem/bai-hat?q=${encodeURIComponent(keywords)}`, // vanity search link
-         author: v.author.name,
-         duration: v.duration.seconds,
-         cover: v.thumbnail
+        id: "nct_" + v.videoId,
+        title: v.title.replace(/nhaccuatui/gi, "").trim() || v.title,
+        url: v.url, // Keep as youtube URL so the audio streamer yt-dlp can play it!
+        nctLink: `https://www.nhaccuatui.com/tim-kiem/bai-hat?q=${encodeURIComponent(keywords)}`, // vanity search link
+        author: v.author.name,
+        duration: v.duration.seconds,
+        cover: v.thumbnail,
       }));
       res.json({ videos });
     } catch (error: any) {
@@ -1104,11 +1374,12 @@ async function startServer() {
       const url = `https://suggestqueries.google.com/complete/search?client=firefox&${isYt ? "ds=yt&" : ""}q=${encodeURIComponent(keywords)}`;
       const response = await fetch(url, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
       });
-      
-      const data = await response.json() as any;
+
+      const data = (await response.json()) as any;
       if (Array.isArray(data) && Array.isArray(data[1])) {
         return res.json(data[1]);
       }
@@ -1122,91 +1393,103 @@ async function startServer() {
   // Pixabay API endpoints
   app.get("/api/pixabay/search", async (req, res) => {
     try {
-      const q = req.query.q as string || "rain";
+      const q = (req.query.q as string) || "rain";
       const pixabayUrl = `https://pixabay.com/sound-effects/search/${encodeURIComponent(q)}/`;
-      
+
       let html = "";
       let isFreesoundFallback = false;
-      
+
       try {
         const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(pixabayUrl)}`;
         const response = await fetch(proxyUrl);
         const data = await response.json();
-        if (data && data.contents && data.contents.includes("window.__BOOTSTRAP__")) {
+        if (
+          data &&
+          data.contents &&
+          data.contents.includes("window.__BOOTSTRAP__")
+        ) {
           html = data.contents;
         }
       } catch (e) {
         console.warn("allorigins failed, falling back to freesound");
         isFreesoundFallback = true;
       }
-      
+
       if (!html) {
-         isFreesoundFallback = true;
+        isFreesoundFallback = true;
       }
-      
+
       if (isFreesoundFallback) {
-         // Fallback to Freesound since Pixabay aggressively blocks proxies via Cloudflare
-         const freeSoundUrl = `https://freesound.org/search/?q=${encodeURIComponent(q)}`;
-         const fsRes = await fetch(freeSoundUrl, {
-            headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36" }
-         });
-         const fsHtml = await fsRes.text();
-         const $ = cheerio.load(fsHtml);
-         const results: any[] = [];
-         
-         $(".bw-player").each((_, el) => {
-            const mp3 = $(el).attr("data-mp3");
-            const title = $(el).attr("data-title");
-            const duration = parseFloat($(el).attr("data-duration") || "0");
-            
-            if (mp3 && title) {
-               results.push({
-                  name: title.replace(".wav", "").replace(".mp3", ""),
-                  url: mp3,
-                  duration: duration,
-                  thumbnailUrl: ""
-               });
-            }
-         });
-         
-         return res.json({ success: true, data: results.slice(0, 15) });
+        // Fallback to Freesound since Pixabay aggressively blocks proxies via Cloudflare
+        const freeSoundUrl = `https://freesound.org/search/?q=${encodeURIComponent(q)}`;
+        const fsRes = await fetch(freeSoundUrl, {
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+          },
+        });
+        const fsHtml = await fsRes.text();
+        const $ = cheerio.load(fsHtml);
+        const results: any[] = [];
+
+        $(".bw-player").each((_, el) => {
+          const mp3 = $(el).attr("data-mp3");
+          const title = $(el).attr("data-title");
+          const duration = parseFloat($(el).attr("data-duration") || "0");
+
+          if (mp3 && title) {
+            results.push({
+              name: title.replace(".wav", "").replace(".mp3", ""),
+              url: mp3,
+              duration: duration,
+              thumbnailUrl: "",
+            });
+          }
+        });
+
+        return res.json({ success: true, data: results.slice(0, 15) });
       }
-      
+
       const match = html.match(/window\.__BOOTSTRAP__\s*=\s*(\{.*?\});/);
-      
+
       if (!match) {
-         return res.json({ success: false, error: "Could not extract bootstrap data from Pixabay." });
+        return res.json({
+          success: false,
+          error: "Could not extract bootstrap data from Pixabay.",
+        });
       }
-      
+
       const bootstrap = JSON.parse(match[1]);
-      
+
       const seenUrls = new Set<string>();
       function extractAudioFromJSON(obj: any): any[] {
         let results: any[] = [];
-        if (!obj || typeof obj !== 'object') return results;
-        
-        if (obj.mediaType === 'audio' && obj.sources && obj.sources.src) {
-           if (!seenUrls.has(obj.sources.src)) {
-             seenUrls.add(obj.sources.src);
-             results.push({
-                name: obj.name || obj.alt || "Unknown",
-                url: obj.sources.src,
-                duration: obj.duration || 0,
-                thumbnailUrl: obj.sources.thumbnailUrl || ""
-             });
-           }
+        if (!obj || typeof obj !== "object") return results;
+
+        if (obj.mediaType === "audio" && obj.sources && obj.sources.src) {
+          if (!seenUrls.has(obj.sources.src)) {
+            seenUrls.add(obj.sources.src);
+            results.push({
+              name: obj.name || obj.alt || "Unknown",
+              url: obj.sources.src,
+              duration: obj.duration || 0,
+              thumbnailUrl: obj.sources.thumbnailUrl || "",
+            });
+          }
         }
-        
+
         for (const key of Object.keys(obj)) {
-           if (typeof obj[key] === 'object') {
-             results = results.concat(extractAudioFromJSON(obj[key]));
-           }
+          if (typeof obj[key] === "object") {
+            results = results.concat(extractAudioFromJSON(obj[key]));
+          }
         }
         return results;
       }
-      
-      return res.json({ success: true, data: extractAudioFromJSON(bootstrap).slice(0, 15) });
-      
+
+      return res.json({
+        success: true,
+        data: extractAudioFromJSON(bootstrap).slice(0, 15),
+      });
     } catch (error: any) {
       console.error("[Search Error]", error.message);
       res.status(500).json({ success: false, error: error.message });
@@ -1217,40 +1500,46 @@ async function startServer() {
   app.get("/api/tkaraoke/search", async (req, res) => {
     try {
       const query = req.query.q as string;
-      const page = req.query.p as string || "1";
-      if (!query) return res.status(400).json({ success: false, error: "No query provided" });
-      
+      const page = (req.query.p as string) || "1";
+      if (!query)
+        return res
+          .status(400)
+          .json({ success: false, error: "No query provided" });
+
       const url = `https://lyric.tkaraoke.com/s.tim?q=${encodeURIComponent(query)}&p=${page}`;
       const response = await fetch(url, {
-          headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-          }
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
       });
       const html = await response.text();
       const $ = cheerio.load(html);
-      
+
       const songs: any[] = [];
       const seenUrls = new Set<string>();
-      
+
       $("a").each((_, el) => {
         const href = $(el).attr("href") || "";
         if (href.match(/\/\d+\/[\w_]+\.html$/)) {
-            const title = $(el).text().trim();
-            const fullUrl = `https://lyric.tkaraoke.com${href}`;
-            if (!seenUrls.has(fullUrl)) {
-                seenUrls.add(fullUrl);
-                songs.push({
-                    title: title,
-                    url: fullUrl
-                });
-            }
+          const title = $(el).text().trim();
+          const fullUrl = `https://lyric.tkaraoke.com${href}`;
+          if (!seenUrls.has(fullUrl)) {
+            seenUrls.add(fullUrl);
+            songs.push({
+              title: title,
+              url: fullUrl,
+            });
+          }
         }
       });
-      
+
       res.json({ success: true, videos: songs });
     } catch (error: any) {
       console.error("[TKaraoke Search Error]", error.message);
-      res.status(500).json({ success: false, error: "Failed to search TKaraoke." });
+      res
+        .status(500)
+        .json({ success: false, error: "Failed to search TKaraoke." });
     }
   });
 
@@ -1287,7 +1576,7 @@ async function startServer() {
       }
       url = await resolveFacebookRedirect(url);
       console.log(`[Metadata API] Resolving metadata for URL: ${url}`);
-      
+
       const ytdlOptions: any = {
         dumpSingleJson: true,
         noWarnings: true,
@@ -1303,12 +1592,17 @@ async function startServer() {
 
       const info = (await youtubedl(url, ytdlOptions)) as any;
       if (!info) {
-        return res.status(400).json({ error: "Could not extract metadata from URL" });
+        return res
+          .status(400)
+          .json({ error: "Could not extract metadata from URL" });
       }
 
       const responseData = {
         title: info.title || "Shared Audio Track",
-        cover: info.thumbnail || info.thumbnails?.[0]?.url || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300",
+        cover:
+          info.thumbnail ||
+          info.thumbnails?.[0]?.url ||
+          "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300",
         author: info.uploader || info.artist || "Web Audio",
         duration: info.duration || 0,
       };
@@ -1316,7 +1610,9 @@ async function startServer() {
       res.json(responseData);
     } catch (error: any) {
       console.error("[Metadata API Error]", error);
-      res.status(500).json({ error: error.message || "Failed to extract metadata" });
+      res
+        .status(500)
+        .json({ error: error.message || "Failed to extract metadata" });
     }
   });
 
@@ -1329,27 +1625,45 @@ async function startServer() {
       }
       url = await resolveFacebookRedirect(url);
       console.log(`[Clean WAV API] Transcoding to WAV: ${url}`);
-      
-      const ytDlpArgs = ["-f", "ba[ext=m4a]/b[ext=mp4]/ba/b/best", "-o", "-", url];
-      const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
-      
+
+      const ytDlpArgs = [
+        "-f",
+        "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+        "-o",
+        "-",
+        url,
+      ];
+      const subprocess = spawn(
+        (youtubedl as any).constants.YOUTUBE_DL_PATH,
+        ytDlpArgs,
+      );
+
       const ffmpegArgs = [
-        "-i", "pipe:0",
-        "-f", "wav",
-        "-acodec", "pcm_s16le",
-        "-ar", "44100",
-        "-ac", "2",
-        "pipe:1"
+        "-i",
+        "pipe:0",
+        "-f",
+        "wav",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "pipe:1",
       ];
       const ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
 
       subprocess.stdout.pipe(ffmpegProcess.stdin);
-      
+
       res.setHeader("Content-Type", "audio/wav");
       ffmpegProcess.stdout.pipe(res);
 
-      subprocess.on("error", (err) => console.error("[Clean WAV] yt-dlp error:", err));
-      ffmpegProcess.on("error", (err) => console.error("[Clean WAV] ffmpeg error:", err));
+      subprocess.on("error", (err) =>
+        console.error("[Clean WAV] yt-dlp error:", err),
+      );
+      ffmpegProcess.on("error", (err) =>
+        console.error("[Clean WAV] ffmpeg error:", err),
+      );
     } catch (err: any) {
       console.error("[Clean WAV API Error]", err);
       res.status(500).json({ error: err.message || "Failed to transcode" });
@@ -1364,13 +1678,14 @@ async function startServer() {
       if (!url) {
         return res.status(400).json({ error: "URL is required" });
       }
-      
+
       console.log(`[Download API] Downloading and proxying: ${url}`);
-      
+
       const headers: Record<string, string> = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       };
-      
+
       if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
         headers["Referer"] = "https://www.nhaccuatui.com/";
         headers["Origin"] = "https://www.nhaccuatui.com";
@@ -1381,51 +1696,90 @@ async function startServer() {
         finalUrl = `http://localhost:3000${url}`;
       }
 
-      const isDirect = finalUrl.toLowerCase().includes(".mp3") || finalUrl.toLowerCase().includes(".m4a") || finalUrl.toLowerCase().includes(".flac") || finalUrl.toLowerCase().includes(".wav");
-      if (!isDirect && (finalUrl.includes("youtube.com") || finalUrl.includes("youtu.be") || finalUrl.includes("soundcloud.com") || finalUrl.includes("facebook.com") || finalUrl.includes("fb.watch"))) {
+      const isDirect =
+        finalUrl.toLowerCase().includes(".mp3") ||
+        finalUrl.toLowerCase().includes(".m4a") ||
+        finalUrl.toLowerCase().includes(".flac") ||
+        finalUrl.toLowerCase().includes(".wav");
+      if (
+        !isDirect &&
+        (finalUrl.includes("youtube.com") ||
+          finalUrl.includes("youtu.be") ||
+          finalUrl.includes("soundcloud.com") ||
+          finalUrl.includes("facebook.com") ||
+          finalUrl.includes("fb.watch"))
+      ) {
         try {
           finalUrl = await getDirectMediaUrl(finalUrl);
         } catch (err: any) {
-          console.error(`[Download API] Failed to get direct media url:`, err.message);
+          console.error(
+            `[Download API] Failed to get direct media url:`,
+            err.message,
+          );
         }
       }
 
       let response: any = null;
       try {
-         response = await fetch(finalUrl, { headers });
-         if (!response.ok) {
-           console.warn(`[Download API] Direct fetch failed with status: ${response?.status}, falling back to yt-dlp...`);
-           response = null;
-         }
-      } catch(err) {
-         console.warn("[Download API] Direct fetch threw error, falling back to yt-dlp...");
+        response = await fetch(finalUrl, { headers });
+        if (!response.ok) {
+          console.warn(
+            `[Download API] Direct fetch failed with status: ${response?.status}, falling back to yt-dlp...`,
+          );
+          response = null;
+        }
+      } catch (err) {
+        console.warn(
+          "[Download API] Direct fetch threw error, falling back to yt-dlp...",
+        );
       }
 
       if (!response) {
-         const ytDlpArgs = ["-f", "ba[ext=m4a]/b[ext=mp4]/ba/b/best", "-o", "-", url];
-         const subprocess = spawn((youtubedl as any).constants.YOUTUBE_DL_PATH, ytDlpArgs);
-         let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
-         if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
-         if (!safeTitle) safeTitle = "audio";
-         res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeTitle)}.mp3"`);
-         res.setHeader("Content-Type", "audio/mpeg");
-         res.setHeader("Transfer-Encoding", "chunked");
-         if (subprocess.stdout) {
-             subprocess.stdout.pipe(res);
-         } else {
-             res.status(500).json({ error: "Failed to download audio stream via yt-dlp" });
-         }
-         return;
+        const ytDlpArgs = [
+          "-f",
+          "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+          "-o",
+          "-",
+          url,
+        ];
+        const subprocess = spawn(
+          (youtubedl as any).constants.YOUTUBE_DL_PATH,
+          ytDlpArgs,
+        );
+        let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
+        if (safeTitle.length > 30)
+          safeTitle = safeTitle.substring(0, 30).trim();
+        if (!safeTitle) safeTitle = "audio";
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="${encodeURIComponent(safeTitle)}.mp3"`,
+        );
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Transfer-Encoding", "chunked");
+        if (subprocess.stdout) {
+          subprocess.stdout.pipe(res);
+        } else {
+          res
+            .status(500)
+            .json({ error: "Failed to download audio stream via yt-dlp" });
+        }
+        return;
       }
 
       let contentType = response.headers.get("content-type") || "audio/mpeg";
       let extension = "mp3";
       if (contentType.includes("m4a") || finalUrl.includes(".m4a")) {
         extension = "m4a";
-      } else if (contentType.includes("flac") || finalUrl.toLowerCase().includes(".flac")) {
+      } else if (
+        contentType.includes("flac") ||
+        finalUrl.toLowerCase().includes(".flac")
+      ) {
         extension = "flac";
         contentType = "audio/flac";
-      } else if (contentType.includes("wav") || finalUrl.toLowerCase().includes(".wav")) {
+      } else if (
+        contentType.includes("wav") ||
+        finalUrl.toLowerCase().includes(".wav")
+      ) {
         extension = "wav";
         contentType = "audio/wav";
       }
@@ -1433,7 +1787,10 @@ async function startServer() {
       let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
       if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
       if (!safeTitle) safeTitle = "audio";
-      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`,
+      );
       res.setHeader("Content-Type", contentType);
 
       const contentLength = response.headers.get("content-length");
@@ -1449,7 +1806,9 @@ async function startServer() {
     } catch (error: any) {
       console.error(`[Download API Error]`, error);
       if (!res.headersSent) {
-        res.status(500).json({ error: error.message || "Failed to download media." });
+        res
+          .status(500)
+          .json({ error: error.message || "Failed to download media." });
       }
     }
   });
@@ -1458,7 +1817,7 @@ async function startServer() {
     try {
       const { lyric, style } = req.body;
       if (!lyric) {
-         return res.status(400).json({ error: "lyric is required" });
+        return res.status(400).json({ error: "lyric is required" });
       }
       const result = await formatLyric(lyric, style);
       res.json(result);
@@ -1472,7 +1831,7 @@ async function startServer() {
     try {
       const { lyric, percentage = 3 } = req.body;
       if (!lyric) {
-         return res.status(400).json({ error: "lyric is required" });
+        return res.status(400).json({ error: "lyric is required" });
       }
       const result = await improveLyric(lyric, percentage);
       res.json(result);
@@ -1486,13 +1845,95 @@ async function startServer() {
     try {
       const { lyric } = req.body;
       if (!lyric) {
-         return res.status(400).json({ error: "lyric is required" });
+        return res.status(400).json({ error: "lyric is required" });
       }
       const result = await addChordsLyric(lyric);
       res.json(result);
     } catch (error: any) {
       console.error("[Lyric Chords Error]", error);
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/gdrive/files", async (req, res) => {
+    try {
+      const { folderId } = req.query;
+      if (!folderId) {
+        return res.status(400).json({ error: "folderId is required" });
+      }
+      const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
+      if (!apiKey) {
+        return res
+          .status(500)
+          .json({
+            error: "GOOGLE_DRIVE_API_KEY is not configured on the server.",
+          });
+      }
+      const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents&fields=files(id,name,mimeType,size)&key=${apiKey}&pageSize=1000`;
+      const response = await fetch(url);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Drive API responded with ${response.status}: ${errorText}`,
+        );
+      }
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error("[Drive API Error]", error);
+      res
+        .status(500)
+        .json({ error: error.message || "Failed to fetch Drive folder" });
+    }
+  }); 
+  app.get("/api/gdrive/stream", async (req, res) => {
+    try {
+      const { id } = req.query;
+      if (!id) {
+        return res.status(400).json({ error: "id is required" });
+      }
+
+      const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: "GOOGLE_DRIVE_API_KEY is not configured on the server." });
+      }
+
+      const url = `https://www.googleapis.com/drive/v3/files/${id}?alt=media&key=${apiKey}`;
+      const headers = {};
+      if (req.headers.range) {
+        headers["Range"] = req.headers.range;
+      }
+      
+      const response = await fetch(url, { headers });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Drive API responded with ${response.status}: ${errorText}`);
+      }
+
+      res.status(response.status);
+      
+      const contentType = response.headers.get("content-type");
+      if (contentType) res.setHeader("Content-Type", contentType);
+      
+      const contentLength = response.headers.get("content-length");
+      if (contentLength) res.setHeader("Content-Length", contentLength);
+      
+      const contentRange = response.headers.get("content-range");
+      if (contentRange) res.setHeader("Content-Range", contentRange);
+      
+      res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
+
+      if (response.body) {
+        const nodeStream = Readable.fromWeb(response.body as any);
+        nodeStream.pipe(res);
+        res.on("close", () => nodeStream.destroy());
+      } else {
+        res.end();
+      }
+    } catch (error) {
+      console.error("[Drive API Stream Error]", error);
+      res.status(500).json({ error: error.message || "Failed to stream Drive file" });
     }
   });
 

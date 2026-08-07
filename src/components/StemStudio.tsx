@@ -1,6 +1,7 @@
 import WaveSurfer from "wavesurfer.js";
 import JSZip from 'jszip';
 import React, { useEffect, useRef, useState, useMemo } from 'react';
+import SunoLyricDownloader from './SunoLyricDownloader';
 import audioBufferToWav from 'audiobuffer-to-wav';
 
 function normalizeAudioBuffer(buffer: AudioBuffer) {
@@ -3094,6 +3095,10 @@ export default function StemStudio({
                      </div>
                   )}
                </div>
+             )}
+             
+             {expandedSections.lyric && (
+               <SunoLyricDownloader />
              )}
           </div>
     </>

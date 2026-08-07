@@ -10,6 +10,7 @@ import { separateStemsWithONNX } from "./utils/onnxSeparation";
 import audioBufferToWav from "audiobuffer-to-wav";
 import { db, auth, initAuth, handleFirestoreError, OperationType } from "./firebase";
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
+import { GoogleDriveAlbum } from "./components/GoogleDriveAlbum";
 
 
 function safeDecodeAudioData(ctx: AudioContext, audioData: ArrayBuffer): Promise<AudioBuffer> {
@@ -2552,7 +2553,8 @@ export default function App() {
     }
   };
 
-  const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search">("upnext");
+  const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search" | "gdrive">("upnext");
+  const [showDriveOptions, setShowDriveOptions] = useState(false);
 
   const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tkaraoke">("sound");
   const [tiktokSearchQuery, setTiktokSearchQuery] = useState("");
@@ -5501,6 +5503,32 @@ export default function App() {
           {/* Tab 2: Albums */}
           {playlistTab === "albums" && (
             <div className="flex flex-col gap-3 min-h-0 flex-1">
+              {/* Google Drive Expansion Toggle */}
+              <button 
+                onClick={() => setShowDriveOptions(!showDriveOptions)}
+                className="flex items-center justify-between p-3 rounded-2xl bg-white/[0.02] border border-white/5 hover:bg-white/[0.04] transition-colors shrink-0"
+              >
+                <div className="flex items-center gap-2">
+                  <Library className="w-4 h-4 text-amber-400" />
+                  <span className="text-[11px] font-bold tracking-widest text-[#E0E2E8]/70 uppercase">Google Drive</span>
+                </div>
+                <ChevronDown className={`w-4 h-4 text-[#E0E2E8]/40 transition-transform ${showDriveOptions ? "rotate-180" : ""}`} />
+              </button>
+              
+              {showDriveOptions && (
+                <div className="flex flex-col gap-3 text-white/90 pb-2 shrink-0 max-h-[400px] overflow-hidden">
+                  <GoogleDriveAlbum onPlaySong={(url, title, cover) => {
+                    playRecentSong({
+                      id: `gdrive_${Date.now()}`,
+                      title: title,
+                      audioUrl: url,
+                      coverUrl: cover,
+                      isCommunityTrack: false
+                    });
+                  }} />
+                </div>
+              )}
+
               {/* Compact Defaults Control Bar */}
               <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 p-2 px-3 rounded-2xl shrink-0">
                 <span className="text-[9px] font-black tracking-widest text-[#E0E2E8]/40 uppercase">Default Playlist</span>
