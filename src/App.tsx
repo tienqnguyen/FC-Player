@@ -2556,7 +2556,7 @@ export default function App() {
   const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search" | "gdrive">("upnext");
   const [showDriveOptions, setShowDriveOptions] = useState(false);
 
-  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tkaraoke">("sound");
+  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tkaraoke">("youtube");
   const [tiktokSearchQuery, setTiktokSearchQuery] = useState("");
   const [tiktokSearchResults, setTiktokSearchResults] = useState<any[]>([]);
   const [tiktokSearchPage, setTiktokSearchPage] = useState(1);
@@ -4961,7 +4961,10 @@ export default function App() {
                     </button>
                   )}
                   <button 
-                    onClick={() => setShowStemmix(!showStemmix)}
+                    onClick={() => {
+                      if (!showStemmix) setShowStemmix(true);
+                      else setShowStemmix(false);
+                    }}
                     className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${showStemmix ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(245,158,11,0.6)]' : 'text-white/40 hover:text-white/70'}`}
                     title="Separate Audio Stems (Stemmix)"
                   >
@@ -5556,6 +5559,8 @@ export default function App() {
 
               {/* Layout constraint wrapper so Albums and Other Tracks scroll together */}
               <div className={`flex flex-col pb-4 flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10`}>
+                {/* TikTok Albums are currently hidden due to API issues */}
+                {false && (
                 <div className="grid grid-cols-2 gap-3 items-start content-start">
               {allAlbums.map((alb) => {
                 const normalizedUser = alb.username.toLowerCase();
@@ -5690,6 +5695,7 @@ export default function App() {
                 );
               })}
               </div>
+              )}
 
               {/* Other Fetched Tracks (YouTube, Facebook, NCT, or custom URLs) */}
               <div className="mt-5 border-t border-white/5 pt-3 shrink-0">
@@ -5804,46 +5810,6 @@ export default function App() {
               <div className="flex flex-col gap-3 mb-4 shrink-0">
                 <form onSubmit={handleTiktokSearch} className="flex flex-col gap-2.5">
                   <div className="flex w-full sm:w-fit self-center gap-1 p-1 bg-black/40 rounded-xl border border-white/5 shrink-0 justify-between sm:justify-start overflow-x-auto scrollbar-hide">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTiktokSearchType("sound");
-                        if (tiktokSearchQuery.trim()) {
-                          handleTiktokSearch(undefined, false, "sound");
-                        } else {
-                          setTiktokSearchResults([]);
-                          setTiktokSearchError("");
-                        }
-                      }}
-                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
-                        tiktokSearchType === "sound"
-                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
-                          : "text-white/40 hover:text-white/75"
-                      }`}
-                    >
-                      <Music className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                      Sound
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTiktokSearchType("video");
-                        if (tiktokSearchQuery.trim()) {
-                          handleTiktokSearch(undefined, false, "video");
-                        } else {
-                          setTiktokSearchResults([]);
-                          setTiktokSearchError("");
-                        }
-                      }}
-                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
-                        tiktokSearchType === "video"
-                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
-                          : "text-white/40 hover:text-white/75"
-                      }`}
-                    >
-                      <Film className="w-2.5 h-2.5 sm:w-3 sm:h-3" />
-                      Video
-                    </button>
                     <button
                       type="button"
                       onClick={() => {

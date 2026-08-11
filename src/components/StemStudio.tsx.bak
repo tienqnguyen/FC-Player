@@ -2314,8 +2314,31 @@ export default function StemStudio({
          source.connect(panner);
          panner.connect(gainNode);
          gainNode.connect(offlineCtx.destination);
-
+      } else if (offset > track.duration - track.fadeOut) {
+                const fadeRemaining = track.duration - offset;
+                const curGain = finalGain * (fadeRemaining / track.fadeOut);
+                gainNode.gain.setValueAtTime(curGain, timeToStart);
+                gainNode.gain.linearRampToValueAtTime(0, timeToStart + fadeRemaining);
+            } else {
+                gainNode.gain.setValueAtTime(finalGain, timeToStart);
+                gainNode.gain.setValueAtTime(finalGain, timeToStart + (track.duration - offset - track.fadeOut));
+                gainNode.gain.linearRampToValueAtTime(0, timeToStart + (track.duration - offset));
+            }
+            source.start(timeToStart, offset, exportDuration);
+         } else {
+            timeToStart = track.startTime - activeTrimStart;
+            gainNode.gain.setValueAtTime(0, timeToStart);
+            gainNode.gain.linearRampToValueAtTime(finalGain, timeToStart + track.fadeIn);
+            gainNode.gain.setValueAtTime(finalGain, timeToStart + track.duration - track.fadeOut);
+            gainNode.gain.linearRampToValueAtTime(0, timeToStart + track.duration);
+            source.start(timeToStart);
+         }
+         
+         source.connect(panner);
+         panner.connect(gainNode);
+         gainNode.connect(offlineCtx.destination);
       }
+
       if (ambientBuffer) {
          const source = offlineCtx.createBufferSource();
          source.buffer = ambientBuffer;
