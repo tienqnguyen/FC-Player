@@ -4610,7 +4610,7 @@ export default function StemStudio({
            {/* AMBIENT OVERLAY & PIXABAY */}
            <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
               <div className="flex justify-between items-center border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('overlay')}>
-                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><CloudRain className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Overlay Sound (Pixabay)</h3>
+                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><CloudRain className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Overlay Sound (Freesound)</h3>
                  <div className="flex items-center gap-2">
                     {expandedSections.overlay ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
                  </div>
@@ -4706,7 +4706,7 @@ export default function StemStudio({
                                 className={`flex-1 border rounded-xl p-3 flex items-center justify-center gap-2 transition-all group ${showPixabaySearch ? 'bg-blue-500/10 border-blue-500/30' : 'bg-[#00ab6b]/10 hover:bg-[#00ab6b]/20 border-[#00ab6b]/30'}`}
                              >
                                 <Search className={`w-4 h-4 transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`} />
-                                <span className={`text-[10px] font-bold transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`}>SEARCH PIXABAY</span>
+                                <span className={`text-[10px] font-bold transition-colors ${showPixabaySearch ? 'text-blue-400' : 'text-[#00ab6b]'}`}>SEARCH FREESOUND</span>
                              </button>
                              <button
                                 onClick={() => document.getElementById('ambient-file-upload')?.click()}
@@ -4736,7 +4736,7 @@ export default function StemStudio({
                                 <div className="flex items-center gap-2">
                                    <input
                                       type="text"
-                                      placeholder="Search Pixabay for 'rain', 'forest', 'city'..."
+                                      placeholder="Search Freesound for 'rain', 'forest', 'city'..."
                                       value={pixabayQuery}
                                       onChange={(e) => setPixabayQuery(e.target.value)}
                                       onKeyDown={(e) => e.key === 'Enter' && handlePixabaySearch()}

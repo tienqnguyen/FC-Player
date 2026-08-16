@@ -453,7 +453,7 @@ const PixabayStudio = React.forwardRef(({ onClose, isPlaying, primaryAudioRef, p
                         onClick={() => setActiveSearchTrackId(track.id)}
                         className="text-xs font-bold text-cyan-400 hover:text-cyan-300 bg-cyan-500/10 px-4 py-2 rounded-lg flex items-center gap-2"
                      >
-                         <Search className="w-4 h-4" /> ADD PIXABAY SOUND
+                         <Search className="w-4 h-4" /> ADD FREESOUND
                      </button>
                  )}
                  {track.buffer && (
@@ -548,7 +548,7 @@ const PixabayStudio = React.forwardRef(({ onClose, isPlaying, primaryAudioRef, p
           {activeSearchTrackId === track.id && (
              <div className="w-full p-4 border-t border-white/5 bg-black/40">
                  <div className="flex items-center justify-between mb-3">
-                     <h4 className="text-[10px] font-bold text-white/50 uppercase flex items-center gap-2"><Search className="w-3.5 h-3.5" /> Pixabay Search</h4>
+                     <h4 className="text-[10px] font-bold text-white/50 uppercase flex items-center gap-2"><Search className="w-3.5 h-3.5" /> Freesound search</h4>
                      <button onClick={() => setActiveSearchTrackId(null)} className="text-white/40 hover:text-white"><X className="w-4 h-4" /></button>
                  </div>
                  
@@ -560,7 +560,7 @@ const PixabayStudio = React.forwardRef(({ onClose, isPlaying, primaryAudioRef, p
                         }`}
                     >
                         <Heart className={`w-3.5 h-3.5 ${showFavorites ? 'fill-current' : ''}`} />
-                        Favorites (${favorites.length})
+                        Favorites ({favorites.length})
                     </button>
                     <div className="w-px h-6 bg-white/10 shrink-0 self-center mx-1"></div>
                     {CATEGORIES.map(cat => (
@@ -594,7 +594,7 @@ const PixabayStudio = React.forwardRef(({ onClose, isPlaying, primaryAudioRef, p
                     <div className="flex items-center gap-2">
                     <input
                        type="text"
-                       placeholder="Search Pixabay..."
+                       placeholder="Search Freesound..."
                        value={query}
                        onChange={e => setQuery(e.target.value)}
                        onKeyDown={e => { if (e.key === 'Enter') { fetchSFX(query, 1); setPage(1); } }}

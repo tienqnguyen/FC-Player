@@ -81,7 +81,7 @@ async function getDirectMediaUrl(url: string): Promise<string> {
           dumpSingleJson: true,
           noWarnings: true,
           noPlaylist: true,
-          f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+          f: "ba/bestaudio/b",
           jsRuntimes: "node",
           noCheckCertificates: true,
         };
@@ -139,71 +139,80 @@ async function startServer() {
       }
       url = await resolveFacebookRedirect(url);
 
-      try {
-        const directUrl = await getDirectMediaUrl(url);
-        console.log(
-          `[Stream Range Proxy] Streaming direct URL: ${directUrl.substring(0, 80)}...`,
-        );
-        const headers: Record<string, string> = {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        };
-        if (req.headers.range) headers["Range"] = req.headers.range;
-        const response = await fetch(directUrl, { headers });
-        if (!response.ok) {
-          throw new Error(
-            `Direct fetch failed with status: ${response.status}`,
+      // Skip direct fetch for TikTok pages as they return HTML or block fetch
+      const isTikTokPage = url.includes("tiktok.com") && !url.includes("tiktokcdn");
+      
+      let streamServed = false;
+      if (!isTikTokPage) {
+        try {
+          const directUrl = await getDirectMediaUrl(url);
+          console.log(
+            `[Stream Range Proxy] Streaming direct URL: ${directUrl.substring(0, 80)}...`,
+          );
+          const headers: Record<string, string> = {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          };
+          if (req.headers.range) headers["Range"] = req.headers.range;
+
+          const response = await fetch(directUrl, { headers });
+          if (!response.ok || response.headers.get("content-type")?.includes("text/html")) {
+            throw new Error(`Direct fetch failed or returned HTML: ${response.status}`);
+          }
+
+          res.status(response.status);
+          let contentType = response.headers.get("content-type");
+          if (contentType) res.setHeader("Content-Type", contentType);
+          const contentLength = response.headers.get("content-length");
+          if (contentLength) res.setHeader("Content-Length", contentLength);
+          const contentRange = response.headers.get("content-range");
+          if (contentRange) res.setHeader("Content-Range", contentRange);
+
+          res.setHeader(
+            "Accept-Ranges",
+            response.headers.get("accept-ranges") || "bytes",
+          );
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+          res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
+
+          if (response.body) {
+            const nodeStream = require('stream').Readable.fromWeb(response.body as any);
+            nodeStream.pipe(res);
+            res.on("close", () => nodeStream.destroy());
+            streamServed = true;
+          }
+        } catch (err) {
+          console.warn(
+            "[Stream Proxy] direct url failed, falling back to yt-dlp",
           );
         }
-        res.status(response.status);
-        let contentType = response.headers.get("content-type");
-        if (contentType) res.setHeader("Content-Type", contentType);
-        const contentLength = response.headers.get("content-length");
-        if (contentLength) res.setHeader("Content-Length", contentLength);
-        const contentRange = response.headers.get("content-range");
-        if (contentRange) res.setHeader("Content-Range", contentRange);
-        res.setHeader(
-          "Accept-Ranges",
-          response.headers.get("accept-ranges") || "bytes",
-        );
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-        res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
-        if (response.body) {
-          const nodeStream = Readable.fromWeb(response.body as any);
-          nodeStream.pipe(res);
-          res.on("close", () => nodeStream.destroy());
-          return;
-        }
-      } catch (err) {
-        console.warn(
-          "[Stream Proxy] direct url failed, falling back to yt-dlp",
-        );
       }
 
-      const ytDlpArgs = [
-        "-f",
-        "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
-        "-o",
-        "-",
-        url,
-      ];
-      const subprocess = spawn(
-        (youtubedl as any).constants.YOUTUBE_DL_PATH,
-        ytDlpArgs,
-      );
-      res.setHeader("Content-Type", "audio/mpeg");
-      res.setHeader("Transfer-Encoding", "chunked");
-      if (subprocess.stdout) {
-        subprocess.stdout.pipe(res);
-      } else {
-        res.status(500).json({ error: "Failed to create audio stream" });
+      if (!streamServed) {
+        const ytDlpArgs = [
+          "-f",
+          "ba/bestaudio/b/best",
+          "-o",
+          "-",
+          url,
+        ];
+        const subprocess = spawn(
+          (youtubedl as any).constants.YOUTUBE_DL_PATH,
+          ytDlpArgs,
+        );
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Transfer-Encoding", "chunked");
+        if (subprocess.stdout) {
+          subprocess.stdout.pipe(res);
+        } else {
+          res.status(500).json({ error: "Failed to create audio stream" });
+        }
       }
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
-
   app.get("/api/proxy-stream", async (req, res) => {
     try {
       const url = req.query.url as string;
@@ -217,6 +226,12 @@ async function startServer() {
       if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
         headers["Referer"] = "https://www.nhaccuatui.com/";
         headers["Origin"] = "https://www.nhaccuatui.com";
+      }
+      if (url.includes("tiktokcdn") || url.includes("tiktok.com")) {
+        headers["Referer"] = "https://www.tiktok.com/";
+      }
+      if (url.includes("tiktokcdn") || url.includes("tiktok.com")) {
+        headers["Referer"] = "https://www.tiktok.com/";
       }
       if (req.headers.range) {
         headers["Range"] = req.headers.range;
@@ -606,6 +621,56 @@ async function startServer() {
       res
         .status(500)
         .json({ error: error.message || "Failed to separate stems" });
+    }
+  });
+
+
+  app.get("/api/nhaccuatui/albums", async (req, res) => {
+    try {
+      const cacheKey = "nct_home_albums";
+      const cached = await getCachedData<any>("nct_albums", cacheKey);
+      if (cached) {
+        return res.json({ success: true, albums: cached });
+      }
+
+      const response = await fetch('https://www.nhaccuatui.com/', {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+      });
+      const html = await response.text();
+      
+      const match = html.match(/<script type=\"application\/json\" data-nuxt-data=\"nuxt-app\"[^>]*>(.*?)<\/script>/s);
+      let results: any[] = [];
+      if (match) {
+        const data = JSON.parse(match[1]);
+        for (let i = 0; i < data.length; i++) {
+            if (typeof data[i] === 'string' && data[i].length === 12 && /^[a-zA-Z0-9]+$/.test(data[i])) {
+                let title = null;
+                let image = null;
+                for (let j = 1; j <= 10; j++) {
+                   if (!title && typeof data[i+j] === 'string' && data[i+j].length > 5 && !data[i+j].startsWith('http')) {
+                       title = data[i+j];
+                   }
+                   if (!image && typeof data[i+j] === 'string' && data[i+j].includes('image-cdn.nct.vn/playlist')) {
+                       image = data[i+j];
+                   }
+                }
+                if (title && image && !results.find(r => r.id === data[i])) {
+                    results.push({ id: data[i], title, image });
+                }
+            }
+        }
+      }
+
+      if (results.length > 0) {
+        // Cache for 24 hours
+        await setCachedData("nct_albums", cacheKey, results);
+        return res.json({ success: true, albums: results });
+      } else {
+        return res.status(500).json({ success: false, error: "No albums found" });
+      }
+    } catch (error: any) {
+      console.error("[NCT Albums Error]", error.message);
+      res.status(500).json({ success: false, error: error.message });
     }
   });
 
@@ -1133,6 +1198,48 @@ async function startServer() {
           }
           throw new Error("TikWM search fallback failed");
         },
+        // Strategy 4: yt-dlp backend
+        async () => {
+          const ytdlOptions: any = {
+            dumpSingleJson: true,
+            flatPlaylist: true,
+            noWarnings: true,
+            jsRuntimes: "node",
+            noCheckCertificates: true,
+            playlistEnd: parseInt(clientCount) || 40,
+          };
+          if (await hasYoutubeCookies()) {
+            ytdlOptions.cookies = getCookiesFilePath();
+          }
+          
+          const profileUrl = `https://www.tiktok.com/@${unique_id}`;
+          console.log(`[Strategy 4] Using yt-dlp to fetch TikTok profile: ${profileUrl}`);
+          const info = await youtubedl(profileUrl, ytdlOptions) as any;
+          
+          if (info && info.entries && info.entries.length > 0) {
+            const mappedVideos = info.entries.map((entry) => {
+              const videoUrl = entry.url || `https://www.tiktok.com/@${unique_id}/video/${entry.id}`;
+              return {
+                video_id: entry.id,
+                title: entry.title || "TikTok Video",
+                audioUrl: `/api/stream?url=${encodeURIComponent(videoUrl)}`,
+                cover: entry.thumbnails?.[0]?.url || "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=300",
+                author: {
+                  unique_id: unique_id,
+                  nickname: entry.uploader || unique_id
+                }
+              };
+            });
+            
+            return {
+              videos: mappedVideos,
+              cursor: "0",
+              hasMore: false,
+            };
+          }
+          throw new Error("yt-dlp strategy returned 0 items");
+        },
+        
         // Strategy 3: HTML fetch + proxy via AllOrigins
         async () => {
           const audioUrl = `https://www.tiktok.com/@${unique_id}`;
@@ -1228,51 +1335,91 @@ async function startServer() {
     }
   });
 
-  // 2. TikTok Search (via Tikwm API)
+  // 2. TikTok Search (via Tikwm API with yt-dlp fallback)
   app.get("/api/tiktok/search", async (req, res) => {
     try {
       const keywords = req.query.q as string;
       const clientCursor = (req.query.cursor as string) || "0";
       const clientCount = (req.query.count as string) || "30";
-      const searchType = (req.query.type as string) || "video"; // "video" or "sound"
+      const searchType = (req.query.type as string) || "video";
 
       if (!keywords) {
         return res.status(400).json({ error: "Search query is required" });
       }
 
-      // Tikwm mapping: type 1 = video, type 'music' = sound
-      const params = new URLSearchParams({
-        keywords,
-        count: clientCount,
-        cursor: clientCursor,
-        type: searchType === "sound" ? "music" : "1",
-      });
-
-      const response = await fetch("https://www.tikwm.com/api/feed/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString(),
-      });
-
-      const text = await response.text();
-      let data;
+      // Strategy 1: Tikwm
       try {
-        data = JSON.parse(text);
-      } catch (err) {
-        if (text.includes("<html") || text.includes("<!DOCTYPE")) {
-          return res.status(502).json({ error: "TikTok search is currently blocked by Cloudflare protection. The service might be temporarily unavailable." });
-        }
-        return res.status(500).json({ error: "Invalid JSON response from TikTok search API." });
-      }
-
-      if (data.code === 0 && data.data?.videos?.length > 0) {
-        return res.json({
-          videos: data.data.videos,
-          cursor: (data.data.cursor || "").toString(),
-          hasMore: !!data.data.hasMore,
+        const params = new URLSearchParams({
+          keywords,
+          count: clientCount,
+          cursor: clientCursor,
+          type: searchType === "sound" ? "music" : "1",
         });
+
+        const response = await fetch("https://www.tikwm.com/api/feed/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: params.toString(),
+        });
+
+        const text = await response.text();
+        let data;
+        try {
+          data = JSON.parse(text);
+        } catch (err) {
+          throw new Error("Tikwm blocked by Cloudflare");
+        }
+
+        if (data.code === 0 && data.data?.videos?.length > 0) {
+          return res.json({
+            videos: data.data.videos,
+            cursor: (data.data.cursor || "").toString(),
+            hasMore: !!data.data.hasMore,
+          });
+        }
+        // If data.code !== 0, throw to fallback
+        throw new Error("Tikwm returned no results or failed");
+      } catch (tikwmError: any) {
+        console.warn("[TikTok Search] Tikwm failed, falling back to yt-dlp:", tikwmError.message);
+        
+        // Strategy 2: yt-dlp youtube search fallback (since TikTok search natively isn't supported via yt-dlp)
+        const count = parseInt(clientCount) || 15;
+        const query = `ytsearch${count}:${keywords} ${searchType === "sound" ? "tiktok sound" : "tiktok"}`;
+        
+        const ytdlOptions: any = {
+          dumpSingleJson: true,
+          flatPlaylist: true,
+          noWarnings: true,
+        };
+
+        if (await hasYoutubeCookies()) {
+          ytdlOptions.cookies = getCookiesFilePath();
+        }
+
+        const info = await youtubedl(query, ytdlOptions) as any;
+        if (info && info.entries && info.entries.length > 0) {
+          const videos = info.entries.map((v: any) => ({
+            id: v.id,
+            video_id: v.id,
+            title: v.title,
+            desc: v.title,
+            url: v.url || `https://www.youtube.com/watch?v=${v.id}`,
+            author: {
+              nickname: v.uploader || "YouTube Creator"
+            },
+            duration: v.duration,
+            cover: v.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`
+          }));
+          
+          return res.json({
+            videos,
+            cursor: "0",
+            hasMore: false
+          });
+        }
+        
+        return res.json({ videos: [], cursor: "0", hasMore: false });
       }
-      return res.json({ videos: [], cursor: "0", hasMore: false });
     } catch (error: any) {
       console.error("[Search Error]", error.message);
       res.status(500).json({ error: error.message });
@@ -1404,51 +1551,28 @@ async function startServer() {
   });
 
   // Pixabay API endpoints
-
-// In-memory cache for Pixabay/Freesound search results (48 hours)
-const sfxCache = new Map<string, { timestamp: number, data: any }>();
-const CACHE_DURATION_MS = 48 * 60 * 60 * 1000;
-
-app.get("/api/pixabay/search", async (req, res) => {
+  app.get("/api/pixabay/search", async (req, res) => {
     try {
       const q = (req.query.q as string) || "rain";
       const p = (req.query.p as string) || "1";
-      const cacheKey = `${q}_${p}`;
-      
-      if (sfxCache.has(cacheKey)) {
-          const cached = sfxCache.get(cacheKey)!;
-          if (Date.now() - cached.timestamp < CACHE_DURATION_MS) {
-              return res.json({ success: true, data: cached.data, cached: true });
-          }
-      }
-
       const pixabayUrl = `https://pixabay.com/sound-effects/search/${encodeURIComponent(q)}/?order=trending&pagi=${p}`;
+
       let html = "";
       let isFreesoundFallback = false;
 
       try {
-        // Try direct fetch first
-        const directRes = await fetch(pixabayUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5'
-            }
-        });
-        const directHtml = await directRes.text();
-        if (directHtml.includes("window.__BOOTSTRAP__")) {
-            html = directHtml;
-        } else {
-            // Try proxy
-            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(pixabayUrl)}`;
-            const response = await fetch(proxyUrl);
-            const data = await response.json();
-            if (data && data.contents && data.contents.includes("window.__BOOTSTRAP__")) {
-              html = data.contents;
-            }
+        const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(pixabayUrl)}`;
+        const response = await fetch(proxyUrl);
+        const data = await response.json();
+        if (
+          data &&
+          data.contents &&
+          data.contents.includes("window.__BOOTSTRAP__")
+        ) {
+          html = data.contents;
         }
       } catch (e) {
-        console.warn("Pixabay fetch failed, falling back to freesound", e);
+        console.warn("allorigins failed, falling back to freesound");
         isFreesoundFallback = true;
       }
 
@@ -1459,7 +1583,6 @@ app.get("/api/pixabay/search", async (req, res) => {
       if (isFreesoundFallback) {
         // Fallback to Freesound since Pixabay aggressively blocks proxies via Cloudflare
         const freeSoundUrl = `https://freesound.org/search/?q=${encodeURIComponent(q)}&page=${p}`;
-
         const fsRes = await fetch(freeSoundUrl, {
           headers: {
             "User-Agent":
@@ -1484,10 +1607,8 @@ app.get("/api/pixabay/search", async (req, res) => {
             });
           }
         });
-        
-        const finalResults = results.slice(0, 15);
-        sfxCache.set(cacheKey, { timestamp: Date.now(), data: finalResults });
-        return res.json({ success: true, data: finalResults });
+
+        return res.json({ success: true, data: results.slice(0, 15) });
       }
 
       const match = html.match(/window\.__BOOTSTRAP__\s*=\s*(\{.*?\});/);
@@ -1526,11 +1647,9 @@ app.get("/api/pixabay/search", async (req, res) => {
         return results;
       }
 
-      const finalResultsPixabay = extractAudioFromJSON(bootstrap).slice(0, 15);
-      sfxCache.set(cacheKey, { timestamp: Date.now(), data: finalResultsPixabay });
       return res.json({
         success: true,
-        data: finalResultsPixabay,
+        data: extractAudioFromJSON(bootstrap).slice(0, 15),
       });
     } catch (error: any) {
       console.error("[Search Error]", error.message);
@@ -1623,7 +1742,7 @@ app.get("/api/pixabay/search", async (req, res) => {
         dumpSingleJson: true,
         noWarnings: true,
         noPlaylist: true,
-        f: "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+        f: "ba/bestaudio/b",
         jsRuntimes: "node",
         noCheckCertificates: true,
       };
@@ -1670,7 +1789,7 @@ app.get("/api/pixabay/search", async (req, res) => {
 
       const ytDlpArgs = [
         "-f",
-        "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+        "ba/bestaudio/b/best",
         "-o",
         "-",
         url,
@@ -1720,7 +1839,6 @@ app.get("/api/pixabay/search", async (req, res) => {
       if (!url) {
         return res.status(400).json({ error: "URL is required" });
       }
-
       console.log(`[Download API] Downloading and proxying: ${url}`);
 
       const headers: Record<string, string> = {
@@ -1732,106 +1850,94 @@ app.get("/api/pixabay/search", async (req, res) => {
         headers["Referer"] = "https://www.nhaccuatui.com/";
         headers["Origin"] = "https://www.nhaccuatui.com";
       }
+      if (url.includes("tiktokcdn") || url.includes("tiktok.com")) {
+        headers["Referer"] = "https://www.tiktok.com/";
+      }
 
       let finalUrl = url;
-      if (!url.startsWith("http")) {
-        finalUrl = `http://localhost:3000${url}`;
+      if (url.includes("/api/proxy-stream?url=")) {
+        const urlParams = new URLSearchParams(url.split("?")[1]);
+        finalUrl = urlParams.get("url") || url;
+      } else if (url.includes("/api/stream?url=")) {
+        const urlParams = new URLSearchParams(url.split("?")[1]);
+        finalUrl = urlParams.get("url") || url;
       }
+
+      if (!finalUrl.startsWith("http")) {
+        finalUrl = `http://localhost:3000${finalUrl}`;
+      }
+
+      let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
+      if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
+      if (!safeTitle) safeTitle = "audio";
 
       const isDirect =
         finalUrl.toLowerCase().includes(".mp3") ||
         finalUrl.toLowerCase().includes(".m4a") ||
         finalUrl.toLowerCase().includes(".flac") ||
         finalUrl.toLowerCase().includes(".wav");
-      if (
-        !isDirect &&
-        (finalUrl.includes("youtube.com") ||
-          finalUrl.includes("youtu.be") ||
-          finalUrl.includes("soundcloud.com") ||
-          finalUrl.includes("facebook.com") ||
-          finalUrl.includes("fb.watch"))
-      ) {
-        try {
-          finalUrl = await getDirectMediaUrl(finalUrl);
-        } catch (err: any) {
-          console.error(
-            `[Download API] Failed to get direct media url:`,
-            err.message,
-          );
-        }
-      }
 
       let response: any = null;
-      try {
-        response = await fetch(finalUrl, { headers });
-        if (!response.ok) {
-          console.warn(
-            `[Download API] Direct fetch failed with status: ${response?.status}, falling back to yt-dlp...`,
-          );
-          response = null;
+
+      if (!isDirect && (finalUrl.includes("youtube.com") || finalUrl.includes("youtu.be") || finalUrl.includes("facebook.com") || finalUrl.includes("fb.watch"))) {
+          try {
+            finalUrl = await getDirectMediaUrl(finalUrl);
+          } catch(e) { }
+      }
+
+      // If it's a tiktok page URL (not CDN), don't fetch directly because it returns HTML
+      const isTikTokPage = finalUrl.includes("tiktok.com") && !finalUrl.includes("tiktokcdn");
+
+      if (!isTikTokPage) {
+        try {
+          response = await fetch(finalUrl, { headers });
+          if (!response.ok || response.headers.get("content-type")?.includes("text/html")) {
+            console.warn(`[Download API] Direct fetch failed or returned HTML: ${response?.status}, falling back to yt-dlp...`);
+            response = null;
+          }
+        } catch (err) {
+          console.warn("[Download API] Direct fetch threw error, falling back to yt-dlp...");
         }
-      } catch (err) {
-        console.warn(
-          "[Download API] Direct fetch threw error, falling back to yt-dlp...",
-        );
       }
 
       if (!response) {
+        // Fallback to yt-dlp
         const ytDlpArgs = [
           "-f",
-          "ba[ext=m4a]/b[ext=mp4]/ba/b/best",
+          "ba/bestaudio/b/best",
           "-o",
           "-",
-          url,
+          url, // USE THE ORIGINAL URL for yt-dlp
         ];
         const subprocess = spawn(
           (youtubedl as any).constants.YOUTUBE_DL_PATH,
           ytDlpArgs,
         );
-        let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
-        if (safeTitle.length > 30)
-          safeTitle = safeTitle.substring(0, 30).trim();
-        if (!safeTitle) safeTitle = "audio";
         res.setHeader(
           "Content-Disposition",
-          `attachment; filename="${encodeURIComponent(safeTitle)}.mp3"`,
+          `attachment; filename="${encodeURIComponent(safeTitle)}.m4a"`
         );
-        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Content-Type", "audio/mp4");
         res.setHeader("Transfer-Encoding", "chunked");
         if (subprocess.stdout) {
           subprocess.stdout.pipe(res);
         } else {
-          res
-            .status(500)
-            .json({ error: "Failed to download audio stream via yt-dlp" });
+          res.status(500).json({ error: "Failed to create audio stream via yt-dlp" });
         }
         return;
       }
 
       let contentType = response.headers.get("content-type") || "audio/mpeg";
       let extension = "mp3";
-      if (contentType.includes("m4a") || finalUrl.includes(".m4a")) {
-        extension = "m4a";
-      } else if (
-        contentType.includes("flac") ||
-        finalUrl.toLowerCase().includes(".flac")
-      ) {
-        extension = "flac";
-        contentType = "audio/flac";
-      } else if (
-        contentType.includes("wav") ||
-        finalUrl.toLowerCase().includes(".wav")
-      ) {
-        extension = "wav";
-        contentType = "audio/wav";
-      }
+      if (contentType.includes("mp4")) extension = "mp4";
+      if (contentType.includes("wav")) extension = "wav";
+      if (contentType.includes("flac")) extension = "flac";
+      if (contentType.includes("m4a") || contentType.includes("aac")) extension = "m4a";
+      if (contentType.includes("webm") || contentType.includes("opus")) extension = "webm";
 
-      let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
-      if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
-      if (!safeTitle) safeTitle = "audio";
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`,
+        `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`
       );
       res.setHeader("Content-Type", contentType);
 
@@ -1843,18 +1949,13 @@ app.get("/api/pixabay/search", async (req, res) => {
         nodeStream.pipe(res);
         res.on("close", () => nodeStream.destroy());
       } else {
-        res.status(500).json({ error: "No body in audio stream source." });
+        res.status(500).json({ error: "Failed to download stream" });
       }
     } catch (error: any) {
-      console.error(`[Download API Error]`, error);
-      if (!res.headersSent) {
-        res
-          .status(500)
-          .json({ error: error.message || "Failed to download media." });
-      }
+      console.error("[Download API Error]", error);
+      res.status(500).json({ error: error.message });
     }
   });
-
   app.post("/api/lyric/format", express.json(), async (req, res) => {
     try {
       const { lyric, style } = req.body;

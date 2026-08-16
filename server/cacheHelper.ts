@@ -27,7 +27,9 @@ export async function getCachedData<T>(prefix: string, key: string): Promise<T |
       const item: CacheItem<T> = JSON.parse(p);
       
       const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-      if (Date.now() - item.timestamp > THREE_DAYS_MS) {
+      let ttl = THREE_DAYS_MS;
+      if (prefix === "nct_albums") ttl = 7 * 24 * 60 * 60 * 1000;
+      if (Date.now() - item.timestamp > ttl) {
         // Expired
         return null;
       }

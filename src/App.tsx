@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
-import {
+import { 
   Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, MonitorPlay, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List, X, Volume2,
   PictureInPicture, Lightbulb, Rocket
-} from "lucide-react";
+, Loader2 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
 import StemStudio from "./components/StemStudio";
 import { separateStemsWithWebGpu, isWebGpuSupported } from "./utils/webgpuDsp";
@@ -2597,7 +2597,12 @@ export default function App() {
       const isYt = tiktokSearchType === "youtube";
       const res = await fetch(`/api/search/suggest?yt=${isYt}&q=${encodeURIComponent(query)}`);
       if (res.ok) {
-        const data = await res.json();
+        let data;
+      try {
+        data = await res.json();
+      } catch (parseError: any) {
+        throw new Error(`Failed to parse JSON. Response status: ${res.status}. Error: ${parseError.message}`);
+      }
         setSuggestions(data);
       }
     } catch (e) {
@@ -2656,7 +2661,8 @@ export default function App() {
         }
       }
       
-      const data = await res.json();
+      let data;
+      try { data = await res.json(); } catch(e:any) { throw new Error(`Failed parsing from ${endpoint}: ${e.message}`); }
       const results = data.videos || [];
       
       if (isLoadMore) {
@@ -2848,6 +2854,48 @@ export default function App() {
     playRecentSong(targetObj);
   };
 
+  const [isNctExpanded, setIsNctExpanded] = useState(false);
+  const [nctAlbums, setNctAlbums] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem("nct_albums_cache");
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        const ONE_WEEK = 7 * 24 * 60 * 60 * 1000;
+        if (Date.now() - parsed.timestamp < ONE_WEEK && parsed.data) {
+          return parsed.data;
+        }
+      }
+    } catch (e) {}
+    return [];
+  });
+  const [isFetchingNctAlbums, setIsFetchingNctAlbums] = useState(false);
+
+  const fetchNctAlbums = async () => {
+    if (nctAlbums.length > 0) return; // Already fetched from cache or memory
+    setIsFetchingNctAlbums(true);
+    try {
+      const res = await fetch('/api/nhaccuatui/albums');
+      const data = await res.json();
+      if (data.success && data.albums) {
+        setNctAlbums(data.albums);
+        localStorage.setItem("nct_albums_cache", JSON.stringify({
+          timestamp: Date.now(),
+          data: data.albums
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsFetchingNctAlbums(false);
+    }
+  };
+
+  useEffect(() => {
+    if (playlistTab === "albums") {
+      fetchNctAlbums();
+    }
+  }, [playlistTab]);
+
   const [tiktokAlbums, setTiktokAlbums] = useState<any[]>(() => {
     const defaultVietnameseAlbums = [
       { id: "alb_chammusicboxofficial", username: "chammusicboxofficial", displayName: "Chạm Music", avatarSub: "CM" },
@@ -3035,10 +3083,9 @@ export default function App() {
       return;
     }
 
-    let targetUrl = song.id?.toString().startsWith("yt_") ? song.originalUrl : song.audioUrl;
-    
-    // If the audio URL is already a proxy-stream link, extract the encoded URL for the download endpoint
-    if (targetUrl && (targetUrl.startsWith("/api/proxy-stream") || targetUrl.includes("/api/proxy-stream"))) {
+    let targetUrl = song.originalUrl || song.audioUrl || "";
+    // If we only have a proxy URL, extract it, but originalUrl is always preferred for yt-dlp compatibility
+    if (!song.originalUrl && targetUrl && (targetUrl.startsWith("/api/proxy-stream") || targetUrl.includes("/api/proxy-stream"))) {
       try {
         const urlObj = new URL(targetUrl, window.location.origin);
         let extractedUrl = urlObj.searchParams.get("url");
@@ -3047,28 +3094,13 @@ export default function App() {
     }
     
     const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(getSafeFilename(song.title))}`;
-
-    try {
-      const res = await fetch(downloadUrl);
-      if (!res.ok) throw new Error("Failed to fetch binary");
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = blobUrl;
-      link.download = `${getSafeFilename(song.title)}.m4a`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-    } catch (err) {
-      // fallback
-      const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.download = `${getSafeFilename(song.title)}.m4a`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
+    
+    // Let the browser handle the download using the backend's Content-Disposition headers
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const fetchAndPlayUserAlbum = async (username: string, loadMore = false, forceRefresh = false) => {
@@ -3155,14 +3187,22 @@ export default function App() {
         }
       }
 
-      const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info).map((v: any) => {
+      const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info || v.audioUrl).map((v: any) => {
         const videoAuthor = v.author?.nickname || authorObj?.nickname || `@${normalizedUsername}`;
         const musicCover = v.music_info?.cover || v.cover || v.origin_cover;
+        
+        const rawAudioUrl = v.audioUrl || v.music || v.play || v.music_info?.play;
+        const isAlreadyProxied = rawAudioUrl && rawAudioUrl.includes("/api/stream");
+        const proxiedAudioUrl = (rawAudioUrl && rawAudioUrl.startsWith("http") && !isAlreadyProxied) 
+                                ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` 
+                                : rawAudioUrl;
+                                
         return {
           id: v.video_id || v.id || Date.now().toString() + Math.random(),
           title: v.title || v.desc || "TikTok Audio",
           originalUrl: "https://www.tiktok.com/@" + normalizedUsername + "/video/" + (v.video_id || v.id),
-          audioUrl: v.music || v.play || v.music_info?.play,
+          audioUrl: proxiedAudioUrl,
+          videoUrl: proxiedAudioUrl,
           cover: musicCover,
           author: videoAuthor,
           timestamp: Date.now()
@@ -3360,6 +3400,7 @@ export default function App() {
           title: data.title || "Shared Audio Track",
           originalUrl: urlToUse,
           audioUrl: streamUrl,
+          videoUrl: (urlToUse.includes("tiktok.com") || urlToUse.includes("youtube.com") || urlToUse.includes("youtu.be") || urlToUse.includes("facebook.com") || urlToUse.includes("fb.watch")) ? streamUrl : null,
           cover: defaultCover,
           author: data.author || "Web Audio",
           timestamp: Date.now()
@@ -3532,15 +3573,15 @@ export default function App() {
           return;
         }
 
-        const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info).map((v: any) => {
-          const rawAudioUrl = v.music || v.play || v.music_info?.play;
-          const proxiedAudioUrl = rawAudioUrl && rawAudioUrl.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` : rawAudioUrl;
+        const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info || v.audioUrl).map((v: any) => {
+          const rawAudioUrl = v.audioUrl || v.music || v.play || v.music_info?.play;
+          const proxiedAudioUrl = rawAudioUrl && rawAudioUrl.startsWith("http") && !rawAudioUrl.includes("/api/stream") ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` : rawAudioUrl;
           return {
             id: v.video_id || v.id || Date.now().toString() + Math.random(),
             title: v.title || v.desc || "TikTok Audio",
             originalUrl: "https://www.tiktok.com/@" + username + "/video/" + (v.video_id || v.id),
             audioUrl: proxiedAudioUrl,
-            videoUrl: v.play || null,
+            videoUrl: proxiedAudioUrl,
             cover: v.cover || v.origin_cover || v.music_info?.cover,
             author: v.author?.nickname || "@" + username,
             timestamp: Date.now()
@@ -3871,12 +3912,14 @@ export default function App() {
     // The proxy stream URL is already formed like `/api/proxy-stream?url=...` or `/api/stream?url=...`
     // We can extract the inner url and pass it to download API
     let originalUrl = currentSong?.originalUrl || targetUrl;
-    let finalUrl = targetUrl;
     
-    if (targetUrl.includes("/api/proxy-stream?url=")) {
-      originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
-    } else if (targetUrl.includes("/api/stream?url=")) {
-      originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
+    // Only extract from proxy if we don't have a valid originalUrl
+    if (!currentSong?.originalUrl) {
+      if (targetUrl.includes("/api/proxy-stream?url=")) {
+        originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
+      } else if (targetUrl.includes("/api/stream?url=")) {
+        originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
+      }
     }
 
     const title = fileName || currentSong?.title || "audio";
@@ -5559,143 +5602,106 @@ export default function App() {
 
               {/* Layout constraint wrapper so Albums and Other Tracks scroll together */}
               <div className={`flex flex-col pb-4 flex-1 overflow-y-auto pr-1 scrollbar-thin scrollbar-thumb-white/10`}>
-                {/* TikTok Albums are currently hidden due to API issues */}
-                {false && (
-                <div className="grid grid-cols-2 gap-3 items-start content-start">
-              {allAlbums.map((alb) => {
-                const normalizedUser = alb.username.toLowerCase();
-                const isActive = activeAlbumUsername === normalizedUser;
-                const cacheData = albumsCache[normalizedUser];
-                const isCached = !!cacheData && cacheData.songs?.length > 0;
-                const isSharedInFirebase = firebaseUsernames.some(u => u.username.toLowerCase() === normalizedUser);
-                
-                return (
-                  <div
-                    key={alb.id}
-                    onClick={() => {
-                      fetchAndPlayUserAlbum(alb.username);
-                    }}
-                    className={`group flex items-center justify-between p-2 rounded-[16px] cursor-pointer border transition-all duration-500 relative overflow-hidden h-[60px] ${
-                      isActive
-                        ? "bg-gradient-to-br from-amber-500/20 to-amber-900/10 border-amber-400/40 shadow-[0_8px_30px_rgb(245,158,11,0.15)]"
-                        : "bg-gradient-to-br from-white/[0.04] to-white/[0.01] border-white/5 hover:from-white/[0.08] hover:to-white/[0.03] hover:border-white/20 hover:shadow-xl hover:shadow-black/50"
-                    }`}
-                  >
-                    {/* Left part: Logo + Username / count */}
-                    <div className="flex items-center gap-2 min-w-0 flex-1 relative z-10">
-                      {/* Premium Circle Avatar Layout with Layered Zero-State Fallback */}
-                      <div className="relative w-8 h-8 rounded-full overflow-hidden shrink-0 shadow-lg border border-white/10 group-hover:border-white/30 transition-colors">
-                        <div className={`absolute inset-0 flex items-center justify-center font-black text-[10px] select-none uppercase transition-all duration-500 ${
-                          isActive 
-                            ? "bg-gradient-to-br from-amber-300 to-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.5)]" 
-                            : "bg-gradient-to-br from-white/10 to-white/5 text-white/80 group-hover:from-white/20 group-hover:to-white/10 group-hover:text-white"
-                        }`}>
-                          {alb.avatarSub || alb.username.slice(0, 2).toUpperCase()}
-                        </div>
-                        {alb.avatar ? (
-                          <FallbackImage 
-                            src={alb.avatar} 
-                            className="absolute inset-0 w-full h-full object-cover transition-all duration-500 rounded-full group-hover:scale-110" 
-                            alt=""
-                          />
-                        ) : (
-                          <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent mix-blend-overlay"></div>
-                        )}
-                        {/* active animated gold pulsing border */}
-                        {isActive && (
-                          <div className="absolute inset-0 border-[2px] border-amber-400 rounded-full animate-pulse pointer-events-none" />
-                        )}
-                        
-                        {/* Luxury Glossy Sheen */}
-                        <div className="absolute inset-0 bg-gradient-to-b from-white/20 to-transparent opacity-50 rounded-full pointer-events-none" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 40%, 0 20%)' }}></div>
-                      </div>
-
-                      {/* Display name & Saved/Local count */}
-                      <div className="flex flex-col min-w-0">
-                        <h4 className={`text-[11px] font-black tracking-tight truncate leading-tight drop-shadow-sm ${
-                          isActive ? "text-amber-300 drop-shadow-[0_0_8px_rgba(252,211,77,0.4)]" : "text-white/90 group-hover:text-white"
-                        }`}>
-                          {alb.displayName || `@${alb.username}`}
-                        </h4>
-                        
-                        {/* Dynamic Offline / Cached Indicator */}
-                        {isCached ? (
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full shrink-0 shadow-[0_0_5px_rgba(52,211,153,0.8)]" />
-                            <p className="text-[9px] text-emerald-400/90 font-bold tracking-wider uppercase select-none truncate">
-                              Saved ({cacheData.songs.length})
-                            </p>
-                          </div>
-                        ) : (
-                          <p className="text-[9px] text-white/40 mt-0.5 font-semibold tracking-wider uppercase select-none group-hover:text-white/60 transition-colors truncate">
-                            {alb.isFromCommunity ? "Shared" : "Local"}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Right part: Control Tray Inside Album Block */}
-                    <div className="flex items-center gap-0.5 relative z-10" onClick={(e) => e.stopPropagation()}>
-                      {isCached && (
-                        <button
-                          onClick={() => {
-                            fetchAndPlayUserAlbum(alb.username, false, true);
-                          }}
-                          className={`p-0.5 hover:bg-white/10 rounded-md transition-all text-white/40 hover:text-amber-400 ${
-                            isFetchingTiktok && isActive ? "animate-spin text-amber-400" : ""
-                          }`}
-                          title="Force refresh database & recreate live audio proxy links"
-                        >
-                          <RefreshCw className="w-3 h-3" />
-                        </button>
-                      )}
-
-                      {/* TOGGLE SHARE CREATOR */}
-                      <button
-                        onClick={() => handleToggleShareUsername(alb)}
-                        className={`p-0.5 hover:bg-white/10 rounded-md transition-all ${
-                          isSharedInFirebase ? "text-amber-400 animate-bounce" : "text-white/40 hover:text-amber-400"
-                        }`}
-                        title={isSharedInFirebase ? "Shared in Community Database (Unshare)" : "Share Creator Username with Community"}
-                      >
-                        <Share2 className="w-3 h-3" />
-                      </button>
-                      
-                      {(alb.id.startsWith("alb_") || alb.isFromCommunity) && (
-                        <button
-                          onClick={() => {
-                            if (alb.isFromCommunity) {
-                              handleToggleShareUsername(alb);
-                            } else {
-                              setTiktokAlbums(prev => prev.filter(a => a.id !== alb.id));
-                              // Also wipe caches for clean state
-                              if (albumsCache[normalizedUser]) {
-                                setAlbumsCache(prev => {
-                                  const updated = { ...prev };
-                                  delete updated[normalizedUser];
-                                  return updated;
-                                });
-                              }
-                            }
-                          }}
-                          className="p-0.5 hover:bg-white/10 text-white/40 hover:text-red-400 rounded-md transition-all"
-                          title={alb.isFromCommunity ? "Delete from community database" : "Delete custom album & wipe links"}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-
-                    {/* Silky glowing decoration */}
-                    <div className={`absolute right-0 bottom-0 w-24 h-24 rounded-full blur-[25px] transition-all duration-700 pointer-events-none translate-x-8 translate-y-8 ${
-                      isActive ? "bg-amber-500/20" : "bg-white/5 group-hover:bg-amber-400/10 group-hover:blur-[30px]"
-                    }`} />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-50 pointer-events-none" />
+                {/* NCT Top Albums */}
+                <div className="flex items-center justify-between mb-3 px-0.5 mt-2">
+                  <div className="flex flex-col">
+                    <h3 className="text-xs font-black tracking-widest text-[#E0E2E8]/90 uppercase flex items-center gap-1.5">
+                      <Music className="w-3.5 h-3.5 text-amber-400" />
+                      Top Albums
+                    </h3>
+                    <p className="text-[10px] text-white/30 font-semibold tracking-wide">
+                      Trending playlists from NhacCuaTui
+                    </p>
                   </div>
-                );
-              })}
+                  <button
+                    onClick={() => setIsNctExpanded(!isNctExpanded)}
+                    className="px-2.5 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-[10px] font-bold text-white/60 hover:text-white transition-all flex items-center gap-1 shrink-0"
+                  >
+                    {isNctExpanded ? "Show Less" : "Show All"}
+                  </button>
+                </div>
+                
+                {isFetchingNctAlbums ? (
+                  <div className="flex justify-center items-center py-6">
+                    <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3 items-start content-start">
+                    {(isNctExpanded ? nctAlbums : nctAlbums.slice(0, 6)).map((alb) => (
+                      <div
+                        key={alb.id}
+                        onClick={(e) => {
+                           handleTiktokFetch(e as any, `https://www.nhaccuatui.com/playlist/${alb.id}`);
+                           setPlaylistTab("upnext");
+                        }}
+                        className="group flex flex-col gap-1.5 p-1.5 sm:p-2 rounded-[12px] sm:rounded-[14px] cursor-pointer border border-white/5 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/20 transition-all duration-300"
+                      >
+                        <div className="relative w-full aspect-square rounded-[8px] sm:rounded-xl overflow-hidden shrink-0 shadow-md">
+                           <FallbackImage 
+                             src={alb.image} 
+                             className="absolute inset-0 w-full h-full object-cover transition-all duration-500 group-hover:scale-110"
+                             alt={alb.title}
+                           />
+                           <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-all" />
+                           <div className="absolute bottom-1.5 right-1.5 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-400/90 text-black flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 shadow-lg">
+                             <Play className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-current ml-0.5" />
+                           </div>
+                        </div>
+                        <div className="px-0.5 pb-0.5 sm:px-1 sm:pb-1">
+                          <h4 className="text-[9px] sm:text-[10px] font-bold text-white/90 group-hover:text-amber-400 transition-colors line-clamp-2 leading-tight">
+                            {alb.title}
+                          </h4>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+
+              {/* TikTok & Community Creators */}
+              <div className="mt-5 border-t border-white/5 pt-3 shrink-0">
+                <div className="flex items-center justify-between mb-3 px-0.5 mt-2">
+                  <div className="flex flex-col">
+                    <h3 className="text-xs font-black tracking-widest text-[#E0E2E8]/90 uppercase flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5 text-amber-400" />
+                      Creators
+                    </h3>
+                    <p className="text-[10px] text-white/30 font-semibold tracking-wide">
+                      TikTok and Community Profiles
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 sm:gap-3 items-start content-start">
+                  {allAlbums.map((alb) => (
+                    <div
+                      key={alb.id}
+                      onClick={() => fetchAndPlayUserAlbum(alb.username)}
+                      className="group flex flex-col gap-1.5 p-1.5 sm:p-2 rounded-[12px] sm:rounded-[14px] cursor-pointer border border-white/5 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/20 transition-all duration-300"
+                    >
+                      <div className="relative w-full aspect-square rounded-[8px] sm:rounded-xl overflow-hidden shrink-0 shadow-md">
+                         {alb.avatar ? (
+                           <img src={alb.avatar} alt={alb.displayName} className="absolute inset-0 w-full h-full object-cover transition-all duration-500 group-hover:scale-110" />
+                         ) : (
+                           <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-white/10 to-transparent flex items-center justify-center transition-all duration-500 group-hover:scale-110">
+                              <span className="text-2xl font-black text-white/20">{alb.avatarSub}</span>
+                           </div>
+                         )}
+                         <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-all" />
+                         <div className="absolute bottom-1.5 right-1.5 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-400/90 text-black flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 shadow-lg">
+                           <Play className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-current ml-0.5" />
+                         </div>
+                      </div>
+                      <div className="px-0.5 pb-0.5 sm:px-1 sm:pb-1">
+                        <h4 className="text-[9px] sm:text-[10px] font-bold text-white/90 group-hover:text-amber-400 transition-colors line-clamp-1 leading-tight">
+                          {alb.displayName}
+                        </h4>
+                        <p className="text-[8px] sm:text-[9px] text-white/40 mt-0.5">@{alb.username}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
-              )}
 
               {/* Other Fetched Tracks (YouTube, Facebook, NCT, or custom URLs) */}
               <div className="mt-5 border-t border-white/5 pt-3 shrink-0">
@@ -5809,7 +5815,47 @@ export default function App() {
               {/* Search Header */}
               <div className="flex flex-col gap-3 mb-4 shrink-0">
                 <form onSubmit={handleTiktokSearch} className="flex flex-col gap-2.5">
-                  <div className="flex w-full sm:w-fit self-center gap-1 p-1 bg-black/40 rounded-xl border border-white/5 shrink-0 justify-between sm:justify-start overflow-x-auto scrollbar-hide">
+                                    <div className="flex w-full sm:w-fit self-center gap-1 p-1 bg-black/40 rounded-xl border border-white/5 shrink-0 justify-between sm:justify-start overflow-x-auto scrollbar-hide">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTiktokSearchType("sound");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "sound");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`hidden text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                        tiktokSearchType === "sound"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <span className="text-[7px] sm:text-[8px] bg-emerald-500/20 border border-emerald-500/35 text-emerald-400 px-1 py-0.2 rounded font-black">TK</span>
+                      <span className="hidden sm:inline">Sound</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTiktokSearchType("video");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "video");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`hidden text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                        tiktokSearchType === "video"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <span className="text-[7px] sm:text-[8px] bg-purple-500/20 border border-purple-500/35 text-purple-400 px-1 py-0.2 rounded font-black">TK</span>
+                      <span className="hidden sm:inline">Video</span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -6046,6 +6092,7 @@ export default function App() {
                                 title: song.title,
                                 originalUrl: song.url,
                                 audioUrl: streamUrl,
+                                videoUrl: streamUrl,
                                 cover: song.cover,
                                 author: song.author,
                                 duration: song.duration,
