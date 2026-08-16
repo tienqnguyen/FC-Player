@@ -106,6 +106,27 @@ const FallbackImage = ({ src, alt, className, title }: any) => {
   return <img src={src} alt={alt} className={className} referrerPolicy="no-referrer" onError={() => setError(true)} title={title} />;
 };
 
+const CreatorAvatar = ({ alb }: { alb: any }) => {
+  const [error, setError] = useState(false);
+  const gradient = getFallbackGradient(alb.username);
+
+  if (alb.avatar && !error) {
+    return (
+      <img
+        src={alb.avatar}
+        alt={alb.displayName}
+        className="absolute inset-0 w-full h-full object-cover transition-all duration-500 group-hover:scale-110"
+        onError={() => setError(true)}
+      />
+    );
+  }
+  return (
+    <div className={`absolute inset-0 w-full h-full bg-gradient-to-br ${gradient} flex items-center justify-center transition-all duration-500 group-hover:scale-110`}>
+      <span className="text-2xl font-black text-white/40 drop-shadow-md">{alb.avatarSub}</span>
+    </div>
+  );
+};
+
 const Visualizer = ({
   analyser,
   isPlaying,
@@ -2422,6 +2443,7 @@ export default function App() {
   const [tiktokUrl, setTiktokUrl] = useState("");
   const [isFetchingTiktok, setIsFetchingTiktok] = useState(false);
   const [tiktokError, setTiktokError] = useState("");
+  const [consecutiveFailures, setConsecutiveFailures] = useState(0);
 
   const [recentSongs, setRecentSongs] = useState<any[]>(() => {
     try {
@@ -2971,7 +2993,8 @@ export default function App() {
 
   const activePreloadUrlRef = useRef<string | null>(null);
 
-  const playRecentSong = async (song: any) => {
+  const playRecentSong = async (song: any, isAutoPlay = false) => {
+    if (!isAutoPlay) setConsecutiveFailures(0);
     // Determine target URL
     let playUrl = song.audioUrl;
     
@@ -4582,11 +4605,11 @@ export default function App() {
     touchStartRef.current = null;
   };
 
-  const handleNextSong = () => {
+  const handleNextSong = (isAutoPlay = false) => {
     if (!currentSong || recentSongs.length <= 1) return;
     const currentIndex = recentSongs.findIndex(s => s.id === currentSong.id);
     const nextIndex = (currentIndex + 1) % recentSongs.length;
-    playRecentSong(recentSongs[nextIndex]);
+    playRecentSong(recentSongs[nextIndex], isAutoPlay);
   };
 
   const handlePrevSong = () => {
@@ -5680,13 +5703,7 @@ export default function App() {
                       className="group flex flex-col gap-1.5 p-1.5 sm:p-2 rounded-[12px] sm:rounded-[14px] cursor-pointer border border-white/5 bg-white/[0.02] hover:bg-white/[0.06] hover:border-white/20 transition-all duration-300"
                     >
                       <div className="relative w-full aspect-square rounded-[8px] sm:rounded-xl overflow-hidden shrink-0 shadow-md">
-                         {alb.avatar ? (
-                           <img src={alb.avatar} alt={alb.displayName} className="absolute inset-0 w-full h-full object-cover transition-all duration-500 group-hover:scale-110" />
-                         ) : (
-                           <div className="absolute inset-0 w-full h-full bg-gradient-to-br from-white/10 to-transparent flex items-center justify-center transition-all duration-500 group-hover:scale-110">
-                              <span className="text-2xl font-black text-white/20">{alb.avatarSub}</span>
-                           </div>
-                         )}
+                         <CreatorAvatar alb={alb} />
                          <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-all" />
                          <div className="absolute bottom-1.5 right-1.5 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-400/90 text-black flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 shadow-lg">
                            <Play className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-current ml-0.5" />
@@ -7055,7 +7072,7 @@ onClearStems={() => {
           autoPlay
           playsInline
           muted={!!(showVideoIframe && currentSong && getYouTubeEmbedUrl(currentSong.originalUrl))}
-          onPlay={() => setIsPlaying(true)}
+          onPlay={() => { setIsPlaying(true); setConsecutiveFailures(0); }}
           onPause={() => setIsPlaying(false)}
           onError={(e) => {
             const err = (e.target as HTMLAudioElement).error;
@@ -7065,15 +7082,29 @@ onClearStems={() => {
               if (err.code === 1 || !audioUrl) {
                 return;
               }
-              setTiktokError(`Failed to play audio source. The track might be age-restricted, unavailable, or unsupported.`);
-              setIsPlaying(false);
-              setDuration(0);
-              setAudioUrl("");
-              // Optional: remove bad track from list
-              if (currentSong) {
-                setRecentSongs(prev => prev.filter(s => s.id !== currentSong.id));
-                setTimeout(() => handleNextSong(), 500);
-              }
+              
+              setConsecutiveFailures(prev => {
+                const newFails = prev + 1;
+                if (newFails >= 3) {
+                  setTiktokError(`Playback failed ${newFails} times in a row. Auto-play stopped to prevent looping errors.`);
+                  setIsPlaying(false);
+                  setDuration(0);
+                  setAudioUrl("");
+                  return newFails;
+                }
+                
+                setTiktokError(`Failed to play audio source. Skipping...`);
+                setIsPlaying(false);
+                setDuration(0);
+                setAudioUrl("");
+                
+                if (currentSong) {
+                  setRecentSongs(curr => curr.filter(s => s.id !== currentSong.id));
+                  setTimeout(() => handleNextSong(true), 500);
+                }
+                
+                return newFails;
+              });
             }
           }}
           onTimeUpdate={handleTimeUpdate}
@@ -7083,7 +7114,7 @@ onClearStems={() => {
               audioRef.current.currentTime = 0;
               audioRef.current.play().then(() => setIsPlaying(true)).catch(console.warn);
             } else if (repeatMode === "all" && currentSong && recentSongs.length > 1) {
-              handleNextSong();
+              handleNextSong(true);
             } else if (repeatMode === "off") {
               setIsPlaying(false);
             }
