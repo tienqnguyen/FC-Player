@@ -31,6 +31,12 @@ import {
   setCachedData,
   invalidateCache,
 } from "./server/cacheHelper";
+import {
+  formatLyric,
+  improveLyric,
+  addChordsLyric,
+} from "./server/lyricProcessor";
+import { GoogleGenAI } from "@google/genai";
 
 async function resolveFacebookRedirect(url: string): Promise<string> {
   const isFb = url.includes("facebook.com") || url.includes("fb.watch");
@@ -111,12 +117,6 @@ async function getDirectMediaUrl(url: string): Promise<string> {
   return inFlightPromise;
 }
 
-import {
-  formatLyric,
-  improveLyric,
-  addChordsLyric,
-} from "./server/lyricProcessor";
-
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -129,21 +129,29 @@ async function startServer() {
     express.static(path.join(process.cwd(), "stems_cache")),
   );
 
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: Date.now() });
+  });
+
   // API to stream audio of YouTube, Facebook, SoundCloud, etc.
   app.get("/api/stream", async (req, res) => {
     try {
-      let url = req.query.url as string;
-      if (!url) {
-        res.status(400).json({ error: "Invalid stream URL" });
+      let url = (req.query.url as string) || "";
+      const queryParam = (req.query.query as string) || "";
+
+      if (!url && !queryParam) {
+        res.status(400).json({ error: "Invalid stream URL or query" });
         return;
       }
-      url = await resolveFacebookRedirect(url);
+      if (url) {
+        url = await resolveFacebookRedirect(url);
+      }
 
       // Skip direct fetch for TikTok pages as they return HTML or block fetch
-      const isTikTokPage = url.includes("tiktok.com") && !url.includes("tiktokcdn");
+      const isTikTokPage = url && url.includes("tiktok.com") && !url.includes("tiktokcdn");
       
       let streamServed = false;
-      if (!isTikTokPage) {
+      if (url && !isTikTokPage) {
         try {
           const directUrl = await getDirectMediaUrl(url);
           console.log(
@@ -183,19 +191,18 @@ async function startServer() {
             streamServed = true;
           }
         } catch (err) {
-          console.warn(
-            "[Stream Proxy] direct url failed, falling back to yt-dlp",
-          );
+          console.log("[Stream Proxy] Using yt-dlp extraction strategy.");
         }
       }
 
       if (!streamServed) {
+        const streamTarget = url || `ytsearch1:${queryParam}`;
         const ytDlpArgs = [
           "-f",
           "ba/bestaudio/b/best",
           "-o",
           "-",
-          url,
+          streamTarget,
         ];
         const subprocess = spawn(
           (youtubedl as any).constants.YOUTUBE_DL_PATH,
@@ -1335,19 +1342,74 @@ async function startServer() {
     }
   });
 
-  // 2. TikTok Search (via Tikwm API with yt-dlp fallback)
+  // 2. TikTok Search (Real TikTok Creator & Viral Indexer)
   app.get("/api/tiktok/search", async (req, res) => {
     try {
-      const keywords = req.query.q as string;
+      const keywords = ((req.query.q as string) || "").trim();
       const clientCursor = (req.query.cursor as string) || "0";
-      const clientCount = (req.query.count as string) || "30";
+      const clientCount = (req.query.count as string) || "20";
       const searchType = (req.query.type as string) || "video";
 
       if (!keywords) {
         return res.status(400).json({ error: "Search query is required" });
       }
 
-      // Strategy 1: Tikwm
+      const cacheKey = `search_${searchType}_${keywords.toLowerCase()}_${clientCursor}`;
+      const cached = await getCachedData<any>("tiktok_search", cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+
+      // Strategy 1: Direct Creator / User lookup if query starts with @ or is a handle / TikTok URL
+      const cleanUser = keywords
+        .replace(/^@/, "")
+        .replace(/^https?:\/\/(?:www\.)?tiktok\.com\/@/i, "")
+        .split(/[/?#]/)[0]
+        .trim();
+
+      if (keywords.startsWith("@") || keywords.includes("tiktok.com/@")) {
+        try {
+          const profileUrl = `https://www.tiktok.com/@${cleanUser}`;
+          console.log(`[TikTok Search] Direct profile query: ${profileUrl}`);
+          const ytdlOptions: any = {
+            dumpSingleJson: true,
+            flatPlaylist: true,
+            playlistEnd: parseInt(clientCount) || 20,
+            noWarnings: true,
+          };
+          const info = (await youtubedl(profileUrl, ytdlOptions)) as any;
+          if (info && info.entries && info.entries.length > 0) {
+            const videos = info.entries.map((entry: any) => {
+              const videoUrl = entry.url || `https://www.tiktok.com/@${cleanUser}/video/${entry.id}`;
+              const bestThumb = Array.isArray(entry.thumbnails) && entry.thumbnails.length > 0
+                ? entry.thumbnails[entry.thumbnails.length - 1]?.url || entry.thumbnails[0]?.url
+                : `https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300`;
+              return {
+                id: entry.id,
+                video_id: entry.id,
+                title: entry.title || `${cleanUser} TikTok Video`,
+                desc: entry.description || entry.title || `#${cleanUser}`,
+                url: videoUrl,
+                audioUrl: `/api/stream?url=${encodeURIComponent(videoUrl)}`,
+                author: {
+                  nickname: entry.uploader || cleanUser,
+                  unique_id: `@${cleanUser}`,
+                },
+                duration: entry.duration || 30,
+                cover: bestThumb,
+                source: "tiktok",
+              };
+            });
+            const responseData = { videos, cursor: "0", hasMore: false };
+            await setCachedData("tiktok_search", cacheKey, responseData);
+            return res.json(responseData);
+          }
+        } catch (e: any) {
+          console.log(`[TikTok Search] Profile query skipped: ${e.message}`);
+        }
+      }
+
+      // Strategy 2: TikWM API attempt
       try {
         const params = new URLSearchParams({
           keywords,
@@ -1358,71 +1420,90 @@ async function startServer() {
 
         const response = await fetch("https://www.tikwm.com/api/feed/search", {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": "okhttp/4.9.2",
+          },
           body: params.toString(),
         });
 
         const text = await response.text();
-        let data;
-        try {
-          data = JSON.parse(text);
-        } catch (err) {
-          throw new Error("Tikwm blocked by Cloudflare");
-        }
-
+        const data = JSON.parse(text);
         if (data.code === 0 && data.data?.videos?.length > 0) {
-          return res.json({
-            videos: data.data.videos,
+          const videos = data.data.videos.map((v: any) => ({
+            id: v.video_id || v.id,
+            video_id: v.video_id || v.id,
+            title: v.title || (v.music_info && v.music_info.title) || "TikTok Audio",
+            desc: v.title || v.desc,
+            url: v.play || `https://www.tiktok.com/@${v.author?.unique_id || 'user'}/video/${v.video_id || v.id}`,
+            audioUrl: v.music || (v.music_info && v.music_info.play) || `/api/stream?url=${encodeURIComponent(`https://www.tiktok.com/@${v.author?.unique_id || 'user'}/video/${v.video_id || v.id}`)}`,
+            author: {
+              nickname: v.author?.nickname || v.author?.unique_id || "TikTok Creator",
+              unique_id: `@${v.author?.unique_id || 'creator'}`,
+              avatar: v.author?.avatar,
+            },
+            duration: v.duration || 30,
+            cover: v.cover || v.origin_cover || (v.music_info && v.music_info.cover),
+            source: "tiktok",
+          }));
+          const responseData = {
+            videos,
             cursor: (data.data.cursor || "").toString(),
             hasMore: !!data.data.hasMore,
-          });
+          };
+          await setCachedData("tiktok_search", cacheKey, responseData);
+          return res.json(responseData);
         }
-        // If data.code !== 0, throw to fallback
-        throw new Error("Tikwm returned no results or failed");
-      } catch (tikwmError: any) {
-        console.warn("[TikTok Search] Tikwm failed, falling back to yt-dlp:", tikwmError.message);
-        
-        // Strategy 2: yt-dlp youtube search fallback (since TikTok search natively isn't supported via yt-dlp)
-        const count = parseInt(clientCount) || 15;
-        const query = `ytsearch${count}:${keywords} ${searchType === "sound" ? "tiktok sound" : "tiktok"}`;
-        
-        const ytdlOptions: any = {
+      } catch (tikwmErr) {
+        // TikWM unvailable or blocked
+      }
+
+
+            // Strategy 3: Direct yt-dlp on mapped TikTok user URL (since yt-dlp does not support search)
+      try {
+        const cleanKeyword = keywords.replace(/[^a-zA-Z0-9_]/g, "");
+        const searchUrl = `https://www.tiktok.com/@${cleanKeyword || "tiktok"}`;
+        console.log(`[TikTok Search] Direct search query via yt-dlp: ${searchUrl}`);
+        const ytdlOptions = {
           dumpSingleJson: true,
           flatPlaylist: true,
+          playlistEnd: parseInt(clientCount) || 20,
           noWarnings: true,
         };
-
-        if (await hasYoutubeCookies()) {
-          ytdlOptions.cookies = getCookiesFilePath();
-        }
-
-        const info = await youtubedl(query, ytdlOptions) as any;
+        const info = await youtubedl(searchUrl, ytdlOptions);
         if (info && info.entries && info.entries.length > 0) {
-          const videos = info.entries.map((v: any) => ({
-            id: v.id,
-            video_id: v.id,
-            title: v.title,
-            desc: v.title,
-            url: v.url || `https://www.youtube.com/watch?v=${v.id}`,
-            author: {
-              nickname: v.uploader || "YouTube Creator"
-            },
-            duration: v.duration,
-            cover: v.thumbnails?.[0]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`
-          }));
-          
-          return res.json({
-            videos,
-            cursor: "0",
-            hasMore: false
+          const videos = info.entries.map((entry, idx) => {
+            const videoUrl = entry.url || `https://www.tiktok.com/@${entry.uploader || "user"}/video/${entry.id}`;
+            const bestThumb = Array.isArray(entry.thumbnails) && entry.thumbnails.length > 0
+              ? entry.thumbnails[entry.thumbnails.length - 1]?.url || entry.thumbnails[0]?.url
+              : `https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300`;
+            return {
+              id: entry.id || `tt_${idx}`,
+              video_id: entry.id || `tt_${idx}`,
+              title: entry.title || `${keywords} TikTok Search`,
+              desc: entry.description || entry.title || `#${keywords}`,
+              url: videoUrl,
+              audioUrl: `/api/stream?url=${encodeURIComponent(videoUrl)}`,
+              author: {
+                nickname: entry.uploader || "Creator",
+                unique_id: `@${entry.uploader || "creator"}`,
+              },
+              duration: entry.duration || 30,
+              cover: bestThumb,
+              source: "tiktok",
+            };
           });
+          const responseData = { videos, cursor: "0", hasMore: false };
+          await setCachedData("tiktok_search", cacheKey, responseData);
+          return res.json(responseData);
         }
-        
-        return res.json({ videos: [], cursor: "0", hasMore: false });
+      } catch (searchErr: any) {
+        console.warn(`[TikTok Search] yt-dlp query failed for mapped user url`);
       }
+
+      return res.json({ videos: [], cursor: "0", hasMore: false });
     } catch (error: any) {
-      console.error("[Search Error]", error.message);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message || "Failed to search TikTok" });
     }
   });
 
@@ -2074,7 +2155,7 @@ async function startServer() {
       } else {
         res.end();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("[Drive API Stream Error]", error);
       res.status(500).json({ error: error.message || "Failed to stream Drive file" });
     }
@@ -2100,4 +2181,6 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error("Fatal error starting server:", err);
+});

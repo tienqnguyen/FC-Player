@@ -1,15 +1,7 @@
 const fs = require('fs');
-let content = fs.readFileSync('src/App.tsx', 'utf-8');
+let content = fs.readFileSync('src/App.tsx', 'utf8');
 
-// We need to re-add the missing parts for the "search" tab.
-content = content.replace(
-  /Search\s*\{\s*playlistTab === "search" && \(\s*\)\s*\}\s*<\/button>\s*<button\s*<button/g,
-  \`Search
-                {playlistTab === "search" && (
-                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-amber-400 rounded-full" />
-                )}
-              </button>
-              <button\`
-);
+content = content.replace(/className={\`hidden text-\\[8px\\] sm:text-\\[9px\\] font-black tracking-wider uppercase px-1\\.5 py-1\\.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap \\$/g, 'className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap $');
 
 fs.writeFileSync('src/App.tsx', content);
+console.log("Patched tabs visibility");

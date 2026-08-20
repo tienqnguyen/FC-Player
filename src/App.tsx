@@ -3027,52 +3027,26 @@ export default function App() {
     if (!playUrl) return;
 
     shouldAutoPlayRef.current = true;
-    
-    // If we're already playing something smoothly, let's preload in background!
-    if (isPlaying && audioUrl && audioRef.current && !audioRef.current.paused) {
-         setIsAIAnalyzing(true);
-         activePreloadUrlRef.current = playUrl;
+    setIsAIAnalyzing(false);
+    setCurrentSong(song);
+    setFileName(song.title || "TikTok Audio");
+    setTiktokUrl(song.originalUrl || "");
+    resumeContext();
 
-         const preloader = new window.Audio();
-         preloader.src = playUrl;
-         preloader.preload = "auto";
-         
-         const handleReady = () => {
-             if (activePreloadUrlRef.current !== playUrl) return;
-             
-             setCurrentSong(song);
-             setAudioUrl(playUrl);
-             setFileName(song.title || "TikTok Audio");
-             setTiktokUrl(song.originalUrl || "");
-             resumeContext();
-             setIsAIAnalyzing(false);
-             preloader.removeEventListener("canplay", handleReady);
-         };
-
-         const handleError = () => {
-             if (activePreloadUrlRef.current !== playUrl) return;
-             
-             // Fallback: immediately switch
-             setCurrentSong(song);
-             setAudioUrl(playUrl);
-             setFileName(song.title || "TikTok Audio");
-             setTiktokUrl(song.originalUrl || "");
-             resumeContext();
-             setIsAIAnalyzing(false);
-         };
-
-         preloader.addEventListener("canplay", handleReady);
-         preloader.addEventListener("error", handleError);
-         
-         // Trigger browser network fetch if possible locally
-         preloader.load();
+    if (audioRef.current && audioUrl === playUrl) {
+      // If same audioUrl, directly reset and start playback
+      try {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().then(() => {
+          setIsPlaying(true);
+        }).catch((e) => {
+          console.warn("Autoplay was blocked:", e);
+        });
+      } catch (e) {
+        console.warn("Error playing audio directly:", e);
+      }
     } else {
-        // Fallback: immediately switch
-        setCurrentSong(song);
-        setAudioUrl(playUrl);
-        setFileName(song.title || "TikTok Audio");
-        setTiktokUrl(song.originalUrl || "");
-        resumeContext();
+      setAudioUrl(playUrl);
     }
   };
 
@@ -3574,6 +3548,74 @@ export default function App() {
       }
     }
 
+    // Handle TikTok Search URLs natively (similar to fetch user song)
+    const searchMatch = urlToUse.match(/tiktok\.com\/search.*[?&]q=([^&]+)/);
+    if (searchMatch) {
+      try {
+        const searchQuery = decodeURIComponent(searchMatch[1]);
+        const isSound = urlToUse.includes("/search/sound") || urlToUse.includes("/search/audio");
+        const typeParam = isSound ? "sound" : "video";
+        
+        const response = await fetch(`/api/tiktok/search?type=${typeParam}&q=${encodeURIComponent(searchQuery)}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+           setTiktokError(data.error || "Search request failed");
+           setIsFetchingTiktok(false);
+           return;
+        }
+
+        const videos = data.videos || [];
+        if (videos.length === 0) {
+          setTiktokError("No results found for this search query.");
+          setIsFetchingTiktok(false);
+          return;
+        }
+
+        const newSongs = videos.map((v: any, index: number) => {
+          const rawStreamUrl = v.audioUrl || v.music || (v.music_info && v.music_info.play) || v.play;
+          let streamUrl = rawStreamUrl;
+          if (rawStreamUrl) {
+            if (rawStreamUrl.startsWith("/")) {
+              streamUrl = rawStreamUrl;
+            } else if (rawStreamUrl.includes("tiktok.com/") && rawStreamUrl.includes("/video/")) {
+              streamUrl = `/api/stream?url=${encodeURIComponent(rawStreamUrl)}`;
+            } else if (rawStreamUrl.startsWith("http")) {
+              streamUrl = `/api/proxy-stream?url=${encodeURIComponent(rawStreamUrl)}`;
+            }
+          }
+          
+          const songId = v.id || v.video_id || v.url || `search-result-${index}`;
+          const oembedUrl = v.url || `https://www.tiktok.com/@share/video/${v.video_id || v.id}`;
+          
+          return {
+            id: songId,
+            title: v.title || v.desc || "TikTok Audio",
+            originalUrl: oembedUrl,
+            audioUrl: streamUrl || oembedUrl,
+            videoUrl: v.play || (v.video_info && v.video_info.play) || null,
+            cover: v.cover || v.origin_cover || (v.music_info && v.music_info.cover) || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
+            author: v.author?.nickname || v.author?.unique_id || (typeof v.author === "string" ? v.author : "TikTok Creator"),
+            timestamp: Date.now()
+          };
+        });
+
+        setRecentSongs((prev) => {
+           const existingIds = new Set(prev.map(s => s.id));
+           const toAdd = newSongs.filter((s: any) => !existingIds.has(s.id));
+           return [...toAdd, ...prev].slice(0, 50);
+        });
+        
+        setTiktokError("");
+        setTiktokUrl("");
+      } catch (err) {
+        setTiktokError("Failed to fetch search results from URL.");
+      } finally {
+        setIsFetchingTiktok(false);
+      }
+      return;
+    }
+
     if (isUserLink) {
       try {
         const response = await fetch(`/api/tiktok/user?unique_id=${encodeURIComponent(username)}`);
@@ -3631,55 +3673,41 @@ export default function App() {
     }
 
     try {
-      let oembedData: any = {};
-      try {
-        const oembedRes = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent("https://www.tiktok.com/oembed?url=" + urlToUse)}`);
-        oembedData = await oembedRes.json();
-      } catch (e) {
-        // ignore oembed error
-      }
-
-      const response = await fetch("https://www.tikwm.com/api/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded"
-        },
-        body: "url=" + encodeURIComponent(urlToUse) + "&hd=1"
-      });
+      const metadataRes = await fetch(`/api/metadata?url=${encodeURIComponent(urlToUse)}`);
       let data;
       try {
-        data = await response.json();
+        data = await metadataRes.json();
       } catch {
-        throw new Error("Could not parse provider response. The API might be experiencing rate limits or blocking queries.");
+        throw new Error("Server returned an invalid HTML or timeout response instead of JSON. The link might be restricted.");
       }
-      if (data && data.data && (data.data.music || data.data.play)) {
-        const urlToFetch = data.data.music || data.data.play;
-        const proxiedAudioUrl = urlToFetch && urlToFetch.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(urlToFetch)}` : urlToFetch;
-        const songTitle = oembedData.title || data.data.title || "TikTok Audio";
-        
-        const newSong = {
-          id: data.data.id || Date.now().toString(),
-          title: songTitle,
-          originalUrl: urlToUse,
-          audioUrl: proxiedAudioUrl,
-          videoUrl: data.data.play || null,
-          cover: oembedData.thumbnail_url || data.data.cover || data.data.origin_cover,
-          author: oembedData.author_name || data.data.author?.nickname,
-          timestamp: Date.now()
-        };
+      
+      if (!metadataRes.ok) {
+        throw new Error(data?.error || "Failed to extract track metadata. Link might be restricted or private.");
+      }
+      
+      shouldAutoPlayRef.current = true;
+      const streamUrl = `/api/stream?url=${encodeURIComponent(urlToUse)}`;
+      
+      const newSong = {
+        id: "tiktok_" + Date.now().toString(),
+        title: data.title || "TikTok Audio",
+        originalUrl: urlToUse,
+        audioUrl: streamUrl,
+        videoUrl: streamUrl,
+        cover: data.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
+        author: data.author || "TikTok Creator",
+        timestamp: Date.now()
+      };
 
-        setRecentSongs((prev) => {
-          const filtered = prev.filter((s) => s.originalUrl !== urlToUse && s.id !== newSong.id);
-          return [newSong, ...filtered].slice(0, 50); // increased limit
-        });
-        
-        playRecentSong(newSong);
-        setTiktokUrl(""); // clear input
-      } else {
-        setTiktokError(data?.msg || "Could not extract audio from this link. Make sure it's public.");
-      }
+      setRecentSongs((prev) => {
+        const filtered = prev.filter((s) => s.originalUrl !== urlToUse && s.id !== newSong.id);
+        return [newSong, ...filtered].slice(0, 50);
+      });
+      
+      playRecentSong(newSong);
+      setTiktokUrl(""); // clear input
     } catch (err: any) {
-      setTiktokError("Network error. The API might be blocked by your browser extensions or adblocker.");
+      setTiktokError(err.message || "Network error. The API might be blocked by your browser extensions or adblocker.");
     } finally {
       setIsFetchingTiktok(false);
     }
@@ -4185,60 +4213,16 @@ export default function App() {
       return;
     }
 
-    let active = true;
-
-    const fetchAndDecodeMetadata = async () => {
-      try {
-        const response = await fetch(audioUrl);
-        if (!response.ok) {
-           throw new Error(`Failed to fetch audio: ${response.statusText}`);
-        }
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-           throw new Error("Received JSON error instead of audio stream. Upstream might be blocked.");
-        }
-        const arrayBuffer = await response.arrayBuffer();
-        
-        if (!active) return;
-
-        const CtxClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (!CtxClass) return;
-        
-        const tempCtx = new CtxClass();
-        const audioBuffer = await safeDecodeAudioData(tempCtx as any, arrayBuffer);
-        
-        if (!active) {
-          tempCtx.close();
-          return;
-        }
-
-        setDuration(audioBuffer.duration);
-        setSampleRate(audioBuffer.sampleRate);
-        tempCtx.close();
-      } catch (err) {
-        console.warn("Could not decode audio header metadata natively:", err);
-        if (audioRef.current && active) {
-          if (!isNaN(audioRef.current.duration) && audioRef.current.duration > 0) {
-            setDuration(audioRef.current.duration);
-          }
-          if (audioContextRef.current) {
-            setSampleRate(audioContextRef.current.sampleRate);
-          } else {
-            setSampleRate(44100);
-          }
-        }
-      }
-    };
-
-    fetchAndDecodeMetadata();
-
-    return () => {
-      active = false;
-    };
+    // Set sample rate from audio context if available
+    if (audioContextRef.current) {
+      setSampleRate(audioContextRef.current.sampleRate);
+    } else {
+      setSampleRate(44100);
+    }
   }, [audioUrl]);
 
   const formatDurationDisplay = (sec: number | null) => {
-    if (sec === null || isNaN(sec)) return "--:--";
+    if (sec === null || isNaN(sec) || !isFinite(sec)) return "--:--";
     if (sec === 0 && !audioUrl) return "ERROR";
     const minutes = Math.floor(sec / 60);
     const seconds = Math.floor(sec % 60);
@@ -6148,14 +6132,16 @@ export default function App() {
                                 handleTiktokFetch(fakeForm, oembedUrl);
                               }, 50);
                             } else {
-                              // TikTok type
+                              // TikTok type (TK Sound & TK Video)
                               const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
                               const rawStreamUrl = song.audioUrl || song.music || (song.music_info && song.music_info.play) || song.play;
-                              const streamUrl = rawStreamUrl && rawStreamUrl.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(rawStreamUrl)}` : rawStreamUrl;
+                              const streamUrl = rawStreamUrl && rawStreamUrl.startsWith("/")
+                                ? rawStreamUrl
+                                : (rawStreamUrl && rawStreamUrl.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(rawStreamUrl)}` : rawStreamUrl);
                               const songTitle = song.title || song.desc || "TikTok Audio";
                               const coverArt = song.cover || song.origin_cover || (song.music_info && song.music_info.cover);
-                              const creator = song.author?.nickname || song.author || "TikTok Creator";
-                              
+                              const creator = song.author?.nickname || song.author?.unique_id || (typeof song.author === "string" ? song.author : "TikTok Creator");
+
                               if (!streamUrl) {
                                 // Fallback fetching direct link!
                                 setTiktokUrl(oembedUrl);
@@ -6221,7 +6207,9 @@ export default function App() {
                               {song.title || song.desc}
                             </h4>
                             <p className="text-[10px] text-white/40 truncate mt-0.5">
-                              {tiktokSearchType === "tkaraoke" ? "TKaraoke" : (song.author?.nickname || song.author || "TikTok Creator")}
+                              {tiktokSearchType === "tkaraoke"
+                                ? "TKaraoke"
+                                : (song.author?.nickname || (song.author?.unique_id ? `${song.author.unique_id}` : (typeof song.author === "string" ? song.author : "TikTok Creator")))}
                             </p>
                           </div>
 
@@ -6234,7 +6222,9 @@ export default function App() {
                             ) : tiktokSearchType === "tkaraoke" ? (
                               <span className="text-[8px] font-black tracking-wider text-pink-400 bg-pink-400/10 border border-pink-400/20 px-1 py-0.5 rounded-md uppercase select-none">TK</span>
                             ) : (
-                              <span className="text-[8px] font-black tracking-wider text-white/45 bg-white/5 border border-white/10 px-1 py-0.5 rounded-md uppercase select-none">TT</span>
+                              <span className="text-[8px] font-black tracking-wider text-white bg-black/60 border border-[#fe2c55]/40 shadow-[0_0_8px_rgba(254,44,85,0.2)] px-1.5 py-0.5 rounded-md uppercase select-none flex items-center gap-0.5">
+                                <span className="text-[#00f2fe]">T</span><span className="text-[#fe2c55]">K</span>
+                              </span>
                             )}
 
                             {song.duration ? (
