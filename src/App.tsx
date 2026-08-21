@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { 
   Upload, Play, Pause, VolumeX, SlidersHorizontal, Power, Info, Speaker, Wand2, AudioWaveform, AudioLines, Waves, Maximize2, Minimize2, Zap, Mic2, Download, Sparkles, Film, MonitorPlay, Wind, Headset, Disc3, Radio, Coffee, Crosshair, Podcast, Guitar, Dumbbell, Clock, Cpu, Trash2, History, Music, ChevronDown, Home, Library, Search, Heart, SkipBack, SkipForward, MoreHorizontal, ListMusic, Shuffle, Repeat, Menu, User, Plus, RefreshCw, Check, Share2, Smartphone, Settings, Key, ShieldCheck, CheckCircle, ExternalLink, Lock, Eye, EyeOff, Clipboard, LayoutGrid, List, X, Volume2,
-  PictureInPicture, Lightbulb, Rocket
+  PictureInPicture, Globe, Lightbulb, Rocket
 , Loader2 } from "lucide-react";
 import { buildHDPipeline, exportOfflineHD } from "./audioPipeline";
 import StemStudio from "./components/StemStudio";
@@ -5692,6 +5692,23 @@ export default function App() {
                          <div className="absolute bottom-1.5 right-1.5 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-400/90 text-black flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 shadow-lg">
                            <Play className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-current ml-0.5" />
                          </div>
+                         
+                         <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-all duration-300 z-10">
+                           <button
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               handleToggleShareUsername(alb);
+                             }}
+                             className={`w-6 h-6 sm:w-7 sm:h-7 rounded-full flex items-center justify-center backdrop-blur-md border ${
+                               firebaseUsernames.some(u => u.username.toLowerCase() === alb.username.toLowerCase())
+                                 ? 'bg-emerald-500/80 border-emerald-400 text-white shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                                 : 'bg-black/40 border-white/20 text-white/70 hover:bg-black/60 hover:text-white'
+                             }`}
+                             title={firebaseUsernames.some(u => u.username.toLowerCase() === alb.username.toLowerCase()) ? "Unshare from Public" : "Share to Public"}
+                           >
+                             <Globe className="w-3.5 h-3.5" />
+                           </button>
+                         </div>
                       </div>
                       <div className="px-0.5 pb-0.5 sm:px-1 sm:pb-1">
                         <h4 className="text-[9px] sm:text-[10px] font-bold text-white/90 group-hover:text-amber-400 transition-colors line-clamp-1 leading-tight">
@@ -7076,10 +7093,9 @@ onClearStems={() => {
               setConsecutiveFailures(prev => {
                 const newFails = prev + 1;
                 if (newFails >= 3) {
-                  setTiktokError(`Playback failed ${newFails} times in a row. Auto-play stopped to prevent looping errors.`);
+                  setTiktokError(`Playback failed ${newFails} times in a row. Auto-play stopped. Please click again to continue.`);
                   setIsPlaying(false);
-                  setDuration(0);
-                  setAudioUrl("");
+                  // Do not clear the audioUrl here, just pause the auto-play loop
                   return newFails;
                 }
                 

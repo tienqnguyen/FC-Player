@@ -29,6 +29,8 @@ export async function getCachedData<T>(prefix: string, key: string): Promise<T |
       const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
       let ttl = THREE_DAYS_MS;
       if (prefix === "nct_albums") ttl = 7 * 24 * 60 * 60 * 1000;
+      if (prefix === "tiktok_user" || prefix === "tiktok_search") ttl = 1 * 60 * 60 * 1000; // 1 hour for TikTok
+      
       if (Date.now() - item.timestamp > ttl) {
         // Expired
         return null;
