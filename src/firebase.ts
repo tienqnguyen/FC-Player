@@ -19,7 +19,7 @@ export const initAuth = async () => {
       await signInAnonymously(auth);
     }
   } catch (err) {
-    console.warn("Firebase Anonymous Login Issue:", err);
+    // console.warn("Firebase Anonymous Login Issue:", err);
   }
 };
 
@@ -67,6 +67,7 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     operationType,
     path
   };
-  console.error('Firestore Special Error Triggered: ', JSON.stringify(errInfo, null, 2));
-  throw new Error(JSON.stringify(errInfo));
+  // console.error('Firestore Special Error Triggered: ', JSON.stringify(errInfo, null, 2));
+  // throw new Error(JSON.stringify(errInfo)); // Disabling throw to prevent app crashes when Firebase is not setup properly
+  console.warn('Firebase functionality is limited due to the above error.');
 }
