@@ -6806,11 +6806,11 @@ export default function App() {
               : "w-full mt-1 sm:mt-4 h-[50dvh] shrink-0 lg:col-span-2 lg:h-full lg:mt-0 lg:shrink"
           } bg-[#0A0B10]/40 backdrop-blur-[40px] rounded-none sm:rounded-[24px] border-y sm:border border-white/10 shadow-[inset_0_0_20px_rgba(255,255,255,0.02)] relative transition-all duration-500 animate-in slide-in-from-right-4 fade-in z-50 overflow-hidden`}>
             <StemStudio 
-               originalAudioUrl={stemSongInfo?.audioUrl || stemSongInfo?.url || currentSong?.audioUrl || currentSong?.url || audioUrl}
+               originalAudioUrl={((stemmixStatus !== "idle" || stemUrls) ? (stemSongInfo?.audioUrl || stemSongInfo?.url) : null) || currentSong?.audioUrl || currentSong?.url || audioUrl}
                stemUrls={stemUrls} 
-               songTitle={stemSongInfo?.title || currentSong?.title || "Untitled Track"}
-               coverUrl={stemSongInfo?.cover || currentSong?.cover}
-               originalDuration={stemSongInfo?.duration || duration || 0}
+               songTitle={((stemmixStatus !== "idle" || stemUrls) ? stemSongInfo?.title : null) || currentSong?.title || "Untitled Track"}
+               coverUrl={((stemmixStatus !== "idle" || stemUrls) ? stemSongInfo?.cover : null) || currentSong?.cover}
+               originalDuration={((stemmixStatus !== "idle" || stemUrls) ? stemSongInfo?.duration : null) || duration || 0}
                onClose={() => setShowStemmix(false)}
                isEmbedded={true}
                isCompactUI={isCompact}
@@ -6829,7 +6829,7 @@ onClearStems={() => {
                  setStemmixStatus("idle");
                }}
                newSongTitle={
-                 audioUrl && audioUrl !== stemSongInfo?.audioUrl && stemmixStatus !== "loading"
+                 audioUrl && (stemmixStatus !== "idle" || stemUrls) && audioUrl !== stemSongInfo?.audioUrl && stemmixStatus !== "loading"
                    ? currentSong?.title || "Untitled Track" 
                    : null
                }
