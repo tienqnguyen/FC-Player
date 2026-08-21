@@ -401,6 +401,22 @@ export default function StemStudio({
   const [lyricFormatted, setLyricFormatted] = useState<string>("");
   const [lyricStyle, setLyricStyle] = useState<string>("");
   const [isFormattingLyric, setIsFormattingLyric] = useState<boolean>(false);
+
+  const [isArrangingLyric, setIsArrangingLyric] = useState<boolean>(false);
+
+  const [arrangeSunoFormat, setArrangeSunoFormat] = useState<boolean>(true);
+  const [arrangeAddChords, setArrangeAddChords] = useState<boolean>(false);
+
+  const [arrangeCharLimit, setArrangeCharLimit] = useState<boolean>(true);
+  const [arrangeCustomPrompt, setArrangeCustomPrompt] = useState<string>("");
+
+
+  const [lyricArrangeInput, setLyricArrangeInput] = useState<string>("");
+  const [lyricArranged, setLyricArranged] = useState<string>("");
+  const [lyricArrangedStyle, setLyricArrangedStyle] = useState<string>("");
+  const [isArrangedStyleCopied, setIsArrangedStyleCopied] = useState<boolean>(false);
+  const [isArrangedCopied, setIsArrangedCopied] = useState<boolean>(false);
+
   const [isImprovingLyric, setIsImprovingLyric] = useState<boolean>(false);
   const [isAddingChords, setIsAddingChords] = useState<boolean>(false);
   const [improvePercentage, setImprovePercentage] = useState<number>(3);
@@ -457,7 +473,7 @@ export default function StemStudio({
   // Advanced Suno Bypass States
   const [bypassMethod, setBypassMethod] = useState<"hyphen" | "zerowidth" | "homoglyph" | "alternating" | "extreme" | "none">("none");
   const [hyphenStyle, setHyphenStyle] = useState<"consonant" | "auto">("consonant");
-  const [bypassIntensity, setBypassIntensity] = useState<"minimal" | "low" | "medium" | "high">("medium");
+  const [bypassIntensity, setBypassIntensity] = useState<"minimal" | "low" | "medium" | "high">("minimal");
   const [protectTags, setProtectTags] = useState<boolean>(true);
   const [preserveSensitive, setPreserveSensitive] = useState<boolean>(true);
   const [showSensitiveWords, setShowSensitiveWords] = useState<boolean>(false);
@@ -520,6 +536,48 @@ export default function StemStudio({
     } catch (err) {
       console.error("Failed to copy:", err);
     }
+  };
+
+  
+    const handleCopyArrangedStyle = async () => {
+    try {
+      await navigator.clipboard.writeText(lyricArrangedStyle);
+      setIsArrangedStyleCopied(true);
+      setTimeout(() => setIsArrangedStyleCopied(false), 2000);
+    } catch (err) {}
+  };
+
+  const handleCopyArranged = async () => {
+    try {
+      await navigator.clipboard.writeText(lyricArranged);
+      setIsArrangedCopied(true);
+      setTimeout(() => setIsArrangedCopied(false), 2000);
+    } catch (err) {}
+  };
+
+  const handleArrangeLyric = async () => {
+     const text = lyricArrangeInput || lyricRaw;
+     if (!text) return;
+     setIsArrangingLyric(true);
+     setLyricArranged("Đang tạo bản phối khí chuyên nghiệp... (Thường mất khoảng 15-30 giây)");
+     setLyricArrangedStyle("");
+     try {
+        const res = await fetch("/api/lyric/arrange", {
+           method: "POST",
+           headers: { "Content-Type": "application/json" },
+           body: JSON.stringify({ lyric: text, options: { sunoFormat: arrangeSunoFormat, addChords: arrangeAddChords, charLimit: arrangeCharLimit, customPrompt: arrangeCustomPrompt } })
+        });
+        const data = await res.json();
+        if (res.ok && data.lyric) {
+           setLyricArranged(data.lyric);
+           setLyricArrangedStyle(data.style || "");
+        } else if (data.error) {
+           setLyricArranged("Lỗi: " + data.error);
+        }
+     } catch (e: any) {
+        setLyricArranged("Lỗi kết nối khi phối khí.");
+     }
+     setIsArrangingLyric(false);
   };
 
   const handleFormatLyric = async () => {
@@ -2780,6 +2838,110 @@ export default function StemStudio({
     </>
   );
 
+  
+  const phoiKhiLyricUI = (
+    <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+        <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('arrange')}>
+            <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Music className="w-3 h-3 inline-block mr-1 -mt-0.5" /> PHỐI KHÍ LYRIC</h3>
+            <div className="flex items-center gap-2">
+                {expandedSections.arrange ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+            </div>
+        </div>
+        {expandedSections.arrange && (
+            <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-1">
+                   <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Lyrics, Genre, Mood...</label>
+                   <textarea 
+                      className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-white/90 text-[16px] sm:text-sm leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-400/50 min-h-[100px]"
+                      value={lyricArrangeInput}
+                      onChange={(e) => setLyricArrangeInput(e.target.value)}
+                      placeholder="Enter lyrics, genre, mood, tempo here... (If empty, it will use the Raw Lyrics from SUNO Lyric Tool above)"
+                   />
+                </div>
+                <div className="flex items-center gap-5 mt-1 mb-1">
+                   <label className="flex items-center gap-1.5 text-[10px] text-white/70 font-medium cursor-pointer hover:text-white transition-colors">
+                      <input 
+                         type="checkbox" 
+                         checked={arrangeSunoFormat} 
+                         onChange={e => setArrangeSunoFormat(e.target.checked)} 
+                         className="w-3 h-3 bg-black/50 border-white/20 rounded accent-purple-500 cursor-pointer" 
+                      />
+                      Suno Style Format (Thêm tag [INTRO], [piano] vào lời)
+                   </label>
+                   <label className="flex items-center gap-1.5 text-[10px] text-white/70 font-medium cursor-pointer hover:text-white transition-colors">
+                      <input 
+                         type="checkbox" 
+                         checked={arrangeAddChords} 
+                         onChange={e => setArrangeAddChords(e.target.checked)} 
+                         className="w-3 h-3 bg-black/50 border-white/20 rounded accent-purple-500 cursor-pointer" 
+                      />
+                      Add Chords (Thêm hợp âm [Am], [C])
+                   </label>
+
+                   <label className="flex items-center gap-1.5 text-[10px] text-white/70 font-medium cursor-pointer hover:text-white transition-colors">
+                      <input 
+                         type="checkbox" 
+                         checked={arrangeCharLimit} 
+                         onChange={e => setArrangeCharLimit(e.target.checked)} 
+                         className="w-3 h-3 bg-black/50 border-white/20 rounded accent-purple-500 cursor-pointer" 
+                      />
+                      Giới hạn dưới 5000 ký tự (Suno)
+                   </label>
+                </div>
+                <div className="flex flex-col gap-1">
+                   <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider">Custom Prompt (Optional)</label>
+                   <input 
+                      type="text"
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-white/90 text-sm focus:outline-none focus:border-amber-400/50"
+                      value={arrangeCustomPrompt}
+                      onChange={(e) => setArrangeCustomPrompt(e.target.value)}
+                      placeholder="VD: Phối khí theo thể loại POP ballad nhẹ nhàng kèm tý adlib..."
+                   />
+                </div>
+
+                <button
+                    onClick={handleArrangeLyric}
+                    disabled={(!lyricArrangeInput && !lyricRaw) || isArrangingLyric}
+                    className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[9px] sm:text-[10px] font-bold tracking-wider uppercase px-3 py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm w-full"
+                >
+                    {isArrangingLyric ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Music className="w-3.5 h-3.5" />}
+                    {isArrangingLyric ? "ĐANG PHỐI KHÍ..." : "TẠO BẢN PHỐI KHÍ CHUYÊN NGHIỆP"}
+                </button>
+                {lyricArrangedStyle && (
+                    <div className="flex flex-col gap-1 mt-2 animate-in fade-in slide-in-from-top-2">
+                        <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider flex justify-between items-end">
+                            Style Prompt (Cho ô Style of Music)
+                            <button className="bg-amber-500/20 text-amber-400 hover:bg-amber-500/40 border border-amber-500/30 px-2 py-1 rounded-lg transition-colors flex items-center gap-1.5" onClick={handleCopyArrangedStyle}>
+                            {isArrangedStyleCopied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy Style</>}
+                        </button>
+                        </label>
+                        <textarea 
+                            className="w-full bg-black/60 border border-amber-500/30 rounded-xl p-3 text-amber-400 font-mono text-[11px] sm:text-[12px] leading-relaxed custom-scrollbar focus:outline-none focus:border-amber-500/70 min-h-[80px]"
+                            value={lyricArrangedStyle}
+                            readOnly
+                        />
+                    </div>
+                )}
+                {lyricArranged && (
+                    <div className="flex flex-col gap-1 mt-2 animate-in fade-in slide-in-from-top-2">
+                        <label className="text-[10px] text-white/50 font-bold uppercase tracking-wider flex justify-between items-end">
+                            Kết quả phối khí (Cho ô Lyrics)
+                            {!isArrangingLyric && <button className="bg-purple-500/20 text-purple-400 hover:bg-purple-500/40 border border-purple-500/30 px-2 py-1 rounded-lg transition-colors flex items-center gap-1.5" onClick={handleCopyArranged}>
+                            {isArrangedCopied ? <><Check className="w-3 h-3" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy Lyrics</>}
+                        </button>}
+                        </label>
+                        <textarea 
+                            className="w-full bg-black/60 border border-purple-500/30 rounded-xl p-3 text-emerald-400 font-mono text-[11px] sm:text-[12px] leading-relaxed custom-scrollbar focus:outline-none focus:border-purple-500/70 min-h-[300px]"
+                            value={lyricArranged}
+                            readOnly
+                        />
+                    </div>
+                )}
+            </div>
+        )}
+    </div>
+  );
+
   const sunoLyricUI = (
     <>
       {/* LYRIC TOOL UI */}
@@ -4126,6 +4288,7 @@ export default function StemStudio({
                            <div className="w-full text-left">
 
                                  {sunoLyricUI}
+                                 {phoiKhiLyricUI}
                            </div>
                         </div>
                       )}
@@ -4664,6 +4827,7 @@ export default function StemStudio({
              )}
 
                                       {sunoLyricUI}
+                                 {phoiKhiLyricUI}
           
 
           {subtitlesUI}

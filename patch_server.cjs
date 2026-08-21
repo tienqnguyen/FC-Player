@@ -1,7 +1,27 @@
 const fs = require('fs');
-let content = fs.readFileSync('server.ts', 'utf8');
+let code = fs.readFileSync('server.ts', 'utf8');
 
-content = content.replace(/ba\[ext=m4a\]\/b\[ext=mp4\]\/ba\/b\/best/g, "ba/bestaudio/b/best");
+if (code.includes('bypassLyric,')) {
+    code = code.replace('bypassLyric,', 'bypassLyric,\n  arrangeLyric,');
+}
 
-fs.writeFileSync('server.ts', content);
-console.log("Patched server.ts yt-dlp args");
+const endpoint = `
+  app.post("/api/lyric/arrange", express.json(), async (req, res) => {
+    try {
+      const { lyric } = req.body;
+      if (!lyric) {
+        return res.status(400).json({ error: "lyric is required" });
+      }
+      const result = await arrangeLyric(lyric);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Lyric Arrange Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+`;
+
+code = code.replace('app.post("/api/lyric/bypass"', endpoint + '\n  app.post("/api/lyric/bypass"');
+
+fs.writeFileSync('server.ts', code);
+console.log("Patched server.ts successfully");
