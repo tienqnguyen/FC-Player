@@ -35,6 +35,7 @@ import {
   formatLyric,
   improveLyric,
   addChordsLyric,
+  bypassLyric,
 } from "./server/lyricProcessor";
 import { GoogleGenAI } from "@google/genai";
 
@@ -2075,6 +2076,20 @@ async function startServer() {
       res.json(result);
     } catch (error: any) {
       console.error("[Lyric Chords Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/lyric/bypass", express.json(), async (req, res) => {
+    try {
+      const { lyric } = req.body;
+      if (!lyric) {
+        return res.status(400).json({ error: "lyric is required" });
+      }
+      const result = await bypassLyric(lyric);
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Lyric Bypass Error]", error);
       res.status(500).json({ error: error.message });
     }
   });

@@ -455,13 +455,16 @@ export default function StemStudio({
   const [newRuleReplace, setNewRuleReplace] = useState<string>("");
 
   // Advanced Suno Bypass States
-  const [bypassMethod, setBypassMethod] = useState<"hyphen" | "zerowidth" | "homoglyph" | "alternating" | "none">("none");
+  const [bypassMethod, setBypassMethod] = useState<"hyphen" | "zerowidth" | "homoglyph" | "alternating" | "extreme" | "none">("none");
   const [hyphenStyle, setHyphenStyle] = useState<"consonant" | "auto">("consonant");
-  const [bypassIntensity, setBypassIntensity] = useState<"low" | "medium" | "high">("medium");
+  const [bypassIntensity, setBypassIntensity] = useState<"minimal" | "low" | "medium" | "high">("medium");
   const [protectTags, setProtectTags] = useState<boolean>(true);
   const [preserveSensitive, setPreserveSensitive] = useState<boolean>(true);
   const [showSensitiveWords, setShowSensitiveWords] = useState<boolean>(false);
   const [sensitiveWords, setSensitiveWords] = useState<string[]>(["lên", "nên", "nói", "lòng", "nỗi", "lo", "nắng", "lạnh", "non", "nơi", "lại", "nào", "trời", "chờ", "trăng", "chân", "tròn", "chưa", "trước", "chỉ", "trách", "chạy", "sao", "xanh", "sương", "xa", "sông", "xuống", "sầu", "xưa", "sáng", "xin", "rừng", "dòng", "gió", "ra", "dù", "gần", "rơi", "đường", "duyên", "giấc", "về", "vẫn", "vào", "với", "vui", "vàng", "mắt", "mắc", "biết", "tiếc", "yêu", "thương", "anh", "em", "đâu", "đây"]);
+
+    const [isAIBypassing, setIsAIBypassing] = useState<boolean>(false);
+  const [aiBypassStatus, setAiBypassStatus] = useState<string>("");
 
 
   // Lyric Tool History & Editing States
@@ -715,11 +718,46 @@ export default function StemStudio({
   };
 
   
+  const handleAIBypass = async () => {
+    let textToProcess = lyricFormatted || lyricRaw;
+    if (!textToProcess) return;
+    
+    setIsAIBypassing(true);
+    setAiBypassStatus("Đang gọi AI Model...");
+    
+    try {
+        const res = await fetch("/api/lyric/bypass", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lyric: textToProcess })
+        });
+        const data = await res.json();
+        
+        if (res.ok && data.lyric) {
+            recordLyricState(data.lyric);
+            setAiBypassStatus("✅ AI Bypass thành công!");
+        } else if (data.error) {
+            setAiBypassStatus("❌ " + data.error);
+        } else {
+            setAiBypassStatus("❌ Lỗi không xác định từ AI.");
+        }
+    } catch (err) {
+        console.error("AI Bypass error", err);
+        setAiBypassStatus("❌ Lỗi kết nối AI.");
+    }
+    
+    setTimeout(() => {
+       setIsAIBypassing(false);
+       setAiBypassStatus("");
+    }, 3000);
+  };
+
   const handleApplyAdvancedBypass = () => {
     let textToProcess = lyricFormatted || lyricRaw;
     if (!textToProcess) return;
 
     let intensityProb = 0.65;
+    if (bypassIntensity === 'minimal') intensityProb = 0.15;
     if (bypassIntensity === 'low') intensityProb = 0.35;
     if (bypassIntensity === 'high') intensityProb = 0.95;
 
@@ -784,6 +822,26 @@ export default function StemStudio({
            if (homoglyphMap[char] && Math.random() < 0.5) {
               chars[i] = homoglyphMap[char][Math.floor(Math.random() * homoglyphMap[char].length)];
            }
+        }
+        return chars.join('');
+      }
+      
+      if (bypassMethod === 'extreme') {
+        const marks = ['\u034F', '\u200C', '\u200D', '\u2060', '\u200B'];
+        const chars = word.split('');
+        for (let i = 0; i < chars.length; i++) {
+           if (Math.random() < 0.7) {
+              const mark = marks[Math.floor(Math.random() * marks.length)];
+              chars[i] = chars[i] + mark;
+           }
+           if (homoglyphMap[chars[i]] && Math.random() < 0.3) {
+              chars[i] = homoglyphMap[chars[i]][Math.floor(Math.random() * homoglyphMap[chars[i]].length)];
+           }
+        }
+        // randomly inject a fake space or newline zero width equivalent
+        if (chars.length > 2 && Math.random() < 0.3) {
+           const mid = Math.floor(chars.length / 2);
+           chars.splice(mid, 0, '\u200B\u200B');
         }
         return chars.join('');
       }
@@ -2760,11 +2818,11 @@ export default function StemStudio({
                         placeholder="e.g. Acoustic Pop, fast tempo"
                      />
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                  <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
                      <button 
                         onClick={handleFormatLyric}
                         disabled={!lyricRaw || isFormattingLyric}
-                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
+                        className="bg-indigo-500 hover:bg-indigo-400 disabled:opacity-50 text-white text-[8.5px] sm:text-[9px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-lg transition-colors flex items-center gap-1 shrink-0"
                      >
                         {isFormattingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                         Format for SUNO
@@ -2773,7 +2831,7 @@ export default function StemStudio({
                         <button 
                            onClick={handleImproveLyric}
                            disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
+                           className="hover:bg-[#008f5a] disabled:opacity-50 text-white text-[8.5px] sm:text-[9px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-l-lg transition-colors flex items-center gap-1 border-r border-white/20"
                         >
                            {isImprovingLyric ? <Loader2 className="w-3 h-3 animate-spin" /> : <Edit2 className="w-3 h-3" />}
                            Improve
@@ -2782,7 +2840,7 @@ export default function StemStudio({
                            value={improvePercentage}
                            onChange={(e) => setImprovePercentage(Number(e.target.value))}
                            disabled={(!lyricRaw && !lyricFormatted) || isImprovingLyric}
-                           className="bg-transparent text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1.5 sm:px-2 sm:py-2 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
+                           className="bg-transparent text-white text-[8.5px] sm:text-[9px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-r-lg outline-none cursor-pointer hover:bg-[#008f5a] transition-colors appearance-none text-center"
                         >
                            <option value={1} className="bg-black">1%</option>
                            <option value={3} className="bg-black">3%</option>
@@ -2794,7 +2852,7 @@ export default function StemStudio({
                      <button 
                         onClick={handleAddChords}
                         disabled={(!lyricRaw && !lyricFormatted) || isAddingChords}
-                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 shrink-0"
+                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[8.5px] sm:text-[9px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-lg transition-colors flex items-center gap-1 shrink-0"
                      >
                         {isAddingChords ? <Loader2 className="w-3 h-3 animate-spin" /> : <Music className="w-3 h-3" />}
                         Add Chords
@@ -2826,7 +2884,7 @@ export default function StemStudio({
                      <button 
                         onClick={handleInsertRandomChars}
                         disabled={!lyricFormatted}
-                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[8.5px] sm:text-[10px] font-bold tracking-wider sm:tracking-widest uppercase px-2 py-1 sm:px-3 sm:py-2 rounded-lg transition-colors flex items-center gap-1 sm:ml-auto shrink-0"
+                        className="bg-amber-400 hover:bg-amber-300 disabled:opacity-50 text-black text-[8.5px] sm:text-[9px] font-bold tracking-wider sm:tracking-widest uppercase px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-lg transition-colors flex items-center gap-1 sm:ml-auto shrink-0"
                      >
                         <Wand2 className="w-3 h-3" />
                         Add Chars
@@ -2967,19 +3025,42 @@ export default function StemStudio({
                      
                      {/* Advanced Suno Bypass Generator */}
                      <div className="flex flex-col gap-3 pt-3 pb-2 border-t border-white/10 mt-2 bg-black/30 rounded-xl p-3 border border-white/5">
-                        <div className="flex items-center justify-between mb-2">
-                           <span className="text-[11px] sm:text-[12px] font-black tracking-wider text-white flex items-center gap-2">
-                              Phương pháp lách Suno AI tối ưu:
-                              <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full text-[8px] uppercase font-bold tracking-widest">Safe Mode active</span>
-                           </span>
-                           <button
-                              onClick={handleApplyAdvancedBypass}
-                              disabled={(!lyricRaw && !lyricFormatted) || bypassMethod === 'none'}
-                              className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-3 sm:px-4 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-indigo-400/30"
-                           >
-                              <Wand2 className="w-3.5 h-3.5" />
-                              Apply Bypass
-                           </button>
+                        <div className="flex flex-col gap-2 mb-3">
+                           <div className="flex items-center justify-between flex-wrap gap-2">
+                              <span className="text-[11px] sm:text-[12px] font-black tracking-wider text-white flex items-center gap-2">
+                                 Phương pháp lách Suno AI tối ưu:
+                                 <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full text-[8px] uppercase font-bold tracking-widest hidden sm:inline-block">Safe Mode</span>
+                              </span>
+                              
+                              <div className="flex items-center gap-2 ml-auto">
+                                 <button
+                                    onClick={handleAIBypass}
+                                    disabled={(!lyricRaw && !lyricFormatted) || isAIBypassing}
+                                    className="bg-amber-500/20 hover:bg-amber-500/40 text-amber-400 border border-amber-500/30 disabled:opacity-40 text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+                                    title="Dùng AI (OpenRouter) để tự động sửa lời lách filter"
+                                 >
+                                    {isAIBypassing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Brain className="w-3 h-3" />}
+                                    AI One-Click Bypass
+                                 </button>
+
+                                 <button
+                                    onClick={handleApplyAdvancedBypass}
+                                    disabled={(!lyricRaw && !lyricFormatted) || bypassMethod === 'none' || isAIBypassing}
+                                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-[9px] sm:text-[10px] font-black uppercase tracking-wider px-2 sm:px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-indigo-400/30"
+                                 >
+                                    <Wand2 className="w-3 h-3" />
+                                    Apply Logic Bypass
+                                 </button>
+                              </div>
+                           </div>
+                           
+                           
+                           {aiBypassStatus && (
+                               <div className="flex items-center gap-2 bg-black/40 border border-amber-500/20 p-2 rounded-lg">
+                                   <span className="text-[9px] text-amber-400 font-medium">{aiBypassStatus}</span>
+                               </div>
+                           )}
+
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3 mb-2">
                            {/* Button 1 */}
@@ -3014,6 +3095,14 @@ export default function StemStudio({
                               </div>
                               <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Đổi ngẫu nhiên kí tự Hoa/Thường xen kẽ. Suno vẫn phát âm chuẩn, cấu trúc chữ hơi khó nhìn nhưng lách tạm ổn.</span>
                            </button>
+                           {/* Button 5 - Pro / Extreme */}
+                           <button onClick={() => setBypassMethod("extreme")} className={`p-3 border rounded-xl flex flex-col items-start gap-1.5 transition-all text-left sm:col-span-2 ${bypassMethod === 'extreme' ? 'bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-black/60 border-red-500/20 text-white/70 hover:bg-red-500/10'}`}>
+                              <div className="flex items-center justify-between w-full">
+                                <span className="text-[11px] font-bold text-red-400">Chuyên nghiệp (Pro / Nhiễu loạn)</span>
+                                <span className="flex items-center text-[9px] text-red-400 font-bold bg-red-400/10 px-1.5 py-0.5 rounded">ULTIMATE MODE</span>
+                              </div>
+                              <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Sử dụng mã ASCII, Unicode ẩn, invisible separators, kết hợp tối đa để đánh lừa các filter mạnh nhất.</span>
+                           </button>
                         </div>
                         
                         {(bypassMethod === 'hyphen' || bypassMethod === 'zerowidth') && (
@@ -3047,10 +3136,11 @@ export default function StemStudio({
                         
                         <div className="flex flex-col gap-2 mb-2">
                            <span className="text-[11px] font-bold text-white">Mức độ lách (Tỉ lệ lấp đầy ký tự):</span>
-                           <div className="grid grid-cols-3 gap-2">
-                              <button onClick={() => setBypassIntensity('low')} className={`py-2 px-2 border rounded-lg text-[9px] font-bold transition-all ${bypassIntensity === 'low' ? 'bg-indigo-500/30 border-indigo-500 text-indigo-300' : 'bg-black/40 border-white/5 text-white/50 hover:bg-white/10'}`}>Ít (35%)</button>
-                              <button onClick={() => setBypassIntensity('medium')} className={`py-2 px-2 border rounded-lg text-[9px] font-bold transition-all ${bypassIntensity === 'medium' ? 'bg-indigo-500/30 border-indigo-500 text-indigo-300' : 'bg-black/40 border-white/5 text-white/50 hover:bg-white/10'}`}>Vừa (65%)</button>
-                              <button onClick={() => setBypassIntensity('high')} className={`py-2 px-2 border rounded-lg text-[9px] font-bold transition-all ${bypassIntensity === 'high' ? 'bg-indigo-500/30 border-indigo-500 text-indigo-300' : 'bg-black/40 border-white/5 text-white/50 hover:bg-white/10'}`}>Nhiều (95%)</button>
+                           <div className="grid grid-cols-4 gap-2">
+                              <button onClick={() => setBypassIntensity('minimal')} className={`py-2 px-1 sm:px-2 border rounded-lg text-[8px] sm:text-[9px] font-bold transition-all ${bypassIntensity === 'minimal' ? 'bg-indigo-500/30 border-indigo-500 text-indigo-300' : 'bg-black/40 border-white/5 text-white/50 hover:bg-white/10'}`}>Rất ít (15%)</button>
+                              <button onClick={() => setBypassIntensity('low')} className={`py-2 px-1 sm:px-2 border rounded-lg text-[8px] sm:text-[9px] font-bold transition-all ${bypassIntensity === 'low' ? 'bg-indigo-500/30 border-indigo-500 text-indigo-300' : 'bg-black/40 border-white/5 text-white/50 hover:bg-white/10'}`}>Ít (35%)</button>
+                              <button onClick={() => setBypassIntensity('medium')} className={`py-2 px-1 sm:px-2 border rounded-lg text-[8px] sm:text-[9px] font-bold transition-all ${bypassIntensity === 'medium' ? 'bg-indigo-500/30 border-indigo-500 text-indigo-300' : 'bg-black/40 border-white/5 text-white/50 hover:bg-white/10'}`}>Vừa (65%)</button>
+                              <button onClick={() => setBypassIntensity('high')} className={`py-2 px-1 sm:px-2 border rounded-lg text-[8px] sm:text-[9px] font-bold transition-all ${bypassIntensity === 'high' ? 'bg-indigo-500/30 border-indigo-500 text-indigo-300' : 'bg-black/40 border-white/5 text-white/50 hover:bg-white/10'}`}>Nhiều (95%)</button>
                            </div>
                         </div>
 
@@ -3765,7 +3855,7 @@ export default function StemStudio({
           {stemmixStatus !== "ready" ? (
              <div className={`flex-1 flex flex-col items-center justify-center p-2 sm:p-6 text-center animate-in fade-in duration-500 w-full ${downloadLink ? 'py-2 my-1' : 'my-auto'}`}>
                 {stemmixStatus === "idle" ? (
-                   <div className={`flex flex-col items-center justify-center px-4 text-center w-full max-w-3xl sm:max-w-4xl mx-auto ${downloadLink ? 'py-4' : 'py-8 sm:py-12'}`}>
+                   <div className={`flex flex-col items-center justify-center px-4 text-center w-full max-w-[95%] xl:max-w-[98%] mx-auto ${downloadLink ? 'py-4' : 'py-8 sm:py-12'}`}>
                       <div className="w-full bg-gradient-to-b from-neutral-900/90 via-black/80 to-black/95 border border-white/10 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl relative overflow-hidden flex flex-col items-center">
                          {/* Ambient Glow background */}
                          <div className="absolute -top-24 -left-24 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
@@ -3994,7 +4084,7 @@ export default function StemStudio({
                       )}
                        {/* PREVIEW & TRANSCRIPT SECTION */}
                       {originalAudioUrl && !isTrimmingBeforeExtract && (
-                        <div className="w-full max-w-4xl xl:max-w-5xl mt-6 sm:mt-12 flex flex-col gap-4 items-center bg-black/20 p-3 sm:p-5 rounded-[20px] sm:rounded-3xl border border-white/5 shadow-2xl">
+                        <div className="w-full max-w-[95%] xl:max-w-[98%] mt-6 sm:mt-12 flex flex-col gap-4 items-center bg-black/20 p-3 sm:p-5 rounded-[20px] sm:rounded-3xl border border-white/5 shadow-2xl mx-auto">
                            <h4 className="text-[10px] font-bold text-white/50 uppercase tracking-[0.2em] mb-2">Original Audio Preview & Tools</h4>
                            <div className="flex w-full items-center justify-between gap-4 flex-col sm:flex-row">
                               <audio 
