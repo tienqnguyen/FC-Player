@@ -471,7 +471,7 @@ export default function StemStudio({
   const [newRuleReplace, setNewRuleReplace] = useState<string>("");
 
   // Advanced Suno Bypass States
-  const [bypassMethod, setBypassMethod] = useState<"hyphen" | "zerowidth" | "homoglyph" | "alternating" | "extreme" | "none">("none");
+  const [bypassMethod, setBypassMethod] = useState<"hyphen" | "zerowidth" | "homoglyph" | "alternating" | "extreme" | "underscore" | "diacritics" | "none">("none");
   const [hyphenStyle, setHyphenStyle] = useState<"consonant" | "auto">("consonant");
   const [bypassIntensity, setBypassIntensity] = useState<"minimal" | "low" | "medium" | "high">("minimal");
   const [protectTags, setProtectTags] = useState<boolean>(true);
@@ -883,6 +883,17 @@ export default function StemStudio({
         }
         return chars.join('');
       }
+
+      if (bypassMethod === 'diacritics') {
+        let decomposed = word.normalize('NFD');
+        let newStr = '';
+        for (let i = 0; i < decomposed.length; i++) {
+           if (decomposed[i] === '\u0309') newStr += '\u0303'; // hỏi -> ngã
+           else if (decomposed[i] === '\u0303') newStr += '\u0309'; // ngã -> hỏi
+           else newStr += decomposed[i];
+        }
+        return newStr.normalize('NFC');
+      }
       
       if (bypassMethod === 'extreme') {
         const marks = ['\u034F', '\u200C', '\u200D', '\u2060', '\u200B'];
@@ -915,7 +926,14 @@ export default function StemStudio({
       
       const words = line.split(/(\s+)/); // Preserve whitespace
       return words.map(w => {
-         if (w.trim() === '') return w;
+         if (w.trim() === '') {
+             if (bypassMethod === 'underscore' && w.length > 0) {
+                 if (Math.random() <= intensityProb) {
+                     return w.replace(/ /g, '_');
+                 }
+             }
+             return w;
+         }
          return applyBypassToWord(w);
       }).join('');
     });
@@ -3257,7 +3275,23 @@ export default function StemStudio({
                               </div>
                               <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Đổi ngẫu nhiên kí tự Hoa/Thường xen kẽ. Suno vẫn phát âm chuẩn, cấu trúc chữ hơi khó nhìn nhưng lách tạm ổn.</span>
                            </button>
-                           {/* Button 5 - Pro / Extreme */}
+                           {/* Button 5 - Underscore */}
+                           <button onClick={() => setBypassMethod("underscore")} className={`p-3 border rounded-xl flex flex-col items-start gap-1.5 transition-all text-left ${bypassMethod === 'underscore' ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300 shadow-[0_0_15px_rgba(99,102,241,0.15)]' : 'bg-black/60 border-white/5 text-white/70 hover:bg-white/5'}`}>
+                              <div className="flex items-center justify-between w-full">
+                                <span className="text-[11px] font-bold text-white">Nối bằng gạch dưới (_)</span>
+                                <span className="flex items-center text-[9px] text-amber-400 font-bold bg-amber-400/10 px-1.5 py-0.5 rounded">SUNO ★★★★</span>
+                              </div>
+                              <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Thay thế khoảng trắng (VD: yêu_em). Giúp lách từ cấm ghép nối hiệu quả mà ca sĩ hát vẫn chuẩn.</span>
+                           </button>
+                           {/* Button 6 - Diacritics (Ngã/Hỏi) */}
+                           <button onClick={() => setBypassMethod("diacritics")} className={`p-3 border rounded-xl flex flex-col items-start gap-1.5 transition-all text-left ${bypassMethod === 'diacritics' ? 'bg-indigo-500/20 border-indigo-500 text-indigo-300 shadow-[0_0_15px_rgba(99,102,241,0.15)]' : 'bg-black/60 border-white/5 text-white/70 hover:bg-white/5'}`}>
+                              <div className="flex items-center justify-between w-full">
+                                <span className="text-[11px] font-bold text-white">Đảo dấu (Ngã ↔ Hỏi)</span>
+                                <span className="flex items-center text-[9px] text-amber-400 font-bold bg-amber-400/10 px-1.5 py-0.5 rounded">SUNO ★★★★</span>
+                              </div>
+                              <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Đổi "vẫn" thành "vẩn", "giữa" thành "giửa". Đánh lừa filter tốt và Suno vẫn hát khá giống.</span>
+                           </button>
+                           {/* Button 7 - Pro / Extreme */}
                            <button onClick={() => setBypassMethod("extreme")} className={`p-3 border rounded-xl flex flex-col items-start gap-1.5 transition-all text-left sm:col-span-2 ${bypassMethod === 'extreme' ? 'bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-black/60 border-red-500/20 text-white/70 hover:bg-red-500/10'}`}>
                               <div className="flex items-center justify-between w-full">
                                 <span className="text-[11px] font-bold text-red-400">Chuyên nghiệp (Pro / Nhiễu loạn)</span>
