@@ -155,11 +155,12 @@ Your task is to transform the user's lyrics and requirements into a highly detai
 
 RULES:
 1. Keep the original lyrics completely intact (do not rewrite them, keep the exact original language, meaning, and rhythm).
-2. Insert structural tags (e.g., [INTRO], [VERSE 1], [PRE-CHORUS], [CHORUS], [BRIDGE], [OUTRO]).
-3. Insert rich, descriptive instrumental and arrangement metatags inside brackets on their own lines before sections or between lyric lines to guide the AI.
-4. Arrange by CONTRAST. Silence is an instrument. Build energy dynamically from Intro to Outro.
-5. Use spatial/stereo directions if appropriate (e.g., [pad slowly MONO → WIDE]).
-6. STYLE GENERATION: At the very beginning of your output, you MUST provide a "STYLE:" block. This should be a highly detailed, comma-separated list of genres, moods, tempo, key, vocal style, instruments, and mixing directions, perfectly optimized for Suno AI's "Style of Music" prompt box (e.g. "Modern Vietnamese Cinematic Pop Ballad, Emotional, Romantic, 68 BPM, A Minor. Warm deep male vocal...").
+2. Insert structural tags using square brackets (e.g., [INTRO], [VERSE 1], [PRE-CHORUS], [CHORUS], [BRIDGE], [OUTRO]).
+3. Insert broad, descriptive instrumental and arrangement metatags inside square brackets [ ] on their own lines immediately after the section tag to set the scene.
+4. INSERT PRECISE INLINE ACCENTS: Between individual lines of lyrics, use round brackets ( ) to insert precise, beat-level musical accents, bass drops, drum hits, or vocal adlibs (e.g., "(sub-bass deep hit, fretless slide)", "(Rhodes stab)", "(adlib: da diết...)"). This punctuates the phrases and guides the AI's timing.
+5. Arrange by CONTRAST. Silence is an instrument. Build energy dynamically from Intro to Outro.
+6. Use spatial/stereo directions if appropriate (e.g., [pad slowly MONO → WIDE]).
+7. STYLE GENERATION: At the very beginning of your output, you MUST provide a "STYLE:" block. This should be a highly detailed, comma-separated list of genres, moods, tempo, key, vocal style, instruments, and mixing directions, perfectly optimized for Suno AI's "Style of Music" prompt box (e.g. "Modern Vietnamese Cinematic Pop Ballad, Emotional, Romantic, 68 BPM, A Minor. Warm deep male vocal...").
 ${options.addChords ? "6. ADD CHORDS: You MUST add musical chords inline within square brackets right before the word they belong to (e.g., 'Bóng [Am] em xa dần')." : ""}
 ${options.charLimit ? "7. CHAR LIMIT: Your entire response MUST be under 5000 characters." : ""}
 ${options.customPrompt ? `\nUSER CUSTOM INSTRUCTIONS:\n"${options.customPrompt}"\nEnsure the arrangement strictly follows this specific direction.` : ""}
@@ -172,17 +173,23 @@ STYLE: Modern Vietnamese Cinematic Pop Ballad, Emotional, Romantic, Melancholic,
 [clean guitar harmonic, subtle LEFT → RIGHT delay]
 [clear intimate male vocal, centered]
 
+(guitar harmonic hit)
 [Lyrics here...]
+(sub-bass round drop)
 
 [VERSE 1 — Minimal]
 [piano + fingerpicked acoustic guitar]
 [no full drums]
 
-[Lyrics here...]
+Line 1 of lyrics
+(fretless slide, Rhodes bell accent)
+Line 2 of lyrics
+(sub-bass deep hit)
 
 [3-note violin counter-melody between vocal phrases]
 
-[Lyrics here...]
+Line 3 of lyrics
+(adlib: vocal echoing line 3...)
 
 [CHORUS — Cinematic Wide]
 [full soft drums + warm bass]
