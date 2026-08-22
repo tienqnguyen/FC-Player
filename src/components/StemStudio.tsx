@@ -1034,6 +1034,32 @@ export default function StemStudio({
   const [sunoEqHigh, setSunoEqHigh] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_high") || "6.5"));
   const [showSunoSettings, setShowSunoSettings] = useState<boolean>(false);
 
+  const [dspLowpass, setDspLowpass] = useState<boolean>(() => localStorage.getItem("dsp_lowpass") === "true");
+  const [dspChorus, setDspChorus] = useState<boolean>(() => localStorage.getItem("dsp_chorus") === "true");
+  const [dspFlutter, setDspFlutter] = useState<boolean>(() => localStorage.getItem("dsp_flutter") === "true");
+  const [dspDecorrelate, setDspDecorrelate] = useState<boolean>(() => localStorage.getItem("dsp_decorrelate") === "true");
+
+  useEffect(() => {
+    localStorage.setItem("dsp_lowpass", dspLowpass.toString());
+    localStorage.setItem("dsp_chorus", dspChorus.toString());
+    localStorage.setItem("dsp_flutter", dspFlutter.toString());
+    localStorage.setItem("dsp_decorrelate", dspDecorrelate.toString());
+
+    if (audioContextRef.current) {
+        const t = audioContextRef.current.currentTime;
+        if (dspLowpassRef.current) dspLowpassRef.current.frequency.setTargetAtTime(dspLowpass ? 9500 : 22050, t, 0.05);
+        
+        if (dspLfoRef.current) dspLfoRef.current.frequency.setTargetAtTime(dspFlutter ? 1.5 : (dspChorus ? 0.5 : 0.5), t, 0.05);
+        if (dspLfoDepthRef.current) dspLfoDepthRef.current.gain.setTargetAtTime(dspFlutter ? 0.003 : (dspChorus ? 0.015 : 0), t, 0.05);
+        
+        if (dspChorusDryRef.current) dspChorusDryRef.current.gain.setTargetAtTime(dspChorus ? 0.7 : 1.0, t, 0.05);
+        if (dspChorusWetRef.current) dspChorusWetRef.current.gain.setTargetAtTime(dspChorus ? 0.7 : 0.0, t, 0.05);
+        
+        if (dspDecorrelateDryRef.current) dspDecorrelateDryRef.current.gain.setTargetAtTime(dspDecorrelate ? 0 : 1, t, 0.05);
+        if (dspDecorrelateWetRef.current) dspDecorrelateWetRef.current.gain.setTargetAtTime(dspDecorrelate ? 1 : 0, t, 0.05);
+    }
+  }, [dspLowpass, dspChorus, dspFlutter, dspDecorrelate]);
+
   const handleResetSunoSystemDefault = () => {
     setSunoSpeedFactor(1.045);
     setSunoPitchShift(6.5);
@@ -1041,6 +1067,38 @@ export default function StemStudio({
     setSunoEqLow(6.5);
     setSunoEqMid(6.5);
     setSunoEqHigh(6.5);
+    setDspLowpass(false);
+    setDspChorus(false);
+    setDspFlutter(false);
+    setDspDecorrelate(false);
+  };
+
+  const handleApplySunoLevel = (level: number) => {
+      if (level === 1) {
+          setSunoSpeedFactor(1.02);
+          setSunoPitchShift(3.5);
+          setSunoNoiseLevel(0);
+          setSunoEqLow(3.5);
+          setSunoEqMid(3.5);
+          setSunoEqHigh(3.5);
+          setDspLowpass(false);
+          setDspChorus(false);
+          setDspFlutter(false);
+          setDspDecorrelate(false);
+      } else if (level === 2) {
+          handleResetSunoSystemDefault();
+      } else if (level === 3) {
+          setSunoSpeedFactor(1.065);
+          setSunoPitchShift(9.5);
+          setSunoNoiseLevel(0.015);
+          setSunoEqLow(9.5);
+          setSunoEqMid(9.5);
+          setSunoEqHigh(9.5);
+          setDspLowpass(true);
+          setDspChorus(true);
+          setDspFlutter(true);
+          setDspDecorrelate(true);
+      }
   };
 
   const handleResetSunoOriginal = () => {
@@ -1233,6 +1291,14 @@ export default function StemStudio({
   const masterToneLowRef = useRef<BiquadFilterNode | null>(null);
   const masterToneMidRef = useRef<BiquadFilterNode | null>(null);
   const masterToneHighRef = useRef<BiquadFilterNode | null>(null);
+  
+  const dspLowpassRef = useRef<BiquadFilterNode | null>(null);
+  const dspChorusDryRef = useRef<GainNode | null>(null);
+  const dspChorusWetRef = useRef<GainNode | null>(null);
+  const dspLfoRef = useRef<OscillatorNode | null>(null);
+  const dspLfoDepthRef = useRef<GainNode | null>(null);
+  const dspDecorrelateWetRef = useRef<GainNode | null>(null);
+  const dspDecorrelateDryRef = useRef<GainNode | null>(null);
 
   const audioElementsRef = useRef<Record<string, HTMLAudioElement>>({});
   const pixabayStudioRef = useRef<any>(null);
@@ -1603,6 +1669,64 @@ export default function StemStudio({
         lastNode.connect(filter);
         lastNode = filter;
       });
+      
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = dspLowpass ? 9500 : 22050;
+      dspLowpassRef.current = lp;
+      lastNode.connect(lp);
+      lastNode = lp;
+      
+      const delay = ctx.createDelay();
+      delay.delayTime.value = 0.02;
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = dspFlutter ? 1.5 : (dspChorus ? 0.5 : 0.5);
+      dspLfoRef.current = lfo;
+      const depth = ctx.createGain();
+      depth.gain.value = dspFlutter ? 0.003 : (dspChorus ? 0.015 : 0);
+      dspLfoDepthRef.current = depth;
+      lfo.connect(depth);
+      depth.connect(delay.delayTime);
+      lfo.start(0);
+      const dryGain = ctx.createGain();
+      dryGain.gain.value = dspChorus ? 0.7 : 1.0;
+      dspChorusDryRef.current = dryGain;
+      const wetGain = ctx.createGain();
+      wetGain.gain.value = dspChorus ? 0.7 : 0.0;
+      dspChorusWetRef.current = wetGain;
+      
+      lastNode.connect(dryGain);
+      lastNode.connect(delay);
+      delay.connect(wetGain);
+      
+      const merge = ctx.createGain();
+      dryGain.connect(merge);
+      wetGain.connect(merge);
+      lastNode = merge;
+      
+      const splitter = ctx.createChannelSplitter(2);
+      const merger = ctx.createChannelMerger(2);
+      lastNode.connect(splitter);
+      splitter.connect(merger, 0, 0); // left -> left
+      const decorrelateDelay = ctx.createDelay();
+      decorrelateDelay.delayTime.value = 0.015;
+      const decDry = ctx.createGain();
+      decDry.gain.value = dspDecorrelate ? 0 : 1;
+      dspDecorrelateDryRef.current = decDry;
+      const decWet = ctx.createGain();
+      decWet.gain.value = dspDecorrelate ? 1 : 0;
+      dspDecorrelateWetRef.current = decWet;
+      
+      splitter.connect(decDry, 1);
+      decDry.connect(merger, 0, 1);
+      
+      splitter.connect(decorrelateDelay, 1);
+      decorrelateDelay.connect(decWet);
+      decWet.connect(merger, 0, 1);
+      
+      lastNode = merger;
+
       lastNode.connect(ctx.destination);
       revGain.connect(eqNodes[0]);
 
@@ -2222,7 +2346,65 @@ export default function StemStudio({
       source.connect(lowEq);
       lowEq.connect(midEq);
       midEq.connect(highEq);
-      highEq.connect(offlineCtx.destination);
+
+      let lastOfflineNode = highEq;
+
+      if (dspLowpass) {
+          const lp = offlineCtx.createBiquadFilter();
+          lp.type = 'lowpass';
+          lp.frequency.value = 9500;
+          lastOfflineNode.connect(lp);
+          lastOfflineNode = lp;
+      }
+      
+      if (dspChorus || dspFlutter) {
+          const delay = offlineCtx.createDelay();
+          delay.delayTime.value = 0.02;
+          
+          const lfo = offlineCtx.createOscillator();
+          lfo.type = 'sine';
+          lfo.frequency.value = dspFlutter ? 1.5 : 0.5;
+          
+          const depth = offlineCtx.createGain();
+          depth.gain.value = dspFlutter ? 0.003 : (dspChorus ? 0.015 : 0);
+          
+          lfo.connect(depth);
+          depth.connect(delay.delayTime);
+          lfo.start(0);
+          
+          const dryGain = offlineCtx.createGain();
+          dryGain.gain.value = dspChorus ? 0.7 : 1.0;
+          
+          const wetGain = offlineCtx.createGain();
+          wetGain.gain.value = dspChorus ? 0.7 : 1.0;
+          
+          lastOfflineNode.connect(dryGain);
+          lastOfflineNode.connect(delay);
+          delay.connect(wetGain);
+          
+          const merge = offlineCtx.createGain();
+          dryGain.connect(merge);
+          wetGain.connect(merge);
+          
+          lastOfflineNode = merge;
+      }
+      
+      if (dspDecorrelate) {
+          const splitter = offlineCtx.createChannelSplitter(2);
+          const merger = offlineCtx.createChannelMerger(2);
+          
+          lastOfflineNode.connect(splitter);
+          splitter.connect(merger, 0, 0); // left -> left
+          
+          const delay = offlineCtx.createDelay();
+          delay.delayTime.value = 0.015;
+          splitter.connect(delay, 1);
+          delay.connect(merger, 0, 1); // right -> delay -> right
+          
+          lastOfflineNode = merger;
+      }
+
+      lastOfflineNode.connect(offlineCtx.destination);
 
       source.start(0, activeTrimStart, exportDuration);
 
@@ -2435,6 +2617,61 @@ export default function StemStudio({
           sunoLowEq.connect(sunoMidEq);
           sunoMidEq.connect(sunoHighEq);
           lastOfflineNode = sunoHighEq;
+      }
+
+      if (dspLowpass) {
+          const lp = offlineCtx.createBiquadFilter();
+          lp.type = 'lowpass';
+          lp.frequency.value = 9500;
+          lastOfflineNode.connect(lp);
+          lastOfflineNode = lp;
+      }
+      
+      if (dspChorus || dspFlutter) {
+          const delay = offlineCtx.createDelay();
+          delay.delayTime.value = 0.02;
+          
+          const lfo = offlineCtx.createOscillator();
+          lfo.type = 'sine';
+          lfo.frequency.value = dspFlutter ? 1.5 : 0.5;
+          
+          const depth = offlineCtx.createGain();
+          depth.gain.value = dspFlutter ? 0.003 : (dspChorus ? 0.015 : 0);
+          
+          lfo.connect(depth);
+          depth.connect(delay.delayTime);
+          lfo.start(0);
+          
+          const dryGain = offlineCtx.createGain();
+          dryGain.gain.value = dspChorus ? 0.7 : 1.0;
+          
+          const wetGain = offlineCtx.createGain();
+          wetGain.gain.value = dspChorus ? 0.7 : 1.0;
+          
+          lastOfflineNode.connect(dryGain);
+          lastOfflineNode.connect(delay);
+          delay.connect(wetGain);
+          
+          const merge = offlineCtx.createGain();
+          dryGain.connect(merge);
+          wetGain.connect(merge);
+          
+          lastOfflineNode = merge;
+      }
+      
+      if (dspDecorrelate) {
+          const splitter = offlineCtx.createChannelSplitter(2);
+          const merger = offlineCtx.createChannelMerger(2);
+          
+          lastOfflineNode.connect(splitter);
+          splitter.connect(merger, 0, 0); // left -> left
+          
+          const delay = offlineCtx.createDelay();
+          delay.delayTime.value = 0.015;
+          splitter.connect(delay, 1);
+          delay.connect(merger, 0, 1); // right -> delay -> right
+          
+          lastOfflineNode = merger;
       }
 
       lastOfflineNode.connect(offlineCtx.destination);
@@ -4134,15 +4371,30 @@ export default function StemStudio({
                                               <SlidersHorizontal className="w-4 h-4 text-indigo-400" />
                                               <span className="text-xs font-black uppercase tracking-wider text-white">Suno Bypass Controls</span>
                                            </div>
-                                           <div className="flex items-center justify-center gap-2 w-full sm:w-auto">
+                                           <div className="flex flex-wrap items-center justify-center gap-2 w-full sm:w-auto">
                                                <button
                                                    type="button"
-                                                   onClick={handleResetSunoSystemDefault}
-                                                   className="py-1.5 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
-                                                   title="Reset to System Default (1.045x Speed, +6.5 Pitch, +6.5dB EQ)"
+                                                   onClick={() => handleApplySunoLevel(1)}
+                                                   className="py-1.5 px-3 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
+                                                   title="Level 1: Light Bypass"
                                                >
-                                                   <RotateCcw className="w-3 h-3" />
-                                                   Default
+                                                   LVL 1
+                                               </button>
+                                               <button
+                                                   type="button"
+                                                   onClick={() => handleApplySunoLevel(2)}
+                                                   className="py-1.5 px-3 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
+                                                   title="Level 2: Standard Bypass (Default)"
+                                               >
+                                                   LVL 2
+                                               </button>
+                                               <button
+                                                   type="button"
+                                                   onClick={() => handleApplySunoLevel(3)}
+                                                   className="py-1.5 px-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-xl text-[10px] font-extrabold uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer shadow-sm"
+                                                   title="Level 3: Heavy Bypass + DSP"
+                                               >
+                                                   LVL 3
                                                </button>
                                                <button
                                                    type="button"
@@ -4151,7 +4403,7 @@ export default function StemStudio({
                                                    title="Reset to Original Audio (1.000x Speed, 0 Pitch, 0dB EQ)"
                                                >
                                                    <FileAudio className="w-3 h-3" />
-                                                   Original
+                                                   Orig
                                                </button>
                                            </div>
                                        </div>
@@ -4248,6 +4500,44 @@ export default function StemStudio({
                                                />
                                            </div>
                                        </div>
+                                       
+                                       {/* Advanced DSP Settings (Standalone) */}
+                                       <div className="bg-black/20 border border-white/5 p-4 rounded-xl flex flex-col gap-4 mt-2">
+                                         <div className="flex justify-between border-b border-white/10 pb-2">
+                                            <span className="text-xs font-black uppercase tracking-wider text-rose-400 flex items-center gap-1.5"><Activity className="w-4 h-4" /> Advanced DSP</span>
+                                         </div>
+                                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                             <label className="flex items-start gap-3 cursor-pointer group">
+                                                <input type="checkbox" checked={dspLowpass} onChange={e => setDspLowpass(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                                                <div className="flex flex-col">
+                                                   <span className="text-xs font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Lowpass Filter</span>
+                                                   <span className="text-[9px] text-white/50">Cuts high-frequency watermarks (9500Hz)</span>
+                                                </div>
+                                             </label>
+                                             <label className="flex items-start gap-3 cursor-pointer group">
+                                                <input type="checkbox" checked={dspChorus} onChange={e => setDspChorus(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                                                <div className="flex flex-col">
+                                                   <span className="text-xs font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Phase Smearing</span>
+                                                   <span className="text-[9px] text-white/50">Destroys phase-aligned patterns (Chorus)</span>
+                                                </div>
+                                             </label>
+                                             <label className="flex items-start gap-3 cursor-pointer group">
+                                                <input type="checkbox" checked={dspFlutter} onChange={e => setDspFlutter(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                                                <div className="flex flex-col">
+                                                   <span className="text-xs font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Tape Flutter</span>
+                                                   <span className="text-[9px] text-white/50">Breaks BPM/frequency fingerprinting</span>
+                                                </div>
+                                             </label>
+                                             <label className="flex items-start gap-3 cursor-pointer group">
+                                                <input type="checkbox" checked={dspDecorrelate} onChange={e => setDspDecorrelate(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                                                <div className="flex flex-col">
+                                                   <span className="text-xs font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Decorrelate</span>
+                                                   <span className="text-[9px] text-white/50">Widens stereo field & obscures mono phase</span>
+                                                </div>
+                                             </label>
+                                         </div>
+                                       </div>
+                                       
                                    </div>
                                )}
                             </div>
@@ -4900,24 +5190,38 @@ export default function StemStudio({
                  </div>
                  
                  <div className={`flex flex-col gap-3 p-3 bg-black/20 border border-white/5 rounded-xl transition-all duration-300 ${isSunoBypass ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
-                     <div className="flex items-center gap-2 pb-1 border-b border-white/10">
+                     <div className="grid grid-cols-4 gap-1 pb-1 border-b border-white/10">
                          <button
                              type="button"
-                             onClick={handleResetSunoSystemDefault}
-                             className="flex-1 py-1.5 px-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
-                             title="Reset to System Default (1.045x Speed, +6.5 Pitch, +6.5dB EQ)"
+                             onClick={() => handleApplySunoLevel(1)}
+                             className="py-1.5 px-1 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/30 rounded-lg text-[8px] font-bold uppercase tracking-wider transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                             title="Level 1"
                          >
-                             <RotateCcw className="w-3 h-3" />
-                             Default
+                             Lvl 1
+                         </button>
+                         <button
+                             type="button"
+                             onClick={() => handleApplySunoLevel(2)}
+                             className="py-1.5 px-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 rounded-lg text-[8px] font-bold uppercase tracking-wider transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                             title="Level 2"
+                         >
+                             Lvl 2
+                         </button>
+                         <button
+                             type="button"
+                             onClick={() => handleApplySunoLevel(3)}
+                             className="py-1.5 px-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-lg text-[8px] font-bold uppercase tracking-wider transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                             title="Level 3"
+                         >
+                             Lvl 3
                          </button>
                          <button
                              type="button"
                              onClick={handleResetSunoOriginal}
-                             className="flex-1 py-1.5 px-2 bg-white/10 hover:bg-white/20 text-white/80 border border-white/15 rounded-lg text-[9px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-1 active:scale-95 cursor-pointer"
-                             title="Reset to Original Audio (1.000x Speed, 0 Pitch, 0dB EQ)"
+                             className="py-1.5 px-1 bg-white/10 hover:bg-white/20 text-white/80 border border-white/15 rounded-lg text-[8px] font-bold uppercase tracking-wider transition-all flex items-center justify-center active:scale-95 cursor-pointer"
+                             title="Original"
                          >
-                             <FileAudio className="w-3 h-3" />
-                             Original
+                             Orig
                          </button>
                      </div>
                      <div className="flex flex-col gap-1">
@@ -5046,6 +5350,42 @@ export default function StemStudio({
                         />
                      </div>
                  </div>
+
+                  <div className="bg-black/20 border border-white/5 p-3 rounded-xl flex flex-col gap-3 mt-2">
+                     <div className="flex justify-between border-b border-white/10 pb-1.5">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-rose-400 flex items-center gap-1"><Activity className="w-3 h-3" /> Advanced DSP</span>
+                     </div>
+                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                         <label className="flex items-start gap-2 cursor-pointer group">
+                            <input type="checkbox" checked={dspLowpass} onChange={e => setDspLowpass(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                            <div className="flex flex-col">
+                               <span className="text-[10px] font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Lowpass Filter</span>
+                               <span className="text-[8px] text-white/50">Cuts high-frequency watermarks (9500Hz)</span>
+                            </div>
+                         </label>
+                         <label className="flex items-start gap-2 cursor-pointer group">
+                            <input type="checkbox" checked={dspChorus} onChange={e => setDspChorus(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                            <div className="flex flex-col">
+                               <span className="text-[10px] font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Phase Smearing</span>
+                               <span className="text-[8px] text-white/50">Destroys phase-aligned patterns (Chorus)</span>
+                            </div>
+                         </label>
+                         <label className="flex items-start gap-2 cursor-pointer group">
+                            <input type="checkbox" checked={dspFlutter} onChange={e => setDspFlutter(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                            <div className="flex flex-col">
+                               <span className="text-[10px] font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Tape Flutter</span>
+                               <span className="text-[8px] text-white/50">Breaks BPM/frequency fingerprinting</span>
+                            </div>
+                         </label>
+                         <label className="flex items-start gap-2 cursor-pointer group">
+                            <input type="checkbox" checked={dspDecorrelate} onChange={e => setDspDecorrelate(e.target.checked)} className="mt-1 w-4 h-4 rounded bg-black/50 border-white/20 text-rose-400 focus:ring-rose-400/50" />
+                            <div className="flex flex-col">
+                               <span className="text-[10px] font-bold text-white uppercase tracking-wider group-hover:text-rose-400 transition-colors">Decorrelate Stereo</span>
+                               <span className="text-[8px] text-white/50">Widens stereo field & obscures mono phase</span>
+                            </div>
+                         </label>
+                     </div>
+                  </div>
            </div>
               )}
            </div>
