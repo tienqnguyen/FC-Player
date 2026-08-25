@@ -37,6 +37,7 @@ import {
   addChordsLyric,
   bypassLyric,
   arrangeLyric,
+  suggestLyricTags,
 } from "./server/lyricProcessor";
 import { GoogleGenAI } from "@google/genai";
 
@@ -85,6 +86,41 @@ async function getDirectMediaUrl(url: string): Promise<string> {
   if (!inFlightPromise) {
     inFlightPromise = (async () => {
       try {
+        if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
+          const rawHtml = await fetchNctPlaylistWithProxyRace(url);
+          const parsedData = parseNctHtml(rawHtml);
+          if (parsedData.songs && parsedData.songs.length > 0) {
+            const firstSong = parsedData.songs[0];
+            let directAudioUrl = "";
+            
+            // Prefer the lossless or highest quality explicitly
+            if (firstSong.qualities && firstSong.qualities.length > 0) {
+                const lossless = firstSong.qualities.find((q: any) => q.quality.includes("lossless") || q.quality.includes("flac"));
+                const high = firstSong.qualities.find((q: any) => q.quality.includes("320"));
+                const best = lossless || high || firstSong.qualities[0];
+                directAudioUrl = best.url;
+            }
+            if (!directAudioUrl) {
+                directAudioUrl = firstSong.audioUrl || firstSong.originalUrl || url;
+            }
+            
+            if (directAudioUrl.includes("/api/proxy-stream?url=")) {
+               directAudioUrl = decodeURIComponent(directAudioUrl.split("url=")[1]);
+            }
+            directStreamMemoryCache.set(url, { url: directAudioUrl, expiresAt: now + 45 * 60 * 1000 });
+            return directAudioUrl;
+          }
+        }
+        
+        if (url.includes("tkaraoke.com")) {
+          const details = await fetchTKaraokeSongDetails(url);
+          if (details && details.mp3Versions && details.mp3Versions.length > 0) {
+             const audioUrl = details.mp3Versions[0].url;
+             directStreamMemoryCache.set(url, { url: audioUrl, expiresAt: now + 45 * 60 * 1000 });
+             return audioUrl;
+          }
+        }
+
         const ytdlOptions: any = {
           dumpSingleJson: true,
           noWarnings: true,
@@ -851,8 +887,7 @@ async function startServer() {
             cover:
               "https://image-cdn.nct.vn/song/2026/05/21/t/a/x/v/1779370796566.jpg",
             duration: 296,
-            audioUrl:
-              "/api/proxy-stream?url=https%3A%2F%2Fstream.nct.vn%2Fresa%2F2605%2Fa4%2F52%2F96myxlw2bg.mp3%3Fst%3DG5iXoDQWnWgHmtXbfr2ucQ%26e%3D1781276871%26a%3D6%26p%3D0%26r%3D885ad4649ef1d80dd7233f228343a253",
+            audioUrl: "https://stream.nct.vn/resa/2605/a4/52/96myxlw2bg.mp3?st=G5iXoDQWnWgHmtXbfr2ucQ&e=1781276871&a=6&p=0&r=885ad4649ef1d80dd7233f228343a253",
             originalUrl: "https://www.nhaccuatui.com/song/xLLyzXlyrRLa.html",
             sharedBy: "Acoustic System",
             sharedAt: new Date().toISOString(),
@@ -962,12 +997,7 @@ async function startServer() {
       duration = duration || 180;
 
       // Unify stream routes cleanly
-      let audioUrl = "";
-      if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
-        audioUrl = `/api/proxy-stream?url=${encodeURIComponent(url)}`;
-      } else {
-        audioUrl = `/api/stream?url=${encodeURIComponent(url)}`;
-      }
+      let audioUrl = `/api/stream?url=${encodeURIComponent(url)}`;
 
       const songObj = {
         id:
@@ -1472,7 +1502,7 @@ async function startServer() {
           playlistEnd: parseInt(clientCount) || 20,
           noWarnings: true,
         };
-        const info = await youtubedl(searchUrl, ytdlOptions);
+        const info = (await youtubedl(searchUrl, ytdlOptions)) as any;
         if (info && info.entries && info.entries.length > 0) {
           const videos = info.entries.map((entry, idx) => {
             const videoUrl = entry.url || `https://www.tiktok.com/@${entry.uploader || "user"}/video/${entry.id}`;
@@ -1820,6 +1850,28 @@ async function startServer() {
       }
       url = await resolveFacebookRedirect(url);
       console.log(`[Metadata API] Resolving metadata for URL: ${url}`);
+      
+      // Handle NCT urls directly to avoid yt-dlp error
+      if (url.includes("nhaccuatui.com") || url.includes("nct.vn")) {
+        try {
+          const rawHtml = await fetchNctPlaylistWithProxyRace(url);
+          const parsedData = parseNctHtml(rawHtml);
+          if (parsedData.songs && parsedData.songs.length > 0) {
+            const firstSong = parsedData.songs[0];
+            return res.json({
+              title: firstSong.title || "NhacCuaTui Track",
+              cover: firstSong.cover || "https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=300",
+              author: firstSong.author || "Web Audio",
+              duration: firstSong.duration || 0,
+              url: firstSong.audioUrl || firstSong.originalUrl || url
+            });
+          }
+        } catch (e: any) {
+          console.warn("[Metadata API] NCT parser fallback failed:", e.message);
+          return res.status(500).json({ error: "Failed to extract NhacCuaTui metadata" });
+        }
+      }
+
 
       const ytdlOptions: any = {
         dumpSingleJson: true,
@@ -1950,8 +2002,8 @@ async function startServer() {
         finalUrl = `http://localhost:3000${finalUrl}`;
       }
 
-      let safeTitle = title.replace(/[^a-zA-Z0-9\s_-]/g, "").trim();
-      if (safeTitle.length > 30) safeTitle = safeTitle.substring(0, 30).trim();
+      let safeTitle = title.replace(/[<>:"/\\|?*\x00-\x1F]/g, "").trim();
+      if (safeTitle.length > 80) safeTitle = safeTitle.substring(0, 80).trim();
       if (!safeTitle) safeTitle = "audio";
 
       const isDirect =
@@ -1962,7 +2014,7 @@ async function startServer() {
 
       let response: any = null;
 
-      if (!isDirect && (finalUrl.includes("youtube.com") || finalUrl.includes("youtu.be") || finalUrl.includes("facebook.com") || finalUrl.includes("fb.watch"))) {
+      if (!isDirect && (finalUrl.includes("youtube.com") || finalUrl.includes("youtu.be") || finalUrl.includes("facebook.com") || finalUrl.includes("fb.watch") || finalUrl.includes("nhaccuatui.com") || finalUrl.includes("nct.vn") || finalUrl.includes("tkaraoke.com"))) {
           try {
             finalUrl = await getDirectMediaUrl(finalUrl);
           } catch(e) { }
@@ -1998,7 +2050,7 @@ async function startServer() {
         );
         res.setHeader(
           "Content-Disposition",
-          `attachment; filename="${encodeURIComponent(safeTitle)}.m4a"`
+          `attachment; filename="audio.m4a"; filename*=UTF-8''${encodeURIComponent(safeTitle)}.m4a`
         );
         res.setHeader("Content-Type", "audio/mp4");
         res.setHeader("Transfer-Encoding", "chunked");
@@ -2020,7 +2072,7 @@ async function startServer() {
 
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="${encodeURIComponent(safeTitle)}.${extension}"`
+        `attachment; filename="audio.${extension}"; filename*=UTF-8''${encodeURIComponent(safeTitle)}.${extension}`
       );
       res.setHeader("Content-Type", contentType);
 
@@ -2092,6 +2144,23 @@ async function startServer() {
       res.json(result);
     } catch (error: any) {
       console.error("[Lyric Arrange Error]", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  
+  app.post("/api/lyric/suggest", express.json(), async (req, res) => {
+    try {
+      const { selectedText, instruction } = req.body;
+      if (!selectedText) {
+        return res.status(400).json({ error: "selectedText is required" });
+      }
+      
+      
+      const result = await suggestLyricTags(selectedText, instruction || "");
+      res.json(result);
+    } catch (error: any) {
+      console.error("[Lyric Suggest Error]", error);
       res.status(500).json({ error: error.message });
     }
   });

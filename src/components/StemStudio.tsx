@@ -2,6 +2,7 @@ import WaveSurfer from "wavesurfer.js";
 import JSZip from 'jszip';
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import SunoLyricDownloader from './SunoLyricDownloader';
+import SunoGuideModal from './SunoGuideModal';
 import audioBufferToWav from 'audiobuffer-to-wav';
 
 function normalizeAudioBuffer(buffer: AudioBuffer) {
@@ -81,7 +82,7 @@ import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X,
 import AudioTrimmer from "./AudioTrimmer";
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
-import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio, Wand2, AlertTriangle } from 'lucide-react';
+import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine, CloudRain, CloudLightning, FileAudio, Wand2, BookOpen, AlertTriangle } from 'lucide-react';
 import { diffWords, Change } from 'diff';
 import SpectrogramTool from "./Spectrogram";
 import PixabayStudio from "./PixabayStudio";
@@ -414,6 +415,105 @@ export default function StemStudio({
   const [lyricArrangeInput, setLyricArrangeInput] = useState<string>("");
   const [lyricArranged, setLyricArranged] = useState<string>("");
   const [lyricArrangedStyle, setLyricArrangedStyle] = useState<string>("");
+
+  const arrangedTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+
+  const [popupState, setPopupState] = useState<{
+        visible: boolean;
+        x: number;
+        y: number;
+        selectedText: string;
+        startIndex: number;
+        endIndex: number;
+  } | null>(null);
+
+  const [suggestInput, setSuggestInput] = useState("");
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [suggestOptions, setSuggestOptions] = useState<Array<{tag: string, explanation: string}>>([]);
+  const [suggestError, setSuggestError] = useState("");
+  const [showGuideModal, setShowGuideModal] = useState(false);
+
+  const selectionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleSelectArranged = (e: React.MouseEvent<HTMLTextAreaElement> | React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (!arrangedTextareaRef.current) return;
+        const { selectionStart, selectionEnd, value } = arrangedTextareaRef.current;
+        
+        if (selectionTimeoutRef.current) clearTimeout(selectionTimeoutRef.current);
+
+        if (selectionStart !== selectionEnd) {
+            const selectedText = value.substring(selectionStart, selectionEnd);
+            let x = 0; let y = 0;
+            if ('clientX' in e) {
+                x = (e as React.MouseEvent).clientX;
+                y = (e as React.MouseEvent).clientY;
+            } else {
+                const rect = arrangedTextareaRef.current.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.top + rect.height / 2;
+            }
+            const padding = 10; const popupWidth = 260; const popupHeight = 300;
+            let finalX = x + 10; let finalY = y + 15;
+            if (finalX + popupWidth > window.innerWidth - padding) finalX = window.innerWidth - popupWidth - padding;
+            if (finalY + popupHeight > window.innerHeight - padding) finalY = window.innerHeight - popupHeight - padding;
+            if (finalY < padding) finalY = padding;
+
+            selectionTimeoutRef.current = setTimeout(() => {
+                setPopupState({ visible: true, x: finalX, y: finalY, selectedText, startIndex: selectionStart, endIndex: selectionEnd });
+                setSuggestOptions([]); setSuggestInput(""); setSuggestError("");
+            }, 400);
+        } else {
+            setPopupState(null);
+        }
+  };
+
+  useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                popupRef.current && 
+                !popupRef.current.contains(e.target as Node) &&
+                arrangedTextareaRef.current && 
+                !arrangedTextareaRef.current.contains(e.target as Node)
+            ) {
+                setPopupState(null);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleAskAITag = async () => {
+        if (!popupState || !suggestInput.trim()) return;
+        setIsSuggesting(true); setSuggestError("");
+        try {
+            const res = await fetch("/api/lyric/suggest", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ selectedText: popupState.selectedText, instruction: suggestInput })
+            });
+            const data = await res.json();
+            if (res.ok && data.options) { setSuggestOptions(data.options); }
+            else { setSuggestError(data.error || "Lỗi tạo gợi ý."); }
+        } catch (e: any) { setSuggestError("Lỗi kết nối máy chủ."); }
+        setIsSuggesting(false);
+  };
+
+  const handleApplyAITag = (tag: string) => {
+        if (!popupState || !arrangedTextareaRef.current) return;
+        const before = lyricArranged.substring(0, popupState.startIndex);
+        const after = lyricArranged.substring(popupState.endIndex);
+        const newText = before + tag + after;
+        setLyricArranged(newText);
+        setPopupState(null);
+        setTimeout(() => {
+            if (arrangedTextareaRef.current) {
+                arrangedTextareaRef.current.focus();
+                const newPos = before.length + tag.length;
+                arrangedTextareaRef.current.setSelectionRange(newPos, newPos);
+            }
+        }, 0);
+  };
+
   const [isArrangedStyleCopied, setIsArrangedStyleCopied] = useState<boolean>(false);
   const [isArrangedCopied, setIsArrangedCopied] = useState<boolean>(false);
 
@@ -559,7 +659,7 @@ export default function StemStudio({
      const text = lyricArrangeInput || lyricRaw;
      if (!text) return;
      setIsArrangingLyric(true);
-     setLyricArranged("Đang tạo bản phối khí chuyên nghiệp... (Thường mất khoảng 15-30 giây)");
+     setLyricArranged("Đang tạo bản phối khí chuyên nghiệp... (Thường mất khoảng 1-2 phút)");
      setLyricArrangedStyle("");
      try {
         const res = await fetch("/api/lyric/arrange", {
@@ -2347,7 +2447,7 @@ export default function StemStudio({
       lowEq.connect(midEq);
       midEq.connect(highEq);
 
-      let lastOfflineNode = highEq;
+      let lastOfflineNode: AudioNode = highEq;
 
       if (dspLowpass) {
           const lp = offlineCtx.createBiquadFilter();
@@ -3097,7 +3197,18 @@ export default function StemStudio({
   const phoiKhiLyricUI = (
     <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
         <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('arrange')}>
-            <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Music className="w-3 h-3 inline-block mr-1 -mt-0.5" /> PHỐI KHÍ LYRIC</h3>
+            <div className="flex items-center gap-3">
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Music className="w-3 h-3 inline-block mr-1 -mt-0.5" /> PHỐI KHÍ LYRIC</h3>
+                <button
+                    onClick={(e) => { e.stopPropagation(); setShowGuideModal(true); }}
+                    className="flex items-center gap-1 bg-white/10 hover:bg-white/20 text-white px-2 py-0.5 rounded uppercase text-[8px] font-black tracking-widest transition-all"
+                    title="Hướng dẫn sử dụng Thẻ Suno"
+                >
+                    <BookOpen className="w-2.5 h-2.5" />
+                    HƯỚNG DẪN
+                </button>
+                
+            </div>
             <div className="flex items-center gap-2">
                 {expandedSections.arrange ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
             </div>
@@ -3187,8 +3298,12 @@ export default function StemStudio({
                         </label>
                         <textarea 
                             className="w-full bg-black/60 border border-purple-500/30 rounded-xl p-3 text-emerald-400 font-mono text-[11px] sm:text-[12px] leading-relaxed custom-scrollbar focus:outline-none focus:border-purple-500/70 min-h-[300px]"
+                            ref={arrangedTextareaRef}
                             value={lyricArranged}
-                            readOnly
+                            onChange={(e) => setLyricArranged(e.target.value)}
+                            onMouseUp={handleSelectArranged}
+                            onKeyUp={handleSelectArranged}
+                            placeholder="Kịch bản phối khí (Bạn có thể sửa trực tiếp hoặc bôi đen chữ để AI gợi ý)"
                         />
                     </div>
                 )}
@@ -3928,11 +4043,89 @@ export default function StemStudio({
                <SunoLyricDownloader />
              )}
           </div>
+      {showGuideModal && <SunoGuideModal onClose={() => setShowGuideModal(false)} />}
     </>
   );
 
   return (
     <div className={isEmbedded ? "w-full h-full flex flex-col text-white overflow-hidden rounded-[24px] relative bg-transparent" : "fixed inset-0 z-[100] flex flex-col text-white overflow-hidden animate-in fade-in duration-500 relative bg-black/50 backdrop-blur-3xl"}>
+       
+            {/* AI Suggestion Popup for Arrangement */}
+            {popupState && popupState.visible && (
+                <div 
+                    ref={popupRef}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="fixed z-[100000] w-[260px] bg-[#1a1d24]/95 backdrop-blur-2xl border border-purple-500/40 rounded-xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col max-h-[350px] animate-in zoom-in-95 fade-in duration-200"
+                    style={{ left: popupState.x, top: popupState.y }}
+                >
+                    <div className="px-3 py-2 bg-white/5 border-b border-white/10 flex items-center justify-between shrink-0">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-white/90 uppercase tracking-wider">
+                            <Wand2 className="w-3.5 h-3.5 text-purple-400" />
+                            AI Tùy Chỉnh Thẻ
+                        </div>
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); setPopupState(null); }}
+                            className="p-1 hover:bg-white/10 rounded-md text-white/50 transition-colors"
+                        >
+                            <X className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                    <div className="p-2.5 flex flex-col gap-2 shrink-0">
+                        <div className="bg-black/40 rounded border border-white/5 p-1.5">
+                            <div className="text-[8px] text-white/40 uppercase font-black mb-0.5">Đang chọn:</div>
+                            <div className="text-[10px] text-white/80 font-medium break-words leading-tight line-clamp-2">"{popupState.selectedText}"</div>
+                        </div>
+                        
+                        <div className="flex flex-col gap-1.5 mt-1">
+                            <input
+                                type="text"
+                                value={suggestInput}
+                                onChange={(e) => setSuggestInput(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && handleAskAITag()}
+                                placeholder="Vd: 'chậm lại', 'giọng nam'..."
+                                className="w-full bg-black/60 border border-white/10 rounded-lg px-2.5 py-1.5 text-[11px] text-white focus:outline-none focus:border-purple-500/50"
+                            />
+                            <button
+                                onClick={handleAskAITag}
+                                disabled={!suggestInput.trim() || isSuggesting}
+                                className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-[9px] font-bold uppercase tracking-widest py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-colors"
+                            >
+                                {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                {isSuggesting ? "ĐANG TÌM..." : "GỢI Ý THẺ"}
+                            </button>
+                        </div>
+                    </div>
+                    {suggestError && (
+                        <div className="px-2 pb-2 text-red-400 text-[10px] font-medium text-center shrink-0">
+                            {suggestError}
+                        </div>
+                    )}
+                    {suggestOptions.length > 0 && (
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-2.5 pt-0 border-t border-white/10">
+                            <div className="text-[9px] text-white/50 font-bold uppercase tracking-wider mb-1.5 mt-2">
+                                Chọn để thay thế:
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                {suggestOptions.map((opt, idx) => (
+                                    <button
+                                        key={idx}
+                                        onClick={(e) => { e.stopPropagation(); handleApplyAITag(opt.tag); }}
+                                        className="text-left bg-white/5 hover:bg-purple-500/20 border border-white/5 hover:border-purple-500/40 rounded-lg p-2 transition-colors group"
+                                    >
+                                        <div className="font-mono text-[10px] text-purple-300 mb-0.5 group-hover:text-purple-200 font-bold">
+                                            {opt.tag}
+                                        </div>
+                                        <div className="text-[9px] text-white/60 group-hover:text-white/80 leading-relaxed">
+                                            {opt.explanation}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
        {/* Dynamic Cover Artwork Background */}
        {coverUrl && (
           <>

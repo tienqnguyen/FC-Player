@@ -146,10 +146,59 @@ async function callLLM(prompt: string) {
     );
 }
 
-export async function arrangeLyric(rawLyric: string, options: { sunoFormat?: boolean; addChords?: boolean; charLimit?: boolean; customPrompt?: string } = {}) {
+export async function arrangeLyric(rawLyric: string, options: { sunoFormat?: boolean; addChords?: boolean; charLimit?: boolean; customPrompt?: string; proFormat?: boolean } = {}) {
     let prompt = "";
     
-    if (options.sunoFormat) {
+    if (options.proFormat) {
+        prompt = `You are an expert AI Music Arranger and Suno AI Prompt Engineer.
+Your task is to transform the user's raw lyrics and style requests into a highly detailed, cinematic arrangement prompt.
+
+CRITICAL RULES:
+1. ONLY USE SQUARE BRACKETS [\] for all musical, atmospheric, vocal, and mix directions. DO NOT use parentheses (). DO NOT use normal descriptive text outside of lyrics and brackets.
+2. Structure the song perfectly, placing blocks of descriptive tags before each lyric section.
+3. Keep the original lyrics completely intact (do not rewrite them, keep the exact original language).
+4. IF THE USER'S STYLE/MOOD IS EMPTY (no custom instruction), you MUST deeply analyze the meaning, emotion, and rhythm of the lyrics to infer the most fitting genre and mood. Do NOT guess randomly. Match the arrangement to the soul of the lyrics.
+4. Be highly descriptive about the atmosphere, the vocal delivery (e.g. [low baritone, slightly raspy], [deep male choir]), the specific instruments playing (e.g. [dark piano + Rhodes + deep 808]), and spatial/mix effects (e.g. [long tape echo drifting across stereo]).
+5. DO NOT output ANY conversational filler. DO NOT output a preamble. ONLY output the raw structured text.
+${options.customPrompt ? `\nUSER CUSTOM INSTRUCTIONS:\n"${options.customPrompt}"\nEnsure the arrangement strictly follows this specific direction.` : ""}
+
+OUTPUT FORMAT EXAMPLE:
+
+[Intro]
+[Hong Kong cinematic night atmosphere]
+[deep dark piano, distant city ambience, soft vinyl texture]
+[low male wordless vocal: “Ooooooh…”]
+[breathy “Aaaaaah…” background choir]
+[wide 8D stereo movement]
+
+[Verse 1]
+[deep Hong Kong gangster-style male vocal]
+[low baritone, slightly raspy and smoky]
+[cool restrained delivery, mature and worldly]
+[dark piano + Rhodes + deep 808]
+[distant electric guitar echoes]
+
+Đến một mình, đi một mình, như mây bay ngang trời xanh.
+Thế gian rộng, đời người ngắn, có chi đâu để mong manh.
+
+[Chorus]
+[Hong Kong cinematic anthem]
+[wide atmospheric synths]
+[electric violin soaring]
+[cinematic strings]
+[vocal becomes stronger, still low and masculine]
+
+Tự mình chọn lấy một con đường, tự mình chống đỡ những cơn mưa!
+Một mình đối diện với giông bão, chẳng cần ai đón hay đưa.
+
+[Electric Guitar Solo]
+[Hong Kong movie soundtrack inspired electric guitar]
+[clean electric guitar with warm overdrive]
+[slow emotional bends]
+
+INPUT LYRICS/REQUIREMENTS:
+${rawLyric}`;
+    } else if (options.sunoFormat) {
         prompt = `You are an expert AI Music Arranger and Suno AI Prompt Engineer.
 Your task is to transform the user's lyrics and requirements into a highly detailed, professional Suno AI prompt.
 
@@ -345,4 +394,30 @@ ${rawLyric}`;
            ? "Invalid API Key. Please check your OPENROUTER_API_KEY in the Secrets panel."
           : `AI generation failed after multiple attempts: ${errMsg}`
     );
+}
+
+export async function suggestLyricTags(selectedText: string, instruction: string) {
+    const prompt = `You are an expert Suno AI Prompt Engineer and Music Producer.
+The user has selected the following music tag/text from their arrangement prompt: "${selectedText}"
+The user wants to modify it with this instruction: "${instruction}"
+
+Your task is to generate 3 to 4 professional Suno AI tag options (in English, wrapped in square brackets) that fulfill the user's request.
+For each option, provide a clear explanation in Vietnamese of what musical effect or vibe it creates.
+
+OUTPUT FORMAT (JSON strictly):
+{
+   "options": [
+      {
+         "tag": "[heavy distorted electric guitar]",
+         "explanation": "Tiếng guitar điện gầm gừ, méo tiếng nặng, tạo cảm giác mạnh mẽ và bùng nổ."
+      },
+      {
+         "tag": "[distant echoing acoustic guitar]",
+         "explanation": "Tiếng guitar thùng vang vọng từ xa, tạo không gian cô đơn, tĩnh lặng."
+      }
+   ]
+}
+
+Return ONLY valid JSON. Do not include markdown blocks or preamble.`;
+    return await callLLM(prompt);
 }

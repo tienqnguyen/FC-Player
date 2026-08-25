@@ -55,7 +55,7 @@ export function unflattenNuxtData(dataObj: any[]): any[] {
     const selectedQual = flacQual || s.streamURL.find((q: any) => q.type === "320") || s.streamURL.find((q: any) => q.type === "128") || s.streamURL[0];
     const directAudioUrl = selectedQual ? selectedQual.stream : "";
     
-    // Wrap with proxy stream endpoint to bypass region blocks and allow CORS playback
+    // We must wrap the URL in our local proxy to avoid CORS issues when the frontend uses Web Audio API
     const proxiedAudioUrl = directAudioUrl ? `/api/proxy-stream?url=${encodeURIComponent(directAudioUrl)}` : "";
     
     return {
@@ -65,7 +65,7 @@ export function unflattenNuxtData(dataObj: any[]): any[] {
       duration: s.duration || 180,
       cover: s.image || s.bgImage || "https://image-cdn.nct.vn/playlist/default.jpg",
       audioUrl: proxiedAudioUrl,
-      originalUrl: `https://www.nhaccuatui.com/song/${s.key}.html`,
+      originalUrl: `https://www.nhaccuatui.com/song/${s.key}`,
       qualities: s.streamURL.map((q: any) => ({
         quality: q.typeUI || q.type,
         url: q.stream ? `/api/proxy-stream?url=${encodeURIComponent(q.stream)}` : "",
@@ -188,7 +188,13 @@ export async function expandNctUrl(url: string): Promise<string> {
 
 // Bypassing geoblocking with fast direct attempt and high speed VN Proxy Race fallback
 export async function fetchNctPlaylistWithProxyRace(rawUrl: string): Promise<string> {
-  const nctUrl = await expandNctUrl(rawUrl);
+  let nctUrl = await expandNctUrl(rawUrl);
+  
+  // Fix NCT short links that incorrectly have .html appended, causing 302 redirects to home page
+  if (nctUrl.includes("/song/") && nctUrl.endsWith(".html")) {
+    nctUrl = nctUrl.replace(".html", "");
+  }
+  
   // 1. Try DIRECT fetch first (super-fast, avoids proxy overhead if not geoblocked)
   console.log(`[NCT Parser] Trying direct fetch first for URL: ${nctUrl}`);
   try {

@@ -12,7 +12,6 @@ import { db, auth, initAuth, handleFirestoreError, OperationType } from "./fireb
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
 import { GoogleDriveAlbum } from "./components/GoogleDriveAlbum";
 
-
 function safeDecodeAudioData(ctx: AudioContext, audioData: ArrayBuffer): Promise<AudioBuffer> {
   return new Promise((resolve, reject) => {
     try {
@@ -2166,6 +2165,7 @@ const DEFAULT_SPATIAL = {
 };
 
 export default function App() {
+  
   const [currentSong, setCurrentSong] = useState<any>(null);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isAppInstalled, setIsAppInstalled] = useState<boolean>(false);
@@ -2477,9 +2477,7 @@ export default function App() {
           const firstSong = json.songs[0];
           setCurrentSong(firstSong);
           let playUrl = firstSong.audioUrl;
-          if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
-            playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
-          }
+
           setAudioUrl(playUrl);
           setFileName(firstSong.title || "Default Song");
         }
@@ -2502,9 +2500,7 @@ export default function App() {
         const firstSong = parsed[0];
         setCurrentSong(firstSong);
         let playUrl = firstSong.audioUrl;
-        if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
-          playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
-        }
+
         setAudioUrl(playUrl);
         setFileName(firstSong.title || "Default Song");
       }
@@ -3020,9 +3016,7 @@ export default function App() {
     if (!isLocalUploaded) {
       setUploadedFile(null);
     }
-    if (playUrl && (playUrl.includes("nct.vn") || playUrl.includes("nhaccuatui.com")) && !playUrl.includes("/api/proxy-stream")) {
-      playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
-    }
+
 
     if (!playUrl) return;
 
@@ -3056,33 +3050,35 @@ export default function App() {
   };
 
 
-  const getSafeFilename = (title) => {
+  const getSafeFilename = (title: any) => {
     if (!title) return "audio";
-    let clean = title.replace(/[^a-zA-Z0-9_\-\s]/g, "").trim();
-    if (clean.length > 30) {
-      clean = clean.substring(0, 30).trim();
+    let clean = String(title).replace(/[<>:"/\\|?*\x00-\x1F]/g, "").trim();
+    if (clean.length > 80) {
+      clean = clean.substring(0, 80).trim();
     }
     return clean || "audio";
   };
 
-  const downloadAudio = async (e: React.MouseEvent, song: any) => {
-    e.stopPropagation();
-    if (!song.audioUrl) return;
+  const downloadAudio = async (e: React.MouseEvent | null, song: any) => {
+    if (e) e.stopPropagation();
+    let audioSrc = song.audioUrl || "";
+    if (!audioSrc) return;
+
+    const safeTitle = getSafeFilename(song.title);
 
     // Handle local files (blob URLs) directly
-    if (song.audioUrl.startsWith("blob:")) {
+    if (audioSrc.startsWith("blob:")) {
       const link = document.createElement("a");
-      link.href = song.audioUrl;
-      link.download = `${getSafeFilename(song.title)}.m4a`;
+      link.href = audioSrc;
+      link.download = `${safeTitle}.mp3`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       return;
     }
 
-    let targetUrl = song.originalUrl || song.audioUrl || "";
-    // If we only have a proxy URL, extract it, but originalUrl is always preferred for yt-dlp compatibility
-    if (!song.originalUrl && targetUrl && (targetUrl.startsWith("/api/proxy-stream") || targetUrl.includes("/api/proxy-stream"))) {
+    let targetUrl = song.originalUrl || audioSrc;
+    if (!song.originalUrl && targetUrl && (targetUrl.startsWith("/api/proxy-stream") || targetUrl.includes("/api/proxy-stream") || targetUrl.startsWith("/api/stream") || targetUrl.includes("/api/stream"))) {
       try {
         const urlObj = new URL(targetUrl, window.location.origin);
         let extractedUrl = urlObj.searchParams.get("url");
@@ -3090,11 +3086,11 @@ export default function App() {
       } catch (err) {}
     }
     
-    const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(getSafeFilename(song.title))}`;
+    const downloadUrl = `/api/download?url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(safeTitle)}`;
     
-    // Let the browser handle the download using the backend's Content-Disposition headers
     const link = document.createElement("a");
     link.href = downloadUrl;
+    link.download = safeTitle + ".mp3";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -3194,12 +3190,13 @@ export default function App() {
                                 ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` 
                                 : rawAudioUrl;
                                 
+        const rawVideoUrl = v.play || v.video_info?.play;
         return {
           id: v.video_id || v.id || Date.now().toString() + Math.random(),
           title: v.title || v.desc || "TikTok Audio",
           originalUrl: "https://www.tiktok.com/@" + normalizedUsername + "/video/" + (v.video_id || v.id),
           audioUrl: proxiedAudioUrl,
-          videoUrl: proxiedAudioUrl,
+          videoUrl: rawVideoUrl || proxiedAudioUrl,
           cover: musicCover,
           author: videoAuthor,
           timestamp: Date.now()
@@ -3397,7 +3394,7 @@ export default function App() {
           title: data.title || "Shared Audio Track",
           originalUrl: urlToUse,
           audioUrl: streamUrl,
-          videoUrl: (urlToUse.includes("tiktok.com") || urlToUse.includes("youtube.com") || urlToUse.includes("youtu.be") || urlToUse.includes("facebook.com") || urlToUse.includes("fb.watch")) ? streamUrl : null,
+          videoUrl: data.url || ((urlToUse.includes("tiktok.com") || urlToUse.includes("youtube.com") || urlToUse.includes("youtu.be") || urlToUse.includes("facebook.com") || urlToUse.includes("fb.watch")) ? streamUrl : null),
           cover: defaultCover,
           author: data.author || "Web Audio",
           timestamp: Date.now()
@@ -3453,12 +3450,28 @@ export default function App() {
           throw new Error("No play-ready audio tracks found in this NhacCuaTui link/source.");
         }
         
+        // Ensure proxy is applied (in case of cached responses that had direct links)
+        const proxiedSongs = songs.map((s: any) => {
+            if (s.audioUrl && s.audioUrl.startsWith("http") && !s.audioUrl.includes("/api/proxy-stream")) {
+                s.audioUrl = `/api/proxy-stream?url=${encodeURIComponent(s.audioUrl)}`;
+            }
+            if (s.qualities) {
+                s.qualities = s.qualities.map((q: any) => {
+                   if (q.url && q.url.startsWith("http") && !q.url.includes("/api/proxy-stream")) {
+                       q.url = `/api/proxy-stream?url=${encodeURIComponent(q.url)}`;
+                   }
+                   return q;
+                });
+            }
+            return s;
+        });
+
         // Load songs into queue
-        setRecentSongs(songs);
+        setRecentSongs(proxiedSongs);
         
         // Auto play first track
         shouldAutoPlayRef.current = true;
-        playRecentSong(songs[0]);
+        playRecentSong(proxiedSongs[0]);
         
         setTiktokUrl("");
         setTiktokError("");
@@ -3508,16 +3521,19 @@ export default function App() {
             if (!songsList || songsList.length === 0) throw new Error("No play-ready audio tracks found in this TKaraoke link.");
             
             // Map the tkaraoke playlist to recentSongs format
-            const mappedSongs = songsList.map((s: any, idx: number) => ({
-                id: "tkar_" + idx + "_" + Date.now().toString(),
-                title: s.title || "TKaraoke Track",
-                originalUrl: s.url,
-                audioUrl: s.url, 
-                cover: "https://images.unsplash.com/photo-1516280440502-127db8e0586e?q=80&w=300",
-                author: "TKaraoke",
-                timestamp: Date.now(),
-                isTKaraokePlaylistTrack: true 
-            }));
+            const mappedSongs = songsList.map((s: any, idx: number) => {
+                const finalAudio = s.audioUrl || s.url;
+                return {
+                    id: "tkar_" + idx + "_" + Date.now().toString(),
+                    title: s.title || "TKaraoke Track",
+                    originalUrl: s.url,
+                    audioUrl: finalAudio, 
+                    cover: "https://images.unsplash.com/photo-1516280440502-127db8e0586e?q=80&w=300",
+                    author: "TKaraoke",
+                    timestamp: Date.now(),
+                    isTKaraokePlaylistTrack: !s.audioUrl // Only fetch details if we didn't find mp3 in playlist
+                };
+            });
             
             setRecentSongs(mappedSongs);
             shouldAutoPlayRef.current = true;
@@ -3641,12 +3657,15 @@ export default function App() {
         const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info || v.audioUrl).map((v: any) => {
           const rawAudioUrl = v.audioUrl || v.music || v.play || v.music_info?.play;
           const proxiedAudioUrl = rawAudioUrl && rawAudioUrl.startsWith("http") && !rawAudioUrl.includes("/api/stream") ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` : rawAudioUrl;
+          
+          const rawVideoUrl = v.play || v.video_info?.play;
+                                  
           return {
             id: v.video_id || v.id || Date.now().toString() + Math.random(),
             title: v.title || v.desc || "TikTok Audio",
             originalUrl: "https://www.tiktok.com/@" + username + "/video/" + (v.video_id || v.id),
             audioUrl: proxiedAudioUrl,
-            videoUrl: proxiedAudioUrl,
+            videoUrl: rawVideoUrl || proxiedAudioUrl,
             cover: v.cover || v.origin_cover || v.music_info?.cover,
             author: v.author?.nickname || "@" + username,
             timestamp: Date.now()
@@ -3693,7 +3712,7 @@ export default function App() {
         title: data.title || "TikTok Audio",
         originalUrl: urlToUse,
         audioUrl: streamUrl,
-        videoUrl: streamUrl,
+        videoUrl: data.url || streamUrl,
         cover: data.cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
         author: data.author || "TikTok Creator",
         timestamp: Date.now()
@@ -3955,32 +3974,14 @@ export default function App() {
     startDelayedAction("HD", nextVal);
   };
 
-  const handleDownloadCurrentAudio = () => {
-    const targetUrl = audioUrl || currentSong?.audioUrl;
-    if (!targetUrl) return;
-    
-    // If it's a proxy stream url (like from nhaccuatui or soundcloud via backend), we can use the backend /api/download route
-    // The proxy stream URL is already formed like `/api/proxy-stream?url=...` or `/api/stream?url=...`
-    // We can extract the inner url and pass it to download API
-    let originalUrl = currentSong?.originalUrl || targetUrl;
-    
-    // Only extract from proxy if we don't have a valid originalUrl
-    if (!currentSong?.originalUrl) {
-      if (targetUrl.includes("/api/proxy-stream?url=")) {
-        originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
-      } else if (targetUrl.includes("/api/stream?url=")) {
-        originalUrl = decodeURIComponent(targetUrl.split("url=")[1]);
-      }
-    }
-
-    const title = fileName || currentSong?.title || "audio";
-    const downloadUrl = `/api/download?url=${encodeURIComponent(originalUrl)}&title=${encodeURIComponent(title)}`;
-    
-    const a = document.createElement('a');
-    a.href = downloadUrl;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+  const handleDownloadCurrentAudio = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!currentSong) return;
+    downloadAudio(e as any, { 
+       ...currentSong, 
+       audioUrl: audioUrl || currentSong.audioUrl, 
+       title: fileName || currentSong.title 
+    });
   };
 
   const cycleVisualizer = () => {
@@ -6183,10 +6184,8 @@ export default function App() {
                               });
                               playRecentSong(newSong);
                             } else if (tiktokSearchType === "nhaccuatui") {
-                              // If NhacCuaTui proxy stream url is already loaded!
-                              const streamUrl = song.url.includes("api/proxy-stream") 
-                                ? song.url 
-                                : `/api/proxy-stream?url=${encodeURIComponent(song.url)}`;
+                              // If NhacCuaTui direct stream url is already loaded!
+                              const streamUrl = song.url;
                               const newSong = {
                                 id: "nct_" + song.id,
                                 title: song.title,
@@ -6231,12 +6230,14 @@ export default function App() {
                               }
 
                               const songId = song.id || song.video_id || song.url || `search-result-${index}`;
+                              const rawVideoUrl = song.play || (song.video_info && song.video_info.play);
+                              
                               const newSong = {
                                 id: songId,
                                 title: songTitle,
                                 originalUrl: oembedUrl,
                                 audioUrl: streamUrl,
-                                videoUrl: song.play || (song.video_info && song.video_info.play) || null,
+                                videoUrl: rawVideoUrl || null,
                                 cover: coverArt,
                                 author: creator,
                                 duration: song.duration,
@@ -7134,6 +7135,7 @@ onClearStems={() => {
         )}
 
          <audio
+          referrerPolicy="no-referrer"
           key={bgPlayBypass ? "audio-bypass" : "audio-processed"}
           ref={audioRef}
           src={audioUrl || undefined}
