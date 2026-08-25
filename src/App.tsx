@@ -4113,7 +4113,8 @@ export default function App() {
     const updatedSong = { ...currentSong, hasRetried: true };
     setCurrentSong(updatedSong);
     
-    setTiktokError("Link expired, refetching fresh audio...");
+    setIsFetchingTiktok(true);
+    setTiktokError("");
     
     try {
       const res = await fetch(`/api/metadata?url=${encodeURIComponent(currentSong.originalUrl)}`);
@@ -4122,7 +4123,7 @@ export default function App() {
         throw new Error(data.error || "Failed to refetch");
       }
       
-      const streamUrl = `/api/stream?url=${encodeURIComponent(currentSong.originalUrl)}`;
+      const streamUrl = `/api/stream?url=${encodeURIComponent(currentSong.originalUrl)}&force_refresh=true&_t=${Date.now()}`;
       updatedSong.audioUrl = streamUrl;
       updatedSong.videoUrl = streamUrl;
       
@@ -4130,10 +4131,11 @@ export default function App() {
       setCurrentSong(updatedSong);
       setAudioUrl(streamUrl);
       shouldAutoPlayRef.current = true;
-      setTiktokError("");
     } catch (err) {
       console.warn("Refetch failed:", err);
       handleSkipFailedSong(prevFails + 1);
+    } finally {
+      setIsFetchingTiktok(false);
     }
   };
 
@@ -7142,7 +7144,8 @@ onClearStems={() => {
           autoPlay
           playsInline
           muted={!!(showVideoIframe && currentSong && getYouTubeEmbedUrl(currentSong.originalUrl))}
-          onPlay={() => { setIsPlaying(true); setConsecutiveFailures(0); }}
+          onPlay={() => setIsPlaying(true)}
+          onPlaying={() => setConsecutiveFailures(0)}
           onPause={() => setIsPlaying(false)}
           onError={(e) => {
             const err = (e.target as HTMLAudioElement).error;

@@ -75,11 +75,16 @@ const directStreamMemoryCache = new Map<
 >();
 const directStreamInFlightPromises = new Map<string, Promise<string>>();
 
-async function getDirectMediaUrl(url: string): Promise<string> {
+async function getDirectMediaUrl(url: string, forceRefresh: boolean = false): Promise<string> {
   const now = Date.now();
-  const cached = directStreamMemoryCache.get(url);
-  if (cached && cached.expiresAt > now) {
-    return cached.url;
+  if (forceRefresh) {
+    directStreamMemoryCache.delete(url);
+    directStreamInFlightPromises.delete(url);
+  } else {
+    const cached = directStreamMemoryCache.get(url);
+    if (cached && cached.expiresAt > now) {
+      return cached.url;
+    }
   }
 
   let inFlightPromise = directStreamInFlightPromises.get(url);
@@ -191,7 +196,7 @@ async function startServer() {
       let streamServed = false;
       if (url && !isTikTokPage) {
         try {
-          const directUrl = await getDirectMediaUrl(url);
+          const directUrl = await getDirectMediaUrl(url, req.query.force_refresh === "true");
           console.log(
             `[Stream Range Proxy] Streaming direct URL: ${directUrl.substring(0, 80)}...`,
           );
@@ -2016,7 +2021,7 @@ async function startServer() {
 
       if (!isDirect && (finalUrl.includes("youtube.com") || finalUrl.includes("youtu.be") || finalUrl.includes("facebook.com") || finalUrl.includes("fb.watch") || finalUrl.includes("nhaccuatui.com") || finalUrl.includes("nct.vn") || finalUrl.includes("tkaraoke.com"))) {
           try {
-            finalUrl = await getDirectMediaUrl(finalUrl);
+            finalUrl = await getDirectMediaUrl(finalUrl, req.query.force_refresh === "true");
           } catch(e) { }
       }
 
