@@ -78,7 +78,7 @@ function audioBufferToMp3(buffer: AudioBuffer): Blob {
   }
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
-import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search, Scissors, Replace, Trash2, SlidersHorizontal, Undo2, Redo2, Edit3, Eye } from 'lucide-react';
+import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search, Scissors, Replace, Trash2, SlidersHorizontal, Undo2, Redo2, Edit3, Eye, Speaker, Heart } from "lucide-react";
 import AudioTrimmer from "./AudioTrimmer";
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
@@ -86,6 +86,10 @@ import { Copy, FileText, Edit2, Save, Link, UploadCloud, Repeat, Waves, TreePine
 import { diffWords, Change } from 'diff';
 import SpectrogramTool from "./Spectrogram";
 import PixabayStudio from "./PixabayStudio";
+import { AudioEnhancer } from "./AudioEnhancer";
+import { FcOneKnobPro } from "./FcOneKnobPro";
+import { FcStudioFx } from "./FcStudioFx";
+import { Mic, Maximize } from "lucide-react";
 
 interface StemStudioProps {
   originalAudioUrl?: string | null;
@@ -367,7 +371,7 @@ export default function StemStudio({
   const [isLoadingAudio, setIsLoadingAudio] = useState(true);
   const [loadedCount, setLoadedCount] = useState(0);
   const [volumes, setVolumes] = useState<Record<string, number>>({
-    vocals: 0.8, drums: 0.8, bass: 0.8, guitar: 0.8, piano: 0.8, other: 0.8
+    vocals: 1.0, drums: 1.0, bass: 1.0, guitar: 1.0, piano: 1.0, other: 1.0
   });
   const [pans, setPans] = useState<Record<string, number>>({});
   const [speed, setSpeed] = useState<number>(1);
@@ -1134,10 +1138,10 @@ export default function StemStudio({
   const [sunoEqHigh, setSunoEqHigh] = useState<number>(() => parseFloat(localStorage.getItem("suno_eq_high") || "6.5"));
   const [showSunoSettings, setShowSunoSettings] = useState<boolean>(false);
 
-  const [dspLowpass, setDspLowpass] = useState<boolean>(() => localStorage.getItem("dsp_lowpass") === "true");
-  const [dspChorus, setDspChorus] = useState<boolean>(() => localStorage.getItem("dsp_chorus") === "true");
-  const [dspFlutter, setDspFlutter] = useState<boolean>(() => localStorage.getItem("dsp_flutter") === "true");
-  const [dspDecorrelate, setDspDecorrelate] = useState<boolean>(() => localStorage.getItem("dsp_decorrelate") === "true");
+  const [dspLowpass, setDspLowpass] = useState<boolean>(false);
+  const [dspChorus, setDspChorus] = useState<boolean>(false);
+  const [dspFlutter, setDspFlutter] = useState<boolean>(false);
+  const [dspDecorrelate, setDspDecorrelate] = useState<boolean>(false);
 
   useEffect(() => {
     localStorage.setItem("dsp_lowpass", dspLowpass.toString());
@@ -1301,6 +1305,52 @@ export default function StemStudio({
 
   const [showPixabaySearch, setShowPixabaySearch] = useState<boolean>(false);
   const [showPixabayStudio, setShowPixabayStudio] = useState<boolean>(false);
+  const [showAudioEnhancer, setShowAudioEnhancer] = useState<boolean>(false);
+  const [showFcOneKnobPro, setShowFcOneKnobPro] = useState<boolean>(false);
+  const [showFcStudioFx, setShowFcStudioFx] = useState<boolean>(false);
+  const [active8D, setActive8D] = useState<boolean>(false);
+  
+  // FC Plugin Bypass States
+  const [fcAudioBypassed, setFcAudioBypassed] = useState(true);
+  const [fcOneKnobBypassed, setFcOneKnobBypassed] = useState(true);
+  const [fcStudioBypassed, setFcStudioBypassed] = useState(true);
+  const [activeBassBoost, setActiveBassBoost] = useState<boolean>(false);
+  const [activeSpeedFx, setActiveSpeedFx] = useState<'slowed' | 'nightcore' | '432hz' | null>(null);
+
+  useEffect(() => {
+    if (masterPannerDepthRef.current && audioContextRef.current) {
+       masterPannerDepthRef.current.gain.setTargetAtTime(active8D ? 0.8 : 0, audioContextRef.current.currentTime, 0.5);
+    }
+  }, [active8D]);
+
+  useEffect(() => {
+    if (masterBassBoostRef.current && audioContextRef.current) {
+       masterBassBoostRef.current.gain.setTargetAtTime(activeBassBoost ? 12.0 : 0, audioContextRef.current.currentTime, 0.5);
+    }
+  }, [activeBassBoost]);
+
+  useEffect(() => {
+    if (activeSpeedFx === 'slowed') {
+       setSpeed(0.8);
+       setPreservePitch(false);
+       setReverb(0.4);
+    } else if (activeSpeedFx === 'nightcore') {
+       setSpeed(1.25);
+       setPreservePitch(false);
+       setReverb(0.1);
+    } else if (activeSpeedFx === '432hz') {
+       setSpeed(0.9818);
+       setPreservePitch(false);
+    } else {
+       setSpeed(1.0);
+       setPreservePitch(true);
+       setReverb(0);
+    }
+  }, [activeSpeedFx]);
+  const [audioNodesReady, setAudioNodesReady] = useState<boolean>(false);
+  const [showPluginsList, setShowPluginsList] = useState(true);
+  const [showAiCloudConfig, setShowAiCloudConfig] = useState(false);
+  const [showSystemWarning, setShowSystemWarning] = useState(true);
   const [pixabayQuery, setPixabayQuery] = useState<string>("rain");
   const [pixabayResults, setPixabayResults] = useState<any[]>([]);
   const [isPixabaySearching, setIsPixabaySearching] = useState<boolean>(false);
@@ -1385,12 +1435,22 @@ export default function StemStudio({
   const loadedUrlsRef = useRef<Record<string, string>>({});
   
   const audioContextRef = useRef<AudioContext | null>(null);
+  // Master plugin routing refs
+  const masterPluginInputRef = useRef<GainNode | null>(null);
+  const masterPluginOutputRef = useRef<GainNode | null>(null);
+  const originalAudioElementRef = useRef<HTMLAudioElement | null>(null);
+  const originalAudioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+
   const masterGainRef = useRef<GainNode | null>(null);
   const masterEqNodesRef = useRef<BiquadFilterNode[]>([]);
   const masterNoiseGainRef = useRef<GainNode | null>(null);
   const masterToneLowRef = useRef<BiquadFilterNode | null>(null);
   const masterToneMidRef = useRef<BiquadFilterNode | null>(null);
   const masterToneHighRef = useRef<BiquadFilterNode | null>(null);
+  const masterPannerRef = useRef<StereoPannerNode | null>(null);
+  const masterPannerLfoRef = useRef<OscillatorNode | null>(null);
+  const masterPannerDepthRef = useRef<GainNode | null>(null);
+  const masterBassBoostRef = useRef<BiquadFilterNode | null>(null);
   
   const dspLowpassRef = useRef<BiquadFilterNode | null>(null);
   const dspChorusDryRef = useRef<GainNode | null>(null);
@@ -1826,8 +1886,28 @@ export default function StemStudio({
       decWet.connect(merger, 0, 1);
       
       lastNode = merger;
+      
+      const pluginIn = ctx.createGain();
+      const pluginOut = ctx.createGain();
+      lastNode.connect(pluginIn);
+      pluginIn.connect(pluginOut);
+      pluginOut.connect(ctx.destination);
+      
+      masterPluginInputRef.current = pluginIn;
+      masterPluginOutputRef.current = pluginOut;
+      setAudioNodesReady(true);
 
-      lastNode.connect(ctx.destination);
+      // Setup original audio if it exists
+      if (originalAudioElementRef.current && !originalAudioSourceRef.current) {
+        try {
+          const originalSource = ctx.createMediaElementSource(originalAudioElementRef.current);
+          originalAudioSourceRef.current = originalSource;
+          originalSource.connect(pluginIn); // Bypass all the stem mixing stuff, just go to plugins
+        } catch (e) {
+          console.error("Could not bind original audio source:", e);
+        }
+      }
+
       revGain.connect(eqNodes[0]);
 
       stemsList.forEach(stem => {
@@ -2339,6 +2419,10 @@ export default function StemStudio({
     try {
       setIsTranscribing(true);
       setTranscriptionStatus('Uploading to Cohere ASR...');
+      setTimeout(() => {
+         const el = document.getElementById('lyrics-bottom-container');
+         if (el) el.scrollIntoView({ behavior: 'smooth' });
+      }, 50);
       
       const text = await transcribeWithCohere(audioUrlToTranscribe, "vi");
       setCohereTranscript(textToLrc(text, duration || 0));
@@ -2992,6 +3076,22 @@ export default function StemStudio({
       });
     }
     setIsPlaying(!isPlaying);
+  };
+
+  const handleDSPReset = () => {
+    setDspLowpass(false);
+    setDspChorus(false);
+    setDspFlutter(false);
+    setDspDecorrelate(false);
+  };
+
+  const handleMasterReset = () => {
+    setVolumes({ vocals: 1.0, drums: 1.0, bass: 1.0, guitar: 1.0, piano: 1.0, other: 1.0 });
+    setPans({});
+    setMutes({});
+    setSolos({});
+    setSpeed(1.0);
+    setReverb(0);
   };
 
   const handleRestart = () => {
@@ -4047,6 +4147,236 @@ export default function StemStudio({
     </>
   );
 
+  const renderPluginsRack = () => (
+<div className="w-full mt-6">
+{/* PLUGINS RACK */}
+      <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
+         <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => setShowPluginsList(!showPluginsList)}>
+                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Activity className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Plugins Rack</h3>
+            <div className="flex items-center gap-2">
+                   <span className="text-[9px] font-mono font-medium text-white/30">{(active8D ? 1 : 0) + (activeBassBoost ? 1 : 0) + (activeSpeedFx ? 1 : 0) + (!fcAudioBypassed ? 1 : 0) + (!fcOneKnobBypassed ? 1 : 0) + (!fcStudioBypassed ? 1 : 0)} Active</span>
+                   {showPluginsList ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+                </div>
+             </div>
+             
+             {showPluginsList && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                   {/* Audio Enhancer Plugin */}
+               <div 
+                      className={`w-full ${!fcAudioBypassed ? 'bg-indigo-500/10 border-indigo-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group relative overflow-hidden`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setShowAudioEnhancer(true);
+                      }}
+                   >
+                  <div className={`absolute top-0 right-0 w-24 h-24 ${!fcAudioBypassed ? 'bg-indigo-500/10' : 'bg-white/5'} rounded-full blur-2xl -mr-10 -mt-10 transition-colors`}></div>
+                  <div className="flex items-center gap-3 relative z-10">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all group-hover:scale-110 ${!fcAudioBypassed ? 'bg-indigo-500/20 text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.2)]' : 'bg-white/5 text-white/40'}`}>
+                           <Activity className="w-5 h-5" />
+                        </div>
+                    <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              FC AUDIO
+                              {!fcAudioBypassed && <span className="text-[8px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">Mastering & Dynamics</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${!fcAudioBypassed ? 'border-indigo-500 bg-indigo-500' : 'border-white/20'} flex items-center justify-center relative z-10`}>
+                        {!fcAudioBypassed && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+
+                   {/* FC One-Knob Pro Plugin */}
+               <div 
+                      className={`w-full ${!fcOneKnobBypassed ? 'bg-orange-500/10 border-orange-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group relative overflow-hidden`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setShowFcOneKnobPro(true);
+                      }}
+                   >
+                  <div className={`absolute top-0 right-0 w-24 h-24 ${!fcOneKnobBypassed ? 'bg-orange-500/10' : 'bg-white/5'} rounded-full blur-2xl -mr-10 -mt-10 transition-colors`}></div>
+                  <div className="flex items-center gap-3 relative z-10">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all group-hover:scale-110 ${!fcOneKnobBypassed ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_15px_rgba(249,115,22,0.2)]' : 'bg-white/5 text-white/40'}`}>
+                           <Sliders className="w-5 h-5" />
+                        </div>
+                    <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              FC ONE-KNOBS
+                              {!fcOneKnobBypassed && <span className="text-[8px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">8 Macros</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${!fcOneKnobBypassed ? 'border-orange-500 bg-orange-500' : 'border-white/20'} flex items-center justify-center relative z-10`}>
+                        {!fcOneKnobBypassed && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+
+                   {/* FC Studio FX Plugin */}
+                   <div 
+                      className={`w-full ${!fcStudioBypassed ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group relative overflow-hidden`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setShowFcStudioFx(true);
+                      }}
+                   >
+                      <div className={`absolute top-0 right-0 w-24 h-24 ${!fcStudioBypassed ? 'bg-emerald-500/10' : 'bg-white/5'} rounded-full blur-2xl -mr-10 -mt-10 transition-colors`}></div>
+                      <div className="flex items-center gap-3 relative z-10">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all group-hover:scale-110 ${!fcStudioBypassed ? 'bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-white/5 text-white/40'}`}>
+                           <Zap className="w-5 h-5" />
+                        </div>
+                        <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              FC STUDIO RACK
+                              {!fcStudioBypassed && <span className="text-[8px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">4-Unit Pro Rack</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${!fcStudioBypassed ? 'border-emerald-500 bg-emerald-500' : 'border-white/20'} flex items-center justify-center relative z-10`}>
+                        {!fcStudioBypassed && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+
+                   {/* 8D Audio Plugin */}
+                   <div 
+                      className={`w-full ${active8D ? 'bg-pink-500/10 border-pink-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setActive8D(!active8D);
+                      }}
+                   >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${active8D ? 'bg-pink-500/20 text-pink-400' : 'bg-white/5 text-white/40'}`}>
+                           <Headphones className="w-5 h-5" />
+                        </div>
+                        <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              8D Audio
+                              {active8D && <span className="text-[8px] bg-pink-500/20 text-pink-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">Spatial Panner</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${active8D ? 'border-pink-500 bg-pink-500' : 'border-white/20'} flex items-center justify-center`}>
+                        {active8D && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+
+                   {/* Bass Booster Plugin */}
+                   <div 
+                      className={`w-full ${activeBassBoost ? 'bg-orange-500/10 border-orange-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setActiveBassBoost(!activeBassBoost);
+                      }}
+                   >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activeBassBoost ? 'bg-orange-500/20 text-orange-400' : 'bg-white/5 text-white/40'}`}>
+                           <Speaker className="w-5 h-5" />
+                        </div>
+                        <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              Bass Booster
+                              {activeBassBoost && <span className="text-[8px] bg-orange-500/20 text-orange-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">Low Shelf EQ</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${activeBassBoost ? 'border-orange-500 bg-orange-500' : 'border-white/20'} flex items-center justify-center`}>
+                        {activeBassBoost && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+
+                   {/* Slowed + Reverb Plugin */}
+                   <div 
+                      className={`w-full ${activeSpeedFx === 'slowed' ? 'bg-blue-500/10 border-blue-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setActiveSpeedFx(activeSpeedFx === 'slowed' ? null : 'slowed');
+                      }}
+                   >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activeSpeedFx === 'slowed' ? 'bg-blue-500/20 text-blue-400' : 'bg-white/5 text-white/40'}`}>
+                           <Waves className="w-5 h-5" />
+                        </div>
+                        <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              Slowed + Reverb
+                              {activeSpeedFx === 'slowed' && <span className="text-[8px] bg-blue-500/20 text-blue-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">Vaporwave Vibe</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${activeSpeedFx === 'slowed' ? 'border-blue-500 bg-blue-500' : 'border-white/20'} flex items-center justify-center`}>
+                        {activeSpeedFx === 'slowed' && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+
+                   {/* Nightcore Plugin */}
+                   <div 
+                      className={`w-full ${activeSpeedFx === 'nightcore' ? 'bg-emerald-500/10 border-emerald-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setActiveSpeedFx(activeSpeedFx === 'nightcore' ? null : 'nightcore');
+                      }}
+                   >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activeSpeedFx === 'nightcore' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-white/5 text-white/40'}`}>
+                           <Zap className="w-5 h-5" />
+                        </div>
+                        <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              Nightcore
+                              {activeSpeedFx === 'nightcore' && <span className="text-[8px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">Sped Up & Pitched</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${activeSpeedFx === 'nightcore' ? 'border-emerald-500 bg-emerald-500' : 'border-white/20'} flex items-center justify-center`}>
+                        {activeSpeedFx === 'nightcore' && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+
+                   {/* 432 Hz Converter */}
+                   <div 
+                      className={`w-full ${activeSpeedFx === '432hz' ? 'bg-amber-500/10 border-amber-500/40' : 'bg-white/5 border-white/10 hover:border-white/20'} border rounded-2xl p-4 flex items-center justify-between cursor-pointer transition-colors group`}
+                      onClick={() => {
+                        if (!initAttemptedRef.current) initAudio();
+                        if (audioContextRef.current?.state === 'suspended') audioContextRef.current.resume();
+                        setActiveSpeedFx(activeSpeedFx === '432hz' ? null : '432hz');
+                      }}
+                   >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-colors ${activeSpeedFx === '432hz' ? 'bg-amber-500/20 text-amber-400' : 'bg-white/5 text-white/40'}`}>
+                           <Heart className="w-5 h-5" />
+                        </div>
+                        <div>
+                           <h3 className="text-white text-sm font-bold tracking-wide flex items-center gap-2">
+                              432 Hz Converter
+                              {activeSpeedFx === '432hz' && <span className="text-[8px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded font-black tracking-widest uppercase">Active</span>}
+                           </h3>
+                           <p className="text-white/50 text-[10px] uppercase font-semibold">Healing Frequency</p>
+                        </div>
+                      </div>
+                      <div className={`w-4 h-4 rounded-full border-2 ${activeSpeedFx === '432hz' ? 'border-amber-500 bg-amber-500' : 'border-white/20'} flex items-center justify-center`}>
+                        {activeSpeedFx === '432hz' && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                      </div>
+                   </div>
+                </div>
+             )}
+          </div>
+    </div>
+  );
+
   return (
     <div className={isEmbedded ? "w-full h-full flex flex-col text-white overflow-hidden rounded-[24px] relative bg-transparent" : "fixed inset-0 z-[100] flex flex-col text-white overflow-hidden animate-in fade-in duration-500 relative bg-black/50 backdrop-blur-3xl"}>
        
@@ -4155,6 +4485,9 @@ export default function StemStudio({
           <span className="text-[9px] font-black tracking-[0.12em] text-amber-400 uppercase bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20 shrink-0 hidden md:inline-block">
              Stem Studio
           </span>
+          <button onClick={handleMasterReset} className="text-[9px] font-black tracking-[0.12em] text-white/50 hover:text-white uppercase bg-white/5 hover:bg-white/10 px-2 py-0.5 rounded border border-white/10 shrink-0 hidden md:inline-block transition-colors ml-2">
+             Reset Master
+          </button>
 
           {/* Extract New Song Button */}
           {onExtractNewSong && (
@@ -4502,13 +4835,22 @@ export default function StemStudio({
                             Isolate vocals, drums, bass, and other instruments using AI or WebGPU processing.
                          </p>
 
-                         <div className="w-full max-w-xl mb-8 p-3.5 sm:p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-200/90 text-[11px] sm:text-xs leading-relaxed text-center backdrop-blur-md shadow-lg flex items-start sm:items-center justify-center gap-2.5">
-                            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
-                            <p className="text-left sm:text-center">
-                               <span className="font-bold text-amber-300 uppercase tracking-wider text-[10px] sm:text-[11px] block sm:inline mr-1">⚠️ Cảnh báo hệ thống:</span>
-                               Không hỗ trợ tách STEM với tệp âm thanh quá dài. Tuyệt đối không dùng công cụ tự động để cào/tải nhạc hàng loạt — hành vi này sẽ gây <strong>kiệt bộ nhớ (RAM)</strong>, <strong>quá tải băng thông</strong> và dẫn tới việc <strong>IP của server bị khóa bởi Tiktok hay YT. Không sử dụng search YT quá nhiều dẫn đến hết memory của Free server</strong>.
-                            </p>
-                         </div>
+                         {showSystemWarning && (
+                            <div className="w-full max-w-xl mb-8 p-3.5 sm:p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-200/90 text-[11px] sm:text-xs leading-relaxed text-center backdrop-blur-md shadow-lg flex items-start sm:items-center justify-center gap-2.5 relative group">
+                               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
+                               <p className="text-left sm:text-center pr-6">
+                                  <span className="font-bold text-amber-300 uppercase tracking-wider text-[10px] sm:text-[11px] block sm:inline mr-1">⚠️ Cảnh báo hệ thống:</span>
+                                  Không hỗ trợ tách STEM với tệp âm thanh quá dài. Tuyệt đối không dùng công cụ tự động để cào/tải nhạc hàng loạt — hành vi này sẽ gây <strong>kiệt bộ nhớ (RAM)</strong>, <strong>quá tải băng thông</strong> và dẫn tới việc <strong>IP của server bị khóa bởi Tiktok hay YT. Không sử dụng search YT quá nhiều dẫn đến hết memory của Free server</strong>.
+                               </p>
+                               <button 
+                                  onClick={() => setShowSystemWarning(false)}
+                                  className="absolute right-2 top-2 p-1 text-amber-400/50 hover:text-amber-400 hover:bg-amber-400/10 rounded-lg transition-colors"
+                                  title="Ẩn cảnh báo"
+                               >
+                                  <X className="w-3.5 h-3.5" />
+                               </button>
+                            </div>
+                         )}
                       {isTrimmingBeforeExtract ? (
                          <div className="w-full max-w-lg">
                             <AudioTrimmer 
@@ -4698,6 +5040,7 @@ export default function StemStudio({
                                        <div className="bg-black/20 border border-white/5 p-4 rounded-xl flex flex-col gap-4 mt-2">
                                          <div className="flex justify-between border-b border-white/10 pb-2">
                                             <span className="text-xs font-black uppercase tracking-wider text-rose-400 flex items-center gap-1.5"><Activity className="w-4 h-4" /> Advanced DSP</span>
+<button onClick={handleDSPReset} className="text-[10px] uppercase font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-2 py-0.5 rounded">Reset</button>
                                          </div>
                                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                                              <label className="flex items-start gap-3 cursor-pointer group">
@@ -4767,11 +5110,18 @@ export default function StemStudio({
                            <h4 className="text-[10px] font-bold text-white/50 uppercase tracking-[0.2em] mb-2">Original Audio Preview & Tools</h4>
                            <div className="flex w-full items-center justify-between gap-4 flex-col sm:flex-row">
                               <audio 
+                                 ref={originalAudioElementRef}
                                  controls 
                                  src={originalAudioUrl} 
                                  className="w-full h-10 outline-none opacity-80 hover:opacity-100 transition-opacity" 
                                  onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
-                                 onPlay={() => setIsPlaying(true)}
+                                 onPlay={() => { 
+                                   setIsPlaying(true); 
+                                   initAudio(); 
+                                   if (audioContextRef.current?.state === 'suspended') {
+                                     audioContextRef.current.resume();
+                                   }
+                                 }}
                                  onPause={() => setIsPlaying(false)}
                               />
                               <div className="flex items-center gap-2 shrink-0">
@@ -4791,22 +5141,12 @@ export default function StemStudio({
                                     title="Transcribe Audio"
                                  >
                                     {isTranscribing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Type className="w-4 h-4 mr-2" />}
-                                    Lyrics
+                                    AI Transcript
                                  </button>
                               </div>
                            </div>
                            
-                           { (cohereTranscript || isTranscribing) && (
-                              <div className="w-full text-left mt-2 border-t border-white/5 pt-4">
-                                 {subtitlesUI}
-                              </div>
-                           )}
-
-                           <div className="w-full text-left">
-
-                                 {sunoLyricUI}
-                                 {phoiKhiLyricUI}
-                           </div>
+                           
                         </div>
                       )}
                    </div>
@@ -5017,11 +5357,11 @@ export default function StemStudio({
                  </div>
                  
                  {/* RIGHT: Title and Status */}
-                 <div className="flex-1 relative bg-black/40 z-30 p-5 flex flex-col justify-end items-end text-right overflow-hidden">
+                 <div className="flex-1 relative bg-black/20 z-30 p-5 flex flex-col justify-end items-end text-right overflow-hidden">
                     {coverUrl && (
                         <>
-                           <div className="absolute inset-0 bg-cover bg-center opacity-20 blur-sm transition-transform duration-[10s]" style={{ backgroundImage: `url(${coverUrl})` }} />
-                           <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent" />
+                           <div className="absolute inset-0 bg-cover bg-center opacity-40 blur-[2px] transition-transform duration-[10s]" style={{ backgroundImage: `url(${coverUrl})` }} />
+                           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
                         </>
                     )}
                     <div className="mb-auto mt-2 relative z-10">
@@ -5110,7 +5450,10 @@ export default function StemStudio({
                           const isPlayed = i / 100 < (currentTime / (duration || 1));
                           const pseudoRand = Math.abs(Math.sin(i * 13.5) * Math.cos(i * 4.2));
                           const h = 15 + pseudoRand * 70;
-                          return (
+                          
+
+
+  return (
                              <div 
                                 key={i} 
                                 className="flex-1 rounded-full transition-colors duration-300" 
@@ -5315,11 +5658,11 @@ export default function StemStudio({
                             <input
                                type="range"
                                min="0" max="1" step="0.01"
-                               value={volumes[stem] ?? 0.8}
+                               value={volumes[stem] ?? 1.0}
                                onChange={(e) => setVolumes(p => ({...p, [stem]: parseFloat(e.target.value)}))}
                                className="w-full h-1.5 rounded-lg appearance-none bg-white/10 cursor-pointer accent-amber-400 focus:outline-none"
                                style={{
-                                 background: `linear-gradient(to right, ${STEM_COLORS[stem] || '#fbbf24'} 0%, ${STEM_COLORS[stem] || '#fbbf24'} ${(volumes[stem] ?? 0.8) * 100}%, rgba(255,255,255,0.1) ${(volumes[stem] ?? 0.8) * 100}%, rgba(255,255,255,0.1) 100%)`
+                                 background: `linear-gradient(to right, ${STEM_COLORS[stem] || '#fbbf24'} 0%, ${STEM_COLORS[stem] || '#fbbf24'} ${(volumes[stem] ?? 1.0) * 100}%, rgba(255,255,255,0.1) ${(volumes[stem] ?? 1.0) * 100}%, rgba(255,255,255,0.1) 100%)`
                                }}
                             />
                          </div>
@@ -5343,12 +5686,11 @@ export default function StemStudio({
                 </div>
              )}
 
-                                      {sunoLyricUI}
-                                 {phoiKhiLyricUI}
-          
 
-          {subtitlesUI}
+                                      
           
+          
+          {renderPluginsRack()}
           {/* MASTER FX */}
           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
              <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('masterFx')}>
@@ -5547,6 +5889,7 @@ export default function StemStudio({
                   <div className="bg-black/20 border border-white/5 p-3 rounded-xl flex flex-col gap-3 mt-2">
                      <div className="flex justify-between border-b border-white/10 pb-1.5">
                         <span className="text-[10px] font-black uppercase tracking-wider text-rose-400 flex items-center gap-1"><Activity className="w-3 h-3" /> Advanced DSP</span>
+<button onClick={handleDSPReset} className="text-[9px] uppercase font-bold text-white/40 hover:text-white transition-colors bg-white/5 hover:bg-white/10 px-1.5 py-0.5 rounded">Reset</button>
                      </div>
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                          <label className="flex items-start gap-2 cursor-pointer group">
@@ -5873,80 +6216,127 @@ export default function StemStudio({
               )}
            </div>
 
-{/* CUSTOM SERVER CONFIG / HF CLONE INSTRUCTIONS */}
-          <div className="flex flex-col gap-3.5 border-t border-white/5 pt-5 pb-3">
-             <div className="flex justify-between items-center border-b border-white/5 pb-1.5">
-                <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 uppercase flex items-center gap-1">
-                   <Cloud className="w-3.5 h-3.5 text-amber-400" /> AI Cloud custom space
-                </h3>
-                <span className="text-[8px] bg-amber-400/10 border border-amber-400/20 text-amber-400 px-1.5 py-0.5 rounded font-black font-mono">OPTIONAL</span>
-             </div>
-             
-             <div className="bg-[#0A0A0C]/40 border border-white/5 p-4 rounded-2xl flex flex-col gap-3">
-                <p className="text-[10px] text-white/50 leading-relaxed font-sans">
-                   Avoid public API rate limits by duplicating the <strong>tienqnguyen95/Stemmix</strong> Hugging Face space for free!
-                </p>
-                
-                <div className="flex flex-col gap-1.5 bg-black/30 p-2.5 rounded-xl border border-white/5 text-[10px]">
-                   <div className="flex items-center gap-1.5 text-amber-400 font-bold">
-                      <span className="w-4 h-4 rounded-full bg-amber-400/10 flex items-center justify-center text-[9px]">1</span>
-                      <span>Duplicate the Space:</span>
-                   </div>
-                   <a 
-                      href="https://huggingface.co/spaces/tienqnguyen95/Stemmix" 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="text-amber-400 hover:underline break-all font-mono font-bold"
-                   >
-                      https://huggingface.co/spaces/tienqnguyen95/Stemmix ↗
-                   </a>
-                   <div className="text-white/40 leading-normal pl-5">
-                      Click the three dots in top-right → <strong>"Duplicate this Space"</strong>. Set visibility to <strong>Public</strong> (it runs on free hardware).
-                   </div>
-                   
-                   <div className="flex items-center gap-1.5 text-amber-400 font-bold mt-2">
-                      <span className="w-4 h-4 rounded-full bg-amber-400/10 flex items-center justify-center text-[9px]">2</span>
-                      <span>Paste your Cloned Space ID below:</span>
-                   </div>
-                </div>
-                
-                <div className="flex gap-2">
-                   <input
-                      type="text"
-                      placeholder="e.g. your-username/Stemmix"
-                      value={customSpaceUrl}
-                      onChange={(e) => {
-                         const val = e.target.value.trim();
-                         setCustomSpaceUrl(val);
-                         localStorage.setItem("stemmix_custom_space_url", val);
-                      }}
-                      className="flex-1 bg-black/60 border border-white/5 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-400/40 focus:ring-1 focus:ring-amber-400/15"
-                   />
-                   {customSpaceUrl && (
-                      <button
-                         type="button"
-                         onClick={() => {
-                            setCustomSpaceUrl("");
-                            localStorage.removeItem("stemmix_custom_space_url");
-                         }}
-                         className="px-2 py-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase rounded-xl transition-all border border-white/5"
-                      >
-                         Clear
-                      </button>
-                   )}
-                </div>
-                {customSpaceUrl && (
-                   <div className="text-[9px] text-emerald-400 flex items-center gap-1 font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      Active: Your Space will be prioritized for remote AI Cloud separation!
-                   </div>
-                )}
-             </div>
-          </div>
+
           </>
          )}
 
+         {/* LYRICS & TRANSCRIPT - MOVED TO BOTTOM */}
+         <div id="lyrics-bottom-container" className="flex flex-col w-full gap-4 pt-4 border-t border-white/5">
+             {subtitlesUI}
+             {sunoLyricUI}
+             {phoiKhiLyricUI}
+         </div>
+
+         {/* CUSTOM SERVER CONFIG / HF CLONE INSTRUCTIONS */}
+         <div className="flex flex-col gap-3.5 border-t border-white/5 pt-5 pb-3">
+             <div 
+                 className="flex justify-between items-center border-b border-white/5 pb-1.5 cursor-pointer group"
+                 onClick={() => setShowAiCloudConfig(!showAiCloudConfig)}
+             >
+                <div className="flex items-center gap-2">
+                    <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase flex items-center gap-1">
+                       <Cloud className="w-3.5 h-3.5 text-amber-400" /> AI Cloud custom space
+                    </h3>
+                    <span className="text-[8px] bg-amber-400/10 border border-amber-400/20 text-amber-400 px-1.5 py-0.5 rounded font-black font-mono">OPTIONAL</span>
+                </div>
+                {showAiCloudConfig ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
+             </div>
+             
+             {showAiCloudConfig && (
+                 <div className="bg-[#0A0A0C]/40 border border-white/5 p-4 rounded-2xl flex flex-col gap-3 animate-in fade-in slide-in-from-top-2">
+                    <p className="text-[10px] text-white/50 leading-relaxed font-sans">
+                       Avoid public API rate limits by duplicating the <strong>tienqnguyen95/Stemmix</strong> Hugging Face space for free!
+                    </p>
+                    
+                    <div className="flex flex-col gap-1.5 bg-black/30 p-2.5 rounded-xl border border-white/5 text-[10px]">
+                       <div className="flex items-center gap-1.5 text-amber-400 font-bold">
+                          <span className="w-4 h-4 rounded-full bg-amber-400/10 flex items-center justify-center text-[9px]">1</span>
+                          <span>Duplicate the Space:</span>
+                       </div>
+                       <a 
+                           href="https://huggingface.co/spaces/tienqnguyen95/Stemmix" 
+                           target="_blank" 
+                           rel="noopener noreferrer"
+                           className="text-amber-400 hover:underline break-all font-mono font-bold"
+                       >
+                          https://huggingface.co/spaces/tienqnguyen95/Stemmix ↗
+                       </a>
+                       <div className="text-white/40 leading-normal pl-5">
+                          Click the three dots in top-right → <strong>"Duplicate this Space"</strong>. Set visibility to <strong>Public</strong> (it runs on free hardware).
+                       </div>
+                       
+                       <div className="flex items-center gap-1.5 text-amber-400 font-bold mt-2">
+                          <span className="w-4 h-4 rounded-full bg-amber-400/10 flex items-center justify-center text-[9px]">2</span>
+                          <span>Paste your Cloned Space ID below:</span>
+                       </div>
+                    </div>
+                    
+                    <div className="flex gap-2">
+                       <input
+                          type="text"
+                          placeholder="e.g. your-username/Stemmix"
+                          value={customSpaceUrl}
+                          onChange={(e) => {
+                             const val = e.target.value.trim();
+                             setCustomSpaceUrl(val);
+                             localStorage.setItem("stemmix_custom_space_url", val);
+                          }}
+                          className="flex-1 bg-black/60 border border-white/5 rounded-xl px-3 py-2 text-xs text-white placeholder:text-white/20 focus:outline-none focus:border-amber-400/40 focus:ring-1 focus:ring-amber-400/15"
+                       />
+                       {customSpaceUrl && (
+                          <button
+                             type="button"
+                             onClick={() => {
+                                setCustomSpaceUrl("");
+                                localStorage.removeItem("stemmix_custom_space_url");
+                             }}
+                             className="px-2 py-1 bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase rounded-xl transition-all border border-white/5"
+                          >
+                             Clear
+                          </button>
+                       )}
+                    </div>
+                    {customSpaceUrl && (
+                       <div className="text-[9px] text-emerald-400 flex items-center gap-1 font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          Active: Your Space will be prioritized for remote AI Cloud separation!
+                       </div>
+                    )}
+                 </div>
+             )}
+         </div>
+
        </div>
+
+       <AudioEnhancer 
+         isOpen={showAudioEnhancer}
+         onClose={() => setShowAudioEnhancer(false)} 
+         audioCtx={audioContextRef.current}
+         inputNode={masterPluginInputRef.current}
+         outputNode={masterPluginOutputRef.current}
+         isBypassed={fcAudioBypassed}
+         onBypassChange={setFcAudioBypassed}
+       />
+
+       <FcOneKnobPro 
+         isOpen={showFcOneKnobPro}
+         onClose={() => setShowFcOneKnobPro(false)} 
+         audioCtx={audioContextRef.current}
+         inputNode={masterPluginInputRef.current}
+         outputNode={masterPluginOutputRef.current}
+         isBypassed={fcOneKnobBypassed}
+         onBypassChange={setFcOneKnobBypassed}
+       />
+
+       <FcStudioFx 
+         isOpen={showFcStudioFx}
+         onClose={() => setShowFcStudioFx(false)} 
+         audioCtx={audioContextRef.current}
+         inputNode={masterPluginInputRef.current}
+         outputNode={masterPluginOutputRef.current}
+         isBypassed={fcStudioBypassed}
+         onBypassChange={setFcStudioBypassed}
+       />
 
        {showSpectrogram && (
           <SpectrogramTool 
