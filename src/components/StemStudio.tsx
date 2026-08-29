@@ -4837,10 +4837,10 @@ export default function StemStudio({
           )}
 
           {stemmixStatus !== "ready" ? (
-             <div className={`flex-1 flex flex-col items-center justify-center p-2 sm:p-6 text-center animate-in fade-in duration-500 w-full ${downloadLink ? 'py-2 my-1' : 'my-auto'}`}>
+             <div className={`flex-1 flex flex-col items-center justify-center px-0 sm:px-6 py-2 sm:py-6 text-center animate-in fade-in duration-500 w-full ${downloadLink ? 'py-2 my-1' : 'my-auto'}`}>
                 {stemmixStatus === "idle" ? (
-                   <div className={`flex flex-col items-center justify-center px-4 text-center w-full max-w-[95%] xl:max-w-[98%] mx-auto ${downloadLink ? 'py-4' : 'py-8 sm:py-12'}`}>
-                      <div className="w-full bg-gradient-to-b from-neutral-900/90 via-black/80 to-black/95 border border-white/10 rounded-3xl p-6 sm:p-10 shadow-2xl backdrop-blur-xl relative overflow-hidden flex flex-col items-center">
+                   <div className={`flex flex-col items-center justify-center px-0 sm:px-4 text-center w-full sm:max-w-[95%] xl:max-w-[98%] mx-auto ${downloadLink ? 'py-4' : 'py-8 sm:py-12'}`}>
+                      <div className="w-full bg-gradient-to-b from-neutral-900/90 via-black/80 to-black/95 border-y sm:border border-white/10 sm:rounded-3xl rounded-none p-4 sm:p-10 shadow-2xl backdrop-blur-xl relative overflow-hidden flex flex-col items-center">
                          {/* Ambient Glow background */}
                          <div className="absolute -top-24 -left-24 w-72 h-72 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
                          <div className="absolute -bottom-24 -right-24 w-72 h-72 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />

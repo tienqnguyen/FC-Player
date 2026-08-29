@@ -388,64 +388,74 @@ export default function SpectrogramTool({
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-[#0A0B10] text-white overflow-hidden animate-in fade-in zoom-in-95 duration-300">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-white/10 bg-black/40 backdrop-blur-md z-10 shrink-0">
-        <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.3)]">
-                <Activity className="w-4 h-4" />
-            </div>
-            <div>
-                <h2 className="text-sm font-black tracking-widest uppercase text-white">Spectrogram Compare</h2>
-                <div className="flex items-center gap-2">
-                    <p className="text-[10px] text-white/50">Analyze frequencies side by side</p>
-                    {isComparing ? (
-                        <span className="text-[9px] text-amber-400 flex items-center gap-1 font-bold animate-pulse"><Loader2 className="w-2.5 h-2.5 animate-spin" /> Comparing...</span>
-                    ) : similarity !== null ? (
-                        <>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${similarity < 90 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'}`}>
-                                Match: {similarity.toFixed(2)}%
-                            </span>
-                            <span className={`text-[9px] font-mono hidden sm:inline-block ${similarity < 90 ? 'text-emerald-400 font-bold' : 'text-amber-400'}`}>
-                                {similarity < 90 ? "✓ < 90% Good to pass Suno filter" : "⚠️ ≥ 90% Too similar (Needs < 90% to pass Suno filter)"}
-                            </span>
-                        </>
-                    ) : null}
+      <div className="flex flex-col md:flex-row md:items-center justify-between p-3 md:p-4 gap-3 border-b border-white/10 bg-black/40 backdrop-blur-md z-10 shrink-0">
+        <div className="flex items-start md:items-center gap-3 justify-between w-full md:w-auto">
+            <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 shadow-[0_0_15px_rgba(99,102,241,0.3)] shrink-0">
+                    <Activity className="w-4 h-4" />
+                </div>
+                <div>
+                    <h2 className="text-xs md:text-sm font-black tracking-widest uppercase text-white">Spectrogram Compare</h2>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <p className="text-[9px] md:text-[10px] text-white/50">Analyze frequencies side by side</p>
+                        {isComparing ? (
+                            <span className="text-[9px] text-amber-400 flex items-center gap-1 font-bold animate-pulse"><Loader2 className="w-2.5 h-2.5 animate-spin" /> Comparing...</span>
+                        ) : similarity !== null ? (
+                            <>
+                                <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${similarity < 90 ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30'}`}>
+                                    Match: {similarity.toFixed(2)}%
+                                </span>
+                                <span className={`text-[9px] font-mono hidden sm:inline-block ${similarity < 90 ? 'text-emerald-400 font-bold' : 'text-amber-400'}`}>
+                                    {similarity < 90 ? "✓ < 90% Good" : "⚠️ ≥ 90% Too similar"}
+                                </span>
+                            </>
+                        ) : null}
+                    </div>
                 </div>
             </div>
+            {onClose && (
+                <button 
+                    onClick={onClose}
+                    className="p-1.5 md:hidden hover:bg-white/10 rounded-lg transition-colors"
+                >
+                    <X className="w-4 h-4" />
+                </button>
+            )}
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2 md:gap-4">
             {(data1 || data2) && (
                 <button
                     onClick={togglePlayBoth}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors border border-indigo-500/30"
+                    className="flex items-center gap-1.5 px-2 md:px-3 py-1 md:py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded-lg text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-colors border border-indigo-500/30"
                 >
-                    {playing1 || playing2 ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    {playing1 || playing2 ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                     Both
                 </button>
             )}
             <button
                 onClick={() => setShowTerminal(!showTerminal)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors border ${showTerminal ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-[#1A1B23] text-white/60 border-white/10 hover:text-white'}`}
+                className={`flex items-center gap-1.5 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[9px] md:text-[10px] font-black uppercase tracking-widest transition-colors border ${showTerminal ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' : 'bg-[#1A1B23] text-white/60 border-white/10 hover:text-white'}`}
             >
-                <Activity className="w-3.5 h-3.5" /> Log
+                <Activity className="w-3 h-3" /> Log
             </button>
             <div className="flex items-center gap-2">
-                <Sliders className="w-3.5 h-3.5 text-white/40" />
+                <Sliders className="w-3 h-3 text-white/40 hidden md:block" />
                 <select 
                     value={colormap} 
                     onChange={(e) => setColormap(e.target.value)}
-                    className="bg-[#1A1B23] text-white border border-white/10 rounded-lg text-[11px] font-bold px-3 py-1.5 focus:outline-none focus:border-indigo-500/50 cursor-pointer hover:border-white/20 transition-colors shadow-inner"
+                    className="bg-[#1A1B23] text-white border border-white/10 rounded-lg text-[10px] md:text-[11px] font-bold px-2 py-1 focus:outline-none focus:border-indigo-500/50 cursor-pointer hover:border-white/20 transition-colors shadow-inner"
                 >
-                    <option value="magma" className="bg-[#1A1B23] text-white">Magma (Fire)</option>
-                    <option value="viridis" className="bg-[#1A1B23] text-white">Viridis (Nature)</option>
-                    <option value="cyan" className="bg-[#1A1B23] text-white">Cyan (Ice)</option>
-                    <option value="grayscale" className="bg-[#1A1B23] text-white">Grayscale</option>
+                    <option value="magma" className="bg-[#1A1B23] text-white">Magma</option>
+                    <option value="viridis" className="bg-[#1A1B23] text-white">Viridis</option>
+                    <option value="cyan" className="bg-[#1A1B23] text-white">Cyan</option>
+                    <option value="grayscale" className="bg-[#1A1B23] text-white">Gray</option>
                 </select>
                 
-                <div className="flex flex-col ml-2 w-32">
-                    <div className="flex justify-between text-[9px] text-white/50 font-bold mb-1">
-                        <span>Freq Range</span>
-                        <span className="text-indigo-400">{maxFreq / 1000}kHz</span>
+                <div className="flex flex-col ml-1 md:ml-2 w-20 md:w-32">
+                    <div className="flex justify-between text-[8px] md:text-[9px] text-white/50 font-bold mb-0.5 md:mb-1">
+                        <span>Freq</span>
+                        <span className="text-indigo-400">{maxFreq / 1000}k</span>
                     </div>
                     <input 
                         type="range" 
@@ -462,7 +472,7 @@ export default function SpectrogramTool({
             {onClose && (
                 <button 
                     onClick={onClose}
-                    className="p-2 hover:bg-white/10 rounded-xl transition-colors ml-2"
+                    className="hidden md:flex p-2 hover:bg-white/10 rounded-xl transition-colors ml-2"
                 >
                     <X className="w-5 h-5" />
                 </button>
