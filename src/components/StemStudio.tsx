@@ -3205,8 +3205,8 @@ export default function StemStudio({
   const subtitlesUI = (
     <>
       {/* SUBTITLES UI */}
-          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('transcript')}>
+          <div className="flex flex-col gap-3 border-t border-white/5">
+             <div className="flex items-center justify-between border-b border-white/5 py-4 cursor-pointer group" onClick={() => toggleSection('transcript')}>
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Vocal Transcript</h3>
                 <div className="flex items-center gap-2">
                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
@@ -3295,8 +3295,8 @@ export default function StemStudio({
 
   
   const phoiKhiLyricUI = (
-    <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-        <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('arrange')}>
+    <div className="flex flex-col gap-3 border-t border-white/5">
+        <div className="flex items-center justify-between border-b border-white/5 py-4 cursor-pointer group" onClick={() => toggleSection('arrange')}>
             <div className="flex items-center gap-3">
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Music className="w-3 h-3 inline-block mr-1 -mt-0.5" /> PHỐI KHÍ LYRIC</h3>
                 <button
@@ -3415,8 +3415,8 @@ export default function StemStudio({
   const sunoLyricUI = (
     <>
       {/* LYRIC TOOL UI */}
-          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('lyric')}>
+          <div className="flex flex-col gap-3 border-t border-white/5">
+             <div className="flex items-center justify-between border-b border-white/5 py-4 cursor-pointer group" onClick={() => toggleSection('lyric')}>
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Type className="w-3 h-3 inline-block mr-1 -mt-0.5" /> SUNO Lyric Tool</h3>
                 <div className="flex items-center gap-2">
                    {expandedSections.lyric ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
@@ -4150,8 +4150,8 @@ export default function StemStudio({
   const renderPluginsRack = () => (
 <div className="w-full mt-6">
 {/* PLUGINS RACK */}
-      <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-         <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => setShowPluginsList(!showPluginsList)}>
+      <div className="flex flex-col gap-3 border-t border-white/5">
+         <div className="flex items-center justify-between border-b border-white/5 py-4 cursor-pointer group" onClick={() => setShowPluginsList(!showPluginsList)}>
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Activity className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Plugins Rack</h3>
             <div className="flex items-center gap-2">
                    <span className="text-[9px] font-mono font-medium text-white/30">{(active8D ? 1 : 0) + (activeBassBoost ? 1 : 0) + (activeSpeedFx ? 1 : 0) + (!fcAudioBypassed ? 1 : 0) + (!fcOneKnobBypassed ? 1 : 0) + (!fcStudioBypassed ? 1 : 0)} Active</span>
@@ -5553,7 +5553,7 @@ export default function StemStudio({
 
           {/* STEM VOLUMES MIXER */}
           <div className="flex flex-col gap-3">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('mixer')}>
+             <div className="flex items-center justify-between border-b border-white/5 py-4 cursor-pointer group" onClick={() => toggleSection('mixer')}>
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Sliders className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Mixer</h3>
                 <div className="flex items-center gap-2">
                    <span className="text-[9px] font-mono font-medium text-white/30">{stemsList.length} <span className="hidden sm:inline">Tracks Loaded</span></span>
@@ -5692,8 +5692,8 @@ export default function StemStudio({
           
           {renderPluginsRack()}
           {/* MASTER FX */}
-          <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-             <div className="flex items-center justify-between border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('masterFx')}>
+          <div className="flex flex-col gap-3 border-t border-white/5">
+             <div className="flex items-center justify-between border-b border-white/5 py-4 cursor-pointer group" onClick={() => toggleSection('masterFx')}>
                 <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Settings2 className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Master FX</h3>
                 <div className="flex items-center gap-2">
                    <button 
@@ -5926,8 +5926,8 @@ export default function StemStudio({
               )}
            </div>
                                                                                      {/* EQUALIZER */}
-           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-              <div className="flex justify-between items-center border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('masterEq')}>
+           <div className="flex flex-col gap-3 border-t border-white/5">
+              <div className="flex justify-between items-center border-b border-white/5 py-4 cursor-pointer group" onClick={() => toggleSection('masterEq')}>
                  <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><Sliders className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Master EQ</h3>
                  <div className="flex items-center gap-2">
                     <button 
@@ -6009,8 +6009,8 @@ export default function StemStudio({
            </div>
 
            {/* AMBIENT OVERLAY & PIXABAY */}
-           <div className="flex flex-col gap-3 border-t border-white/5 pt-4">
-              <div className="flex justify-between items-center border-b border-white/5 pb-1.5 cursor-pointer group" onClick={() => toggleSection('overlay')}>
+           <div className="flex flex-col gap-3 border-t border-white/5">
+              <div className="flex justify-between items-center border-b border-white/5 py-4 cursor-pointer group" onClick={() => toggleSection('overlay')}>
                  <h3 className="font-extrabold text-[9px] tracking-[0.15em] text-white/50 group-hover:text-white transition-colors uppercase"><CloudRain className="w-3 h-3 inline-block mr-1 -mt-0.5" /> Overlay Sound (Freesound)</h3>
                  <div className="flex items-center gap-2">
                     {expandedSections.overlay ? <ChevronDown className="w-3.5 h-3.5 text-white/40 group-hover:text-white" /> : <ChevronRight className="w-3.5 h-3.5 text-white/40 group-hover:text-white" />}
@@ -6228,9 +6228,9 @@ export default function StemStudio({
          </div>
 
          {/* CUSTOM SERVER CONFIG / HF CLONE INSTRUCTIONS */}
-         <div className="flex flex-col gap-3.5 border-t border-white/5 pt-5 pb-3">
+         <div className="flex flex-col gap-3.5 border-t border-white/5 pb-3">
              <div 
-                 className="flex justify-between items-center border-b border-white/5 pb-1.5 cursor-pointer group"
+                 className="flex justify-between items-center border-b border-white/5 py-4 cursor-pointer group"
                  onClick={() => setShowAiCloudConfig(!showAiCloudConfig)}
              >
                 <div className="flex items-center gap-2">
