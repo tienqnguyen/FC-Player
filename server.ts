@@ -1375,118 +1375,7 @@ async function startServer() {
       }
 
       const strategies = [
-        // Strategy 1: tikwm user posts API with pagination
-        async () => {
-          const params = new URLSearchParams({
-            unique_id,
-            count: clientCount,
-            cursor: clientCursor,
-          });
-
-          const endpoints = [
-            "https://www.tikwm.com/api/user/posts",
-            "https://tikwm.com/api/user/posts",
-          ];
-
-          for (const endpoint of endpoints) {
-            try {
-              const response = await fetch(endpoint, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/x-www-form-urlencoded",
-                  "User-Agent":
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                },
-                body: params.toString(),
-              });
-              const text = await response.text();
-              let data: any;
-              try {
-                data = JSON.parse(text);
-              } catch (e) {
-                continue;
-              }
-              if (data.code === 0 && data.data?.videos?.length > 0) {
-                return {
-                  videos: data.data.videos,
-                  cursor: (data.data.cursor || "").toString(),
-                  hasMore: !!data.data.hasMore,
-                };
-              }
-            } catch (e) {
-              // try next endpoint
-            }
-          }
-          throw new Error("TikWM user API failed");
-        },
-        // Strategy 2: tikwm feed search fallback
-        async () => {
-          let allVideos: any[] = [];
-          let currentCursor = clientCursor;
-          let hasMoreResult = false;
-
-          for (let i = 0; i < 4; i++) {
-            const params = new URLSearchParams({
-              keywords: `@${unique_id}`,
-              count: "30",
-              cursor: currentCursor,
-            });
-            const response = await fetch(
-              "https://www.tikwm.com/api/feed/search",
-              {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: params.toString(),
-              },
-            );
-            const text = await response.text();
-            let data;
-            try {
-              data = JSON.parse(text);
-            } catch (e) {
-              break;
-            }
-
-            if (data.code === 0 && data.data?.videos?.length > 0) {
-              const filtered = data.data.videos.filter(
-                (v: any) =>
-                  v.author?.unique_id?.toLowerCase() ===
-                  unique_id.toLowerCase(),
-              );
-
-              const currentIds = new Set(
-                allVideos.map((v) => v.video_id || v.id),
-              );
-              const newVideos = filtered.filter(
-                (v: any) => !currentIds.has(v.video_id || v.id),
-              );
-              allVideos.push(...newVideos);
-
-              currentCursor = (data.data.cursor || 0).toString();
-              hasMoreResult = !!data.data.hasMore;
-              if (
-                allVideos.length >= parseInt(clientCount) ||
-                !data.data.hasMore
-              ) {
-                break;
-              }
-            } else {
-              break;
-            }
-          }
-
-          if (allVideos.length > 0) {
-            return {
-              videos: allVideos,
-              cursor: currentCursor,
-              hasMore: hasMoreResult,
-            };
-          }
-          throw new Error("TikWM search fallback failed");
-        },
-        // Strategy 4: yt-dlp backend
+        // Strategy 1: yt-dlp backend
         async () => {
           const ytdlOptions: any = {
             dumpSingleJson: true,
@@ -1501,7 +1390,7 @@ async function startServer() {
           }
           
           const profileUrl = `https://www.tiktok.com/@${unique_id}`;
-          console.log(`[Strategy 4] Using yt-dlp to fetch TikTok profile: ${profileUrl}`);
+          console.log(`[Strategy 1] Using yt-dlp to fetch TikTok profile: ${profileUrl}`);
           const info = await youtubedl(profileUrl, ytdlOptions) as any;
           
           if (info && info.entries && info.entries.length > 0) {
