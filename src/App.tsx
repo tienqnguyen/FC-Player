@@ -53,6 +53,16 @@ const VISUALIZER_PALETTES = {
 };
 
 
+const normalizeTikWmUrl = (u?: string | null): string => {
+  if (!u) return "";
+  const trimmed = u.trim();
+  if (trimmed.startsWith("//")) return "https:" + trimmed;
+  if (trimmed.startsWith("/") && !trimmed.startsWith("/api/")) {
+    return "https://www.tikwm.com" + trimmed;
+  }
+  return trimmed;
+};
+
 const getFallbackGradient = (seed: string = "") => {
   const gradients = [
     "from-rose-500 via-orange-400 to-amber-500",
@@ -2992,7 +3002,7 @@ export default function App() {
   const playRecentSong = async (song: any, isAutoPlay = false) => {
     if (!isAutoPlay) setConsecutiveFailures(0);
     // Determine target URL
-    let playUrl = song.audioUrl;
+    let playUrl = normalizeTikWmUrl(song.audioUrl || song.music || song.play);
     
     // TKaraoke lazy fetch
     if (song.isTKaraokePlaylistTrack && song.originalUrl) {
@@ -3010,6 +3020,14 @@ export default function App() {
       } finally {
         setIsFetchingTiktok(false);
       }
+    } else if (
+      playUrl &&
+      playUrl.startsWith("http") &&
+      !playUrl.includes("/api/stream") &&
+      !playUrl.includes("/api/proxy-stream")
+    ) {
+      playUrl = `/api/proxy-stream?url=${encodeURIComponent(playUrl)}`;
+      song.audioUrl = playUrl;
     }
 
     const isLocalUploaded = song.id?.startsWith("local_") && uploadedFile;
@@ -3182,15 +3200,15 @@ export default function App() {
 
       const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info || v.audioUrl).map((v: any) => {
         const videoAuthor = v.author?.nickname || authorObj?.nickname || `@${normalizedUsername}`;
-        const musicCover = v.music_info?.cover || v.cover || v.origin_cover;
+        const musicCover = normalizeTikWmUrl(v.music_info?.cover || v.cover || v.origin_cover);
         
-        const rawAudioUrl = v.audioUrl || v.music || v.play || v.music_info?.play;
-        const isAlreadyProxied = rawAudioUrl && rawAudioUrl.includes("/api/stream");
+        const rawAudioUrl = normalizeTikWmUrl(v.audioUrl || v.music || v.play || v.music_info?.play);
+        const isAlreadyProxied = rawAudioUrl && (rawAudioUrl.includes("/api/stream") || rawAudioUrl.includes("/api/proxy-stream"));
         const proxiedAudioUrl = (rawAudioUrl && rawAudioUrl.startsWith("http") && !isAlreadyProxied) 
                                 ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` 
                                 : rawAudioUrl;
                                 
-        const rawVideoUrl = v.play || v.video_info?.play;
+        const rawVideoUrl = normalizeTikWmUrl(v.play || v.video_info?.play);
         return {
           id: v.video_id || v.id || Date.now().toString() + Math.random(),
           title: v.title || v.desc || "TikTok Audio",
@@ -3655,10 +3673,11 @@ export default function App() {
         }
 
         const newSongs = videos.filter((v: any) => v.music || v.play || v.music_info || v.audioUrl).map((v: any) => {
-          const rawAudioUrl = v.audioUrl || v.music || v.play || v.music_info?.play;
-          const proxiedAudioUrl = rawAudioUrl && rawAudioUrl.startsWith("http") && !rawAudioUrl.includes("/api/stream") ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` : rawAudioUrl;
+          const rawAudioUrl = normalizeTikWmUrl(v.audioUrl || v.music || v.play || v.music_info?.play);
+          const isAlreadyProxied = rawAudioUrl && (rawAudioUrl.includes("/api/stream") || rawAudioUrl.includes("/api/proxy-stream"));
+          const proxiedAudioUrl = rawAudioUrl && rawAudioUrl.startsWith("http") && !isAlreadyProxied ? `/api/proxy-stream?url=${encodeURIComponent(rawAudioUrl)}` : rawAudioUrl;
           
-          const rawVideoUrl = v.play || v.video_info?.play;
+          const rawVideoUrl = normalizeTikWmUrl(v.play || v.video_info?.play);
                                   
           return {
             id: v.video_id || v.id || Date.now().toString() + Math.random(),
@@ -3666,7 +3685,7 @@ export default function App() {
             originalUrl: "https://www.tiktok.com/@" + username + "/video/" + (v.video_id || v.id),
             audioUrl: proxiedAudioUrl,
             videoUrl: rawVideoUrl || proxiedAudioUrl,
-            cover: v.cover || v.origin_cover || v.music_info?.cover,
+            cover: normalizeTikWmUrl(v.cover || v.origin_cover || v.music_info?.cover),
             author: v.author?.nickname || "@" + username,
             timestamp: Date.now()
           };
@@ -6213,12 +6232,13 @@ export default function App() {
                             } else {
                               // TikTok type (TK Sound & TK Video)
                               const oembedUrl = song.url || `https://www.tiktok.com/@share/video/${song.video_id || song.id}`;
-                              const rawStreamUrl = song.audioUrl || song.music || (song.music_info && song.music_info.play) || song.play;
-                              const streamUrl = rawStreamUrl && rawStreamUrl.startsWith("/")
-                                ? rawStreamUrl
-                                : (rawStreamUrl && rawStreamUrl.startsWith("http") ? `/api/proxy-stream?url=${encodeURIComponent(rawStreamUrl)}` : rawStreamUrl);
+                              const rawStreamUrl = normalizeTikWmUrl(song.audioUrl || song.music || (song.music_info && song.music_info.play) || song.play);
+                              const isAlreadyProxied = rawStreamUrl && (rawStreamUrl.includes("/api/stream") || rawStreamUrl.includes("/api/proxy-stream"));
+                              const streamUrl = rawStreamUrl && rawStreamUrl.startsWith("http") && !isAlreadyProxied
+                                ? `/api/proxy-stream?url=${encodeURIComponent(rawStreamUrl)}`
+                                : rawStreamUrl;
                               const songTitle = song.title || song.desc || "TikTok Audio";
-                              const coverArt = song.cover || song.origin_cover || (song.music_info && song.music_info.cover);
+                              const coverArt = normalizeTikWmUrl(song.cover || song.origin_cover || (song.music_info && song.music_info.cover));
                               const creator = song.author?.nickname || song.author?.unique_id || (typeof song.author === "string" ? song.author : "TikTok Creator");
 
                               if (!streamUrl) {
@@ -6232,7 +6252,7 @@ export default function App() {
                               }
 
                               const songId = song.id || song.video_id || song.url || `search-result-${index}`;
-                              const rawVideoUrl = song.play || (song.video_info && song.video_info.play);
+                              const rawVideoUrl = normalizeTikWmUrl(song.play || (song.video_info && song.video_info.play));
                               
                               const newSong = {
                                 id: songId,
@@ -7166,7 +7186,7 @@ onClearStems={() => {
                   // We already retried or it's not refetchable
                   const newFails = prev + 1;
                   if (newFails >= 3) {
-                    setTiktokError(`Playback failed ${newFails} times in a row. Auto-play stopped. Please click a track to continue.`);
+                    setTiktokError(`Playback failed ${newFails} times in a row. Auto-play stopped. Please click a track to continue. (URL: ${audioUrl})`);
                     setIsPlaying(false);
                     return newFails;
                   }

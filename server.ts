@@ -69,13 +69,169 @@ async function resolveFacebookRedirect(url: string): Promise<string> {
   return url;
 }
 
+export async function resolveTikTokUrl(rawUrl: string): Promise<string> {
+  let target = (rawUrl || "").trim();
+  if (!target) return "";
+
+  // Extract URL if surrounded by other characters
+  const match = target.match(/https?:\/\/[^\s"'<>]+/);
+  if (match) {
+    target = match[0];
+  }
+
+  // Handle short TikTok links (vt.tiktok.com, vm.tiktok.com, /t/, etc.)
+  if (
+    target.includes("vt.tiktok.com") ||
+    target.includes("vm.tiktok.com") ||
+    target.includes("/t/") ||
+    target.includes("tiktok.com/t/")
+  ) {
+    try {
+      const resp = await fetch(target, {
+        method: "GET",
+        redirect: "follow",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+      });
+      if (resp.url && resp.url.includes("tiktok.com")) {
+        console.log(`[TikTok Redirect] Resolved: ${target} -> ${resp.url}`);
+        return resp.url.split("?")[0];
+      }
+    } catch (e: any) {
+      console.warn("[TikTok Redirect] Error resolving:", e.message);
+    }
+  }
+  return target;
+}
+
+export function formatTikWmUrl(u?: string | null): string {
+  if (!u) return "";
+  const trimmed = u.trim();
+  if (trimmed.startsWith("//")) return "https:" + trimmed;
+  if (trimmed.startsWith("/") && !trimmed.startsWith("/api/")) {
+    return "https://www.tikwm.com" + trimmed;
+  }
+  return trimmed;
+}
+
+export function normalizeTikTokRequestUrl(rawUrl?: string | null): string {
+  let url = formatTikWmUrl(rawUrl);
+  if (!url) return "";
+  
+  if (/^\d{15,22}$/.test(url)) {
+    return `https://www.tiktok.com/@share/video/${url}`;
+  }
+  
+  const tikwmMediaMatch = url.match(/tikwm\.com.*\/(\d{15,22})(?:\.mp[34])?/);
+  if (tikwmMediaMatch) {
+    return `https://www.tiktok.com/@share/video/${tikwmMediaMatch[1]}`;
+  }
+  
+  return url;
+}
+
+export interface TikTokMediaResult {
+  id?: string;
+  title: string;
+  author: string;
+  avatar?: string;
+  cover: string;
+  duration: number;
+  audioUrl: string;
+  videoUrl: string;
+  originalUrl: string;
+}
+
+export async function fetchTikTokWithTikWM(rawUrl: string): Promise<TikTokMediaResult | null> {
+  const resolvedUrl = await resolveTikTokUrl(rawUrl);
+  if (!resolvedUrl) return null;
+  console.log(`[TikWM API] Resolving media info for: ${resolvedUrl}`);
+
+  const endpoints = [
+    "https://www.tikwm.com/api/",
+    "https://tikwm.com/api/",
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const params = new URLSearchParams({
+        url: resolvedUrl,
+        count: "12",
+        cursor: "0",
+        web: "1",
+        hd: "1",
+      });
+
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        body: params.toString(),
+      });
+
+      if (!resp.ok) continue;
+      const text = await resp.text();
+      let json: any;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        continue;
+      }
+
+      if (json && json.code === 0 && json.data) {
+        const d = json.data;
+        const audioUrl = formatTikWmUrl(d.music_info?.play || d.music || d.play || "");
+        const videoUrl = formatTikWmUrl(d.hdplay || d.play || d.wmplay || "");
+        const cover = formatTikWmUrl(
+          d.cover ||
+          d.origin_cover ||
+          d.ai_dynamic_cover ||
+          d.music_info?.cover ||
+          ""
+        );
+        const title = d.title || d.music_info?.title || "TikTok Audio";
+        const author =
+          d.author?.nickname ||
+          d.author?.unique_id ||
+          d.music_info?.author ||
+          "TikTok Creator";
+        const duration = d.duration || d.music_info?.duration || 0;
+
+        return {
+          id: d.id,
+          title,
+          author,
+          avatar: formatTikWmUrl(d.author?.avatar),
+          cover,
+          duration,
+          audioUrl,
+          videoUrl,
+          originalUrl: resolvedUrl,
+        };
+      }
+    } catch (e: any) {
+      console.warn(`[TikWM API] Endpoint ${endpoint} failed:`, e.message);
+    }
+  }
+
+  return null;
+}
+
 const directStreamMemoryCache = new Map<
   string,
   { url: string; expiresAt: number }
 >();
 const directStreamInFlightPromises = new Map<string, Promise<string>>();
 
-async function getDirectMediaUrl(url: string, forceRefresh: boolean = false): Promise<string> {
+async function getDirectMediaUrl(rawInputUrl: string, forceRefresh: boolean = false): Promise<string> {
+  let url = normalizeTikTokRequestUrl(rawInputUrl);
+  if (!url) return "";
+
   const now = Date.now();
   if (forceRefresh) {
     directStreamMemoryCache.delete(url);
@@ -85,6 +241,30 @@ async function getDirectMediaUrl(url: string, forceRefresh: boolean = false): Pr
     if (cached && cached.expiresAt > now) {
       return cached.url;
     }
+  }
+
+  // Fast-path: if URL is ALREADY a direct media file (e.g. mp3, m4a, wav, flac, direct CDN or TikWM media path)
+  if (
+    url.startsWith("http") &&
+    (
+      url.includes(".mp3") ||
+      url.includes(".m4a") ||
+      url.includes(".flac") ||
+      url.includes(".wav") ||
+      url.includes(".aac") ||
+      url.includes(".opus") ||
+      url.includes(".webm") ||
+      url.includes("tikwm.com/video/") ||
+      url.includes("tikwm.com/v/") ||
+      url.includes("tiktokcdn")
+    ) &&
+    !url.includes("tiktok.com/@") &&
+    !url.includes("/video/") &&
+    !url.includes("youtube.com") &&
+    !url.includes("youtu.be")
+  ) {
+    directStreamMemoryCache.set(url, { url, expiresAt: now + 2 * 60 * 60 * 1000 });
+    return url;
   }
 
   let inFlightPromise = directStreamInFlightPromises.get(url);
@@ -123,6 +303,28 @@ async function getDirectMediaUrl(url: string, forceRefresh: boolean = false): Pr
              const audioUrl = details.mp3Versions[0].url;
              directStreamMemoryCache.set(url, { url: audioUrl, expiresAt: now + 45 * 60 * 1000 });
              return audioUrl;
+          }
+        }
+
+        // TikTok resolution using TikWM API (for page URLs or share links)
+        if (
+          url.includes("tiktok.com") ||
+          url.includes("douyin") ||
+          url.includes("tikwm.com") ||
+          (url.includes("@") && !url.startsWith("http"))
+        ) {
+          try {
+            const tikwmData = await fetchTikTokWithTikWM(url);
+            if (tikwmData && (tikwmData.audioUrl || tikwmData.videoUrl)) {
+              const directUrl = tikwmData.audioUrl || tikwmData.videoUrl;
+              directStreamMemoryCache.set(url, {
+                url: directUrl,
+                expiresAt: now + 60 * 60 * 1000,
+              });
+              return directUrl;
+            }
+          } catch (tikwmErr: any) {
+            console.warn("[getDirectMediaUrl] TikWM resolution failed:", tikwmErr.message);
           }
         }
 
@@ -187,14 +389,12 @@ async function startServer() {
         return;
       }
       if (url) {
+        url = normalizeTikTokRequestUrl(url);
         url = await resolveFacebookRedirect(url);
       }
-
-      // Skip direct fetch for TikTok pages as they return HTML or block fetch
-      const isTikTokPage = url && url.includes("tiktok.com") && !url.includes("tiktokcdn");
       
       let streamServed = false;
-      if (url && !isTikTokPage) {
+      if (url) {
         try {
           const directUrl = await getDirectMediaUrl(url, req.query.force_refresh === "true");
           console.log(
@@ -204,6 +404,14 @@ async function startServer() {
             "User-Agent":
               "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
           };
+          if (
+            directUrl.includes("tiktokcdn") ||
+            directUrl.includes("tiktok.com") ||
+            directUrl.includes("tikwm.com") ||
+            url.includes("tiktok.com")
+          ) {
+            headers["Referer"] = "https://www.tiktok.com/";
+          }
           if (req.headers.range) headers["Range"] = req.headers.range;
 
           const response = await fetch(directUrl, { headers });
@@ -228,13 +436,13 @@ async function startServer() {
           res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
 
           if (response.body) {
-            const nodeStream = require('stream').Readable.fromWeb(response.body as any);
+            const nodeStream = Readable.fromWeb(response.body as any);
             nodeStream.pipe(res);
             res.on("close", () => nodeStream.destroy());
             streamServed = true;
           }
-        } catch (err) {
-          console.log("[Stream Proxy] Using yt-dlp extraction strategy.");
+        } catch (err: any) {
+          console.log(`[Stream Proxy] Direct stream fetch failed (${err.message}), using yt-dlp extraction strategy.`);
         }
       }
 
@@ -265,10 +473,28 @@ async function startServer() {
   });
   app.get("/api/proxy-stream", async (req, res) => {
     try {
-      const url = req.query.url as string;
+      let url = req.query.url as string;
       if (!url) {
         return res.status(400).json({ error: "URL is required" });
       }
+
+      url = normalizeTikTokRequestUrl(url);
+
+      // If page URL is passed rather than direct CDN, resolve it
+      if (
+        (url.includes("tiktok.com") || url.includes("douyin")) &&
+        !url.includes("tiktokcdn") &&
+        !url.includes("tikwm.com/video/") &&
+        !url.includes(".mp3") &&
+        !url.includes(".m4a") &&
+        !url.includes(".flac")
+      ) {
+        try {
+          const direct = await getDirectMediaUrl(url);
+          if (direct) url = direct;
+        } catch (e) {}
+      }
+
       const headers: Record<string, string> = {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -277,10 +503,12 @@ async function startServer() {
         headers["Referer"] = "https://www.nhaccuatui.com/";
         headers["Origin"] = "https://www.nhaccuatui.com";
       }
-      if (url.includes("tiktokcdn") || url.includes("tiktok.com")) {
-        headers["Referer"] = "https://www.tiktok.com/";
-      }
-      if (url.includes("tiktokcdn") || url.includes("tiktok.com")) {
+      if (
+        url.includes("tiktokcdn") ||
+        url.includes("tiktok.com") ||
+        url.includes("tikwm.com") ||
+        url.includes("douyin.com")
+      ) {
         headers["Referer"] = "https://www.tiktok.com/";
       }
       if (req.headers.range) {
@@ -1154,24 +1382,40 @@ async function startServer() {
             count: clientCount,
             cursor: clientCursor,
           });
-          const response = await fetch("https://www.tikwm.com/api/user/posts", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: params.toString(),
-          });
-          const text = await response.text();
-          let data;
-          try {
-            data = JSON.parse(text);
-          } catch (e) {
-            throw new Error("TikTok API is currently blocked by Cloudflare. Please try again later.");
-          }
-          if (data.code === 0 && data.data?.videos?.length > 0) {
-            return {
-              videos: data.data.videos,
-              cursor: (data.data.cursor || "").toString(),
-              hasMore: !!data.data.hasMore,
-            };
+
+          const endpoints = [
+            "https://www.tikwm.com/api/user/posts",
+            "https://tikwm.com/api/user/posts",
+          ];
+
+          for (const endpoint of endpoints) {
+            try {
+              const response = await fetch(endpoint, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                },
+                body: params.toString(),
+              });
+              const text = await response.text();
+              let data: any;
+              try {
+                data = JSON.parse(text);
+              } catch (e) {
+                continue;
+              }
+              if (data.code === 0 && data.data?.videos?.length > 0) {
+                return {
+                  videos: data.data.videos,
+                  cursor: (data.data.cursor || "").toString(),
+                  hasMore: !!data.data.hasMore,
+                };
+              }
+            } catch (e) {
+              // try next endpoint
+            }
           }
           throw new Error("TikWM user API failed");
         },
@@ -1317,10 +1561,35 @@ async function startServer() {
         try {
           const result = await executeStrategy();
           if (result && result.videos && result.videos.length > 0) {
+            const normalizedVideos = result.videos.map((v: any) => {
+              const vidId = v.video_id || v.id;
+              const directMusic = formatTikWmUrl(v.music_info?.play || v.music || v.audioUrl || "");
+              const directPlay = formatTikWmUrl(v.play || v.video_info?.play || v.hdplay || "");
+              const directCover = formatTikWmUrl(v.cover || v.origin_cover || v.music_info?.cover || "");
+              const pageUrl = `https://www.tiktok.com/@${v.author?.unique_id || unique_id}/video/${vidId}`;
+              return {
+                ...v,
+                id: vidId,
+                video_id: vidId,
+                music: directMusic,
+                play: directPlay,
+                cover: directCover,
+                url: pageUrl,
+                audioUrl: directMusic || directPlay || `/api/stream?url=${encodeURIComponent(pageUrl)}`,
+                videoUrl: directPlay || pageUrl,
+                author: {
+                  ...v.author,
+                  avatar: formatTikWmUrl(v.author?.avatar),
+                  nickname: v.author?.nickname || unique_id,
+                  unique_id: v.author?.unique_id || unique_id,
+                },
+              };
+            });
+
             const finalResult = {
               code: 0,
               data: {
-                videos: result.videos,
+                videos: normalizedVideos,
                 cursor: result.cursor,
                 hasMore: result.hasMore,
               },
@@ -1446,53 +1715,77 @@ async function startServer() {
         }
       }
 
-      // Strategy 2: TikWM API attempt
-      try {
-        const params = new URLSearchParams({
-          keywords,
-          count: clientCount,
-          cursor: clientCursor,
-          type: searchType === "sound" ? "music" : "1",
-        });
+      // Strategy 2: TikWM API attempt with fallback endpoints
+      const searchEndpoints = [
+        "https://www.tikwm.com/api/feed/search",
+        "https://tikwm.com/api/feed/search",
+      ];
 
-        const response = await fetch("https://www.tikwm.com/api/feed/search", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "okhttp/4.9.2",
-          },
-          body: params.toString(),
-        });
+      for (const endpoint of searchEndpoints) {
+        try {
+          const params = new URLSearchParams({
+            keywords,
+            count: clientCount,
+            cursor: clientCursor,
+            type: searchType === "sound" ? "music" : "1",
+          });
 
-        const text = await response.text();
-        const data = JSON.parse(text);
-        if (data.code === 0 && data.data?.videos?.length > 0) {
-          const videos = data.data.videos.map((v: any) => ({
-            id: v.video_id || v.id,
-            video_id: v.video_id || v.id,
-            title: v.title || (v.music_info && v.music_info.title) || "TikTok Audio",
-            desc: v.title || v.desc,
-            url: v.play || `https://www.tiktok.com/@${v.author?.unique_id || 'user'}/video/${v.video_id || v.id}`,
-            audioUrl: v.music || (v.music_info && v.music_info.play) || `/api/stream?url=${encodeURIComponent(`https://www.tiktok.com/@${v.author?.unique_id || 'user'}/video/${v.video_id || v.id}`)}`,
-            author: {
-              nickname: v.author?.nickname || v.author?.unique_id || "TikTok Creator",
-              unique_id: `@${v.author?.unique_id || 'creator'}`,
-              avatar: v.author?.avatar,
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             },
-            duration: v.duration || 30,
-            cover: v.cover || v.origin_cover || (v.music_info && v.music_info.cover),
-            source: "tiktok",
-          }));
-          const responseData = {
-            videos,
-            cursor: (data.data.cursor || "").toString(),
-            hasMore: !!data.data.hasMore,
-          };
-          await setCachedData("tiktok_search", cacheKey, responseData);
-          return res.json(responseData);
+            body: params.toString(),
+          });
+
+          const text = await response.text();
+          let data: any;
+          try {
+            data = JSON.parse(text);
+          } catch (e) {
+            continue;
+          }
+
+          if (data.code === 0 && data.data?.videos?.length > 0) {
+            const videos = data.data.videos.map((v: any) => {
+              const vidId = v.video_id || v.id;
+              const directMusic = formatTikWmUrl(v.music_info?.play || v.music);
+              const directPlay = formatTikWmUrl(v.play || v.video_info?.play || v.hdplay);
+              const directCover = formatTikWmUrl(v.cover || v.origin_cover || v.music_info?.cover);
+              const pageUrl = `https://www.tiktok.com/@${v.author?.unique_id || 'user'}/video/${vidId}`;
+              return {
+                id: vidId,
+                video_id: vidId,
+                title: v.title || (v.music_info && v.music_info.title) || "TikTok Audio",
+                desc: v.title || v.desc,
+                url: pageUrl,
+                audioUrl: directMusic || directPlay || `/api/stream?url=${encodeURIComponent(pageUrl)}`,
+                videoUrl: directPlay || pageUrl,
+                play: directPlay,
+                music: directMusic,
+                author: {
+                  nickname: v.author?.nickname || v.author?.unique_id || "TikTok Creator",
+                  unique_id: `@${v.author?.unique_id || 'creator'}`,
+                  avatar: formatTikWmUrl(v.author?.avatar),
+                },
+                duration: v.duration || 30,
+                cover: directCover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
+                source: "tiktok",
+              };
+            });
+            const responseData = {
+              videos,
+              cursor: (data.data.cursor || "").toString(),
+              hasMore: !!data.data.hasMore,
+            };
+            await setCachedData("tiktok_search", cacheKey, responseData);
+            return res.json(responseData);
+          }
+        } catch (tikwmErr) {
+          // try next endpoint
         }
-      } catch (tikwmErr) {
-        // TikWM unvailable or blocked
       }
 
 
@@ -1846,13 +2139,14 @@ async function startServer() {
     }
   });
 
-  // API to retrieve metadata of YouTube, Facebook, SoundCloud, etc.
+  // API to retrieve metadata of YouTube, Facebook, SoundCloud, TikTok, etc.
   app.get("/api/metadata", async (req, res) => {
     try {
       let url = req.query.url as string;
       if (!url) {
         return res.status(400).json({ error: "URL parameter is required" });
       }
+      url = normalizeTikTokRequestUrl(url);
       url = await resolveFacebookRedirect(url);
       console.log(`[Metadata API] Resolving metadata for URL: ${url}`);
       
@@ -1877,6 +2171,33 @@ async function startServer() {
         }
       }
 
+      // Handle TikTok URLs directly via TikWM API (with yt-dlp backup)
+      if (
+        url.includes("tiktok.com") ||
+        url.includes("douyin.com") ||
+        url.includes("tikwm.com") ||
+        (url.includes("@") && !url.includes("://"))
+      ) {
+        try {
+          const tikwmData = await fetchTikTokWithTikWM(url);
+          if (tikwmData) {
+            return res.json({
+              title: tikwmData.title || "TikTok Audio",
+              cover:
+                tikwmData.cover ||
+                "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
+              author: tikwmData.author || "TikTok Creator",
+              duration: tikwmData.duration || 0,
+              url: tikwmData.videoUrl || tikwmData.audioUrl || url,
+              audioUrl: tikwmData.audioUrl || tikwmData.videoUrl,
+              videoUrl: tikwmData.videoUrl,
+              id: tikwmData.id,
+            });
+          }
+        } catch (e: any) {
+          console.warn("[Metadata API] TikWM resolver failed, falling back to yt-dlp:", e.message);
+        }
+      }
 
       const ytdlOptions: any = {
         dumpSingleJson: true,
@@ -1926,6 +2247,39 @@ async function startServer() {
       }
       url = await resolveFacebookRedirect(url);
       console.log(`[Clean WAV API] Transcoding to WAV: ${url}`);
+
+      // If TikTok URL, try resolving direct CDN stream and pipe directly to ffmpeg
+      if (url.includes("tiktok.com") || url.includes("tiktokcdn") || url.includes("tikwm")) {
+        try {
+          const directUrl = await getDirectMediaUrl(url);
+          if (directUrl && directUrl.startsWith("http")) {
+            const ffmpegArgs = [
+              "-headers",
+              "Referer: https://www.tiktok.com/\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n",
+              "-i",
+              directUrl,
+              "-f",
+              "wav",
+              "-acodec",
+              "pcm_s16le",
+              "-ar",
+              "44100",
+              "-ac",
+              "2",
+              "pipe:1",
+            ];
+            const ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
+            res.setHeader("Content-Type", "audio/wav");
+            ffmpegProcess.stdout.pipe(res);
+            ffmpegProcess.on("error", (err) =>
+              console.error("[Clean WAV] TikTok ffmpeg error:", err),
+            );
+            return;
+          }
+        } catch (e: any) {
+          console.warn("[Clean WAV] TikWM direct transcode failed, falling back to yt-dlp:", e.message);
+        }
+      }
 
       const ytDlpArgs = [
         "-f",
@@ -1990,7 +2344,11 @@ async function startServer() {
         headers["Referer"] = "https://www.nhaccuatui.com/";
         headers["Origin"] = "https://www.nhaccuatui.com";
       }
-      if (url.includes("tiktokcdn") || url.includes("tiktok.com")) {
+      if (
+        url.includes("tiktokcdn") ||
+        url.includes("tiktok.com") ||
+        url.includes("tikwm.com")
+      ) {
         headers["Referer"] = "https://www.tiktok.com/";
       }
 
@@ -2019,24 +2377,56 @@ async function startServer() {
 
       let response: any = null;
 
-      if (!isDirect && (finalUrl.includes("youtube.com") || finalUrl.includes("youtu.be") || finalUrl.includes("facebook.com") || finalUrl.includes("fb.watch") || finalUrl.includes("nhaccuatui.com") || finalUrl.includes("nct.vn") || finalUrl.includes("tkaraoke.com"))) {
-          try {
-            finalUrl = await getDirectMediaUrl(finalUrl, req.query.force_refresh === "true");
-          } catch(e) { }
+      if (
+        !isDirect &&
+        (finalUrl.includes("youtube.com") ||
+          finalUrl.includes("youtu.be") ||
+          finalUrl.includes("facebook.com") ||
+          finalUrl.includes("fb.watch") ||
+          finalUrl.includes("nhaccuatui.com") ||
+          finalUrl.includes("nct.vn") ||
+          finalUrl.includes("tkaraoke.com") ||
+          finalUrl.includes("tiktok.com") ||
+          finalUrl.includes("tiktokcdn") ||
+          finalUrl.includes("tikwm"))
+      ) {
+        try {
+          finalUrl = await getDirectMediaUrl(
+            finalUrl,
+            req.query.force_refresh === "true",
+          );
+        } catch (e) {}
       }
 
-      // If it's a tiktok page URL (not CDN), don't fetch directly because it returns HTML
-      const isTikTokPage = finalUrl.includes("tiktok.com") && !finalUrl.includes("tiktokcdn");
+      // If it's still a raw tiktok page URL (not CDN), don't fetch directly
+      const isTikTokPage =
+        finalUrl.includes("tiktok.com") &&
+        !finalUrl.includes("tiktokcdn") &&
+        !finalUrl.includes("tikwm");
 
       if (!isTikTokPage) {
         try {
+          if (
+            finalUrl.includes("tiktokcdn") ||
+            finalUrl.includes("tiktok.com") ||
+            finalUrl.includes("tikwm")
+          ) {
+            headers["Referer"] = "https://www.tiktok.com/";
+          }
           response = await fetch(finalUrl, { headers });
-          if (!response.ok || response.headers.get("content-type")?.includes("text/html")) {
-            console.warn(`[Download API] Direct fetch failed or returned HTML: ${response?.status}, falling back to yt-dlp...`);
+          if (
+            !response.ok ||
+            response.headers.get("content-type")?.includes("text/html")
+          ) {
+            console.warn(
+              `[Download API] Direct fetch failed or returned HTML: ${response?.status}, falling back to yt-dlp...`,
+            );
             response = null;
           }
         } catch (err) {
-          console.warn("[Download API] Direct fetch threw error, falling back to yt-dlp...");
+          console.warn(
+            "[Download API] Direct fetch threw error, falling back to yt-dlp...",
+          );
         }
       }
 
@@ -2055,14 +2445,16 @@ async function startServer() {
         );
         res.setHeader(
           "Content-Disposition",
-          `attachment; filename="audio.m4a"; filename*=UTF-8''${encodeURIComponent(safeTitle)}.m4a`
+          `attachment; filename="audio.m4a"; filename*=UTF-8''${encodeURIComponent(safeTitle)}.m4a`,
         );
         res.setHeader("Content-Type", "audio/mp4");
         res.setHeader("Transfer-Encoding", "chunked");
         if (subprocess.stdout) {
           subprocess.stdout.pipe(res);
         } else {
-          res.status(500).json({ error: "Failed to create audio stream via yt-dlp" });
+          res
+            .status(500)
+            .json({ error: "Failed to create audio stream via yt-dlp" });
         }
         return;
       }
@@ -2072,12 +2464,14 @@ async function startServer() {
       if (contentType.includes("mp4")) extension = "mp4";
       if (contentType.includes("wav")) extension = "wav";
       if (contentType.includes("flac")) extension = "flac";
-      if (contentType.includes("m4a") || contentType.includes("aac")) extension = "m4a";
-      if (contentType.includes("webm") || contentType.includes("opus")) extension = "webm";
+      if (contentType.includes("m4a") || contentType.includes("aac"))
+        extension = "m4a";
+      if (contentType.includes("webm") || contentType.includes("opus"))
+        extension = "webm";
 
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename="audio.${extension}"; filename*=UTF-8''${encodeURIComponent(safeTitle)}.${extension}`
+        `attachment; filename="audio.${extension}"; filename*=UTF-8''${encodeURIComponent(safeTitle)}.${extension}`,
       );
       res.setHeader("Content-Type", contentType);
 
@@ -2093,7 +2487,7 @@ async function startServer() {
       }
     } catch (error: any) {
       console.error("[Download API Error]", error);
-      res.status(500).json({ error: error.message });
+      res.status(500).json({ error: error.message || "Failed to download" });
     }
   });
   app.post("/api/lyric/format", express.json(), async (req, res) => {

@@ -4862,11 +4862,11 @@ export default function StemStudio({
 
                          {showSystemWarning && (
                             <div className="w-full max-w-xl mb-8 p-3.5 sm:p-4 rounded-2xl bg-amber-500/10 border border-amber-500/25 text-amber-200/90 text-[11px] sm:text-xs leading-relaxed text-center backdrop-blur-md shadow-lg flex items-start sm:items-center justify-center gap-2.5 relative group">
-                               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
-                               <p className="text-left sm:text-center pr-6">
+                               <div className="text-left sm:text-center pr-6">
                                   <span className="font-bold text-amber-300 uppercase tracking-wider text-[10px] sm:text-[11px] block sm:inline mr-1">⚠️ Cảnh báo hệ thống:</span>
-                                  Không hỗ trợ tách STEM với tệp âm thanh quá dài. Tuyệt đối không dùng công cụ tự động để cào/tải nhạc hàng loạt — hành vi này sẽ gây <strong>kiệt bộ nhớ (RAM)</strong>, <strong>quá tải băng thông</strong> và dẫn tới việc <strong>IP của server bị khóa bởi Tiktok hay YT. Không sử dụng search YT quá nhiều dẫn đến hết memory của Free server</strong>.
-                               </p>
+                                  Không hỗ trợ tách STEM với tệp âm thanh quá dài. Tuyệt đối không dùng công cụ tự động để cào/tải nhạc hàng loạt — hành vi này sẽ gây <strong>kiệt bộ nhớ (RAM)</strong>, <strong>quá tải băng thông</strong> và dẫn tới việc <strong>IP của server bị khóa bởi Tiktok hay YT.</strong>
+                                  <div className="mt-1"><strong>Dùng tool Stem Extraction để dùng tạo audio chuyên nghiệp hơn cho mục đích Bypass.</strong></div>
+                                </div>
                                <button 
                                   onClick={() => setShowSystemWarning(false)}
                                   className="absolute right-2 top-2 p-1 text-amber-400/50 hover:text-amber-400 hover:bg-amber-400/10 rounded-lg transition-colors"
