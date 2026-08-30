@@ -2487,13 +2487,31 @@ export default function StemStudio({
       if (fetchUrl.includes("/api/stream") && (fetchUrl.includes("facebook.com") || fetchUrl.includes("fb.watch") || fetchUrl.includes("facebook"))) {
         fetchUrl = fetchUrl.replace("/api/stream", "/api/clean-wav");
       }
+      
+      console.log("Suno Bypass Fetching URL:", fetchUrl);
       const res = await fetch(fetchUrl);
+      if (!res.ok) {
+        throw new Error(`Failed to fetch audio data: ${res.status} ${res.statusText}`);
+      }
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        try {
+          const json = await res.clone().json();
+          throw new Error(`Proxy error: ${json.error || "Unknown"}`);
+        } catch(e) {}
+      }
       const arrayBuffer = await res.arrayBuffer();
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error("Received empty audio data from server.");
+      }
       if (!audioContextRef.current) {
         initAudio();
       }
       const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
-      const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+      const decodedBuffer = await safeDecodeAudioData(ctx, arrayBuffer);
       const bypassSpeedFactor = sunoSpeedFactor;
       const exportSampleRate = decodedBuffer.sampleRate;
       
@@ -2677,17 +2695,8 @@ export default function StemStudio({
          const arrayBuf = await res.arrayBuffer();
          
          // Decode audio data safely across all mobile engines
-         const audioBuf = await new Promise<AudioBuffer>((resolve, reject) => {
-           try {
-             const promise = decodeCtx.decodeAudioData(arrayBuf, resolve, (err) => {
-               reject(err || new Error(`Decode failed for stem "${stem}"`));
-             });
-             if (promise && typeof promise.catch === "function") {
-               promise.catch(reject);
-             }
-           } catch (e) {
-             reject(e);
-           }
+         const audioBuf = await safeDecodeAudioData(decodeCtx, arrayBuf).catch(e => {
+            throw new Error(`Decode failed for stem "${stem}": ${e.message}`);
          });
          
          decodedBuffers[stem] = audioBuf;
@@ -2715,9 +2724,7 @@ export default function StemStudio({
          try {
            const res = await fetch(ambientOverlayUrl);
            const arrayBuf = await res.arrayBuffer();
-           ambientBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
-             decodeCtx.decodeAudioData(arrayBuf, resolve, reject);
-           });
+           ambientBuffer = await safeDecodeAudioData(decodeCtx, arrayBuf);
          } catch (err) {
            console.warn("Failed to decode ambient audio for export", err);
          }
@@ -4673,7 +4680,7 @@ export default function StemStudio({
              <div className="bg-black/20 border border-white/5 rounded-2xl p-4 flex flex-col gap-4 animate-in fade-in slide-in-from-top-2">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                    <div className="flex flex-col gap-1">
-                       <h3 className="text-[10px] font-black tracking-widest uppercase text-white/70">Export Tools</h3>
+                       <h3 className="text-[10px] font-black tracking-widest uppercase text-white/70">Export Tools: Bypass nhanh với LV2 setting</h3>
                        <p className="text-[9px] text-white/40">Trim mixdown or generate a direct bypassed track.</p>
                    </div>
                    <div className="flex flex-wrap items-center gap-3">
@@ -4698,7 +4705,7 @@ export default function StemStudio({
                            title="Directly bypass Suno's detection on the original track"
                        >
                           {isBypassingSuno ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                          {isBypassingSuno ? "Processing..." : "Direct Bypass"}
+                          {isBypassingSuno ? "Processing..." : "Quick Lv2 Direct Bypass"}
                        </button>
                    </div>
                 </div>

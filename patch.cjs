@@ -1,57 +1,33 @@
 const fs = require('fs');
-let code = fs.readFileSync('server.ts', 'utf8');
-const startMatch = "      const strategies = [";
-const endMatch = "        // Strategy 3: HTML fetch + proxy via AllOrigins";
-const startIndex = code.indexOf(startMatch);
-const endIndex = code.indexOf(endMatch);
-if (startIndex !== -1 && endIndex !== -1) {
-  const newStrategies = `      const strategies = [
-        // Strategy 1: yt-dlp backend
-        async () => {
-          const ytdlOptions: any = {
-            dumpSingleJson: true,
-            flatPlaylist: true,
-            noWarnings: true,
-            jsRuntimes: "node",
-            noCheckCertificates: true,
-            playlistEnd: parseInt(clientCount) || 40,
-          };
-          if (await hasYoutubeCookies()) {
-            ytdlOptions.cookies = getCookiesFilePath();
+let code = fs.readFileSync('src/App.tsx', 'utf8');
+const searchStr = `    shouldAutoPlayRef.current = true;
+    setIsAIAnalyzing(false);
+    setCurrentSong(song);
+    setFileName(song.title || "TikTok Audio");
+    setTiktokUrl(song.originalUrl || "");
+
+    resumeContext();`;
+const replaceStr = `    shouldAutoPlayRef.current = true;
+    setIsAIAnalyzing(false);
+    setCurrentSong(song);
+    setFileName(song.title || "TikTok Audio");
+    setTiktokUrl(song.originalUrl || "");
+
+    // Lazy load / refetch fresh artwork when fetching audio for TikTok songs
+    if (song.originalUrl && song.originalUrl.includes("tiktok.com")) {
+      fetch(\`/api/metadata?url=\${encodeURIComponent(song.originalUrl)}\`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.cover && data.cover !== song.cover) {
+            console.log("Refetched fresh cover for TikTok song");
+            setRecentSongs(curr => curr.map(s => s.id === song.id ? { ...s, cover: data.cover } : s));
+            setCurrentSong(prev => prev && prev.id === song.id ? { ...prev, cover: data.cover } : prev);
           }
-          
-          const profileUrl = \`https://www.tiktok.com/@\${unique_id}\`;
-          console.log(\`[Strategy 1] Using yt-dlp to fetch TikTok profile: \${profileUrl}\`);
-          const info = await youtubedl(profileUrl, ytdlOptions) as any;
-          
-          if (info && info.entries && info.entries.length > 0) {
-            const mappedVideos = info.entries.map((entry) => {
-              const videoUrl = entry.url || \`https://www.tiktok.com/@\${unique_id}/video/\${entry.id}\`;
-              return {
-                video_id: entry.id,
-                title: entry.title || "TikTok Video",
-                audioUrl: \`/api/stream?url=\${encodeURIComponent(videoUrl)}\`,
-                cover: entry.thumbnails?.[0]?.url || "https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=300",
-                author: {
-                  unique_id: unique_id,
-                  nickname: entry.uploader || unique_id
-                }
-              };
-            });
-            
-            return {
-              videos: mappedVideos,
-              cursor: "0",
-              hasMore: false,
-            };
-          }
-          throw new Error("yt-dlp strategy returned 0 items");
-        },
-        
-`;
-  code = code.substring(0, startIndex) + newStrategies + code.substring(endIndex);
-  fs.writeFileSync('server.ts', code);
-  console.log("Success");
-} else {
-  console.log("Indices not found");
-}
+        })
+        .catch(err => console.warn("Failed to refetch fresh cover", err));
+    }
+
+    resumeContext();`;
+code = code.replace(searchStr, replaceStr);
+fs.writeFileSync('src/App.tsx', code);
+console.log("Success");
