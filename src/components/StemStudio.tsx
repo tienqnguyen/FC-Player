@@ -2487,31 +2487,13 @@ export default function StemStudio({
       if (fetchUrl.includes("/api/stream") && (fetchUrl.includes("facebook.com") || fetchUrl.includes("fb.watch") || fetchUrl.includes("facebook"))) {
         fetchUrl = fetchUrl.replace("/api/stream", "/api/clean-wav");
       }
-      
-      console.log("Suno Bypass Fetching URL:", fetchUrl);
       const res = await fetch(fetchUrl);
-      if (!res.ok) {
-        throw new Error(`Failed to fetch audio data: ${res.status} ${res.statusText}`);
-      }
-      const contentType = res.headers.get("content-type");
-      if (contentType && contentType.includes("application/json")) {
-        try {
-          const json = await res.clone().json();
-          throw new Error(`Proxy error: ${json.error || "Unknown"}`);
-        } catch(e) {}
-      }
       const arrayBuffer = await res.arrayBuffer();
-      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-        throw new Error("Received empty audio data from server.");
-      }
       if (!audioContextRef.current) {
         initAudio();
       }
       const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
-      if (ctx.state === "suspended") {
-        await ctx.resume();
-      }
-      const decodedBuffer = await safeDecodeAudioData(ctx, arrayBuffer);
+      const decodedBuffer = await ctx.decodeAudioData(arrayBuffer);
       const bypassSpeedFactor = sunoSpeedFactor;
       const exportSampleRate = decodedBuffer.sampleRate;
       
@@ -2695,8 +2677,17 @@ export default function StemStudio({
          const arrayBuf = await res.arrayBuffer();
          
          // Decode audio data safely across all mobile engines
-         const audioBuf = await safeDecodeAudioData(decodeCtx, arrayBuf).catch(e => {
-            throw new Error(`Decode failed for stem "${stem}": ${e.message}`);
+         const audioBuf = await new Promise<AudioBuffer>((resolve, reject) => {
+           try {
+             const promise = decodeCtx.decodeAudioData(arrayBuf, resolve, (err) => {
+               reject(err || new Error(`Decode failed for stem "${stem}"`));
+             });
+             if (promise && typeof promise.catch === "function") {
+               promise.catch(reject);
+             }
+           } catch (e) {
+             reject(e);
+           }
          });
          
          decodedBuffers[stem] = audioBuf;
@@ -2724,7 +2715,9 @@ export default function StemStudio({
          try {
            const res = await fetch(ambientOverlayUrl);
            const arrayBuf = await res.arrayBuffer();
-           ambientBuffer = await safeDecodeAudioData(decodeCtx, arrayBuf);
+           ambientBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
+             decodeCtx.decodeAudioData(arrayBuf, resolve, reject);
+           });
          } catch (err) {
            console.warn("Failed to decode ambient audio for export", err);
          }
