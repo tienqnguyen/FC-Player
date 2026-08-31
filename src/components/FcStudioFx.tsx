@@ -306,18 +306,24 @@ export function FcStudioFx({ onClose, isOpen = true, audioCtx, inputNode, output
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-md">
       <div className="absolute inset-0" onClick={onClose} />
       
-      <div className="relative w-full max-w-[800px] bg-[#21232d] rounded-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col font-sans max-h-[90vh]">
+      <div className="relative w-full max-w-[800px] bg-[#21232d] rounded-2xl border border-white/10 shadow-[0_20px_50px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col font-sans max-h-[95vh] sm:max-h-[90vh]">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 bg-[#121319] border-b border-white/5 shrink-0 relative">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-6 py-4 bg-[#121319] border-b border-white/5 shrink-0 relative gap-3 sm:gap-0">
           <div className="absolute top-0 left-0 w-full h-px bg-gradient-to-r from-emerald-500/0 via-emerald-500/50 to-teal-500/0"></div>
-          <h2 className="text-white font-black tracking-widest text-xl flex items-center gap-2">
-            <span className="text-emerald-500">FC</span> STUDIO FX <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded ml-1">PRO PACK</span>
-          </h2>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between w-full sm:w-auto gap-3">
+            <h2 className="text-white font-black tracking-widest text-lg sm:text-xl flex items-center gap-2">
+              <span className="text-emerald-500">FC</span> STUDIO FX <span className="text-[9px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-1.5 py-0.5 rounded ml-1">PRO</span>
+            </h2>
+            <button onClick={onClose} className="sm:hidden text-white/40 hover:text-white transition-colors">
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+          
+          <div className="flex items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
             <button 
               onClick={() => {
                 setCompThresh(-24); setCompRatio(4); setCompAttack(15); setCompMakeup(2);
@@ -330,14 +336,14 @@ export function FcStudioFx({ onClose, isOpen = true, audioCtx, inputNode, output
             >
               Reset All
             </button>
-            <div className="w-px h-6 bg-white/10"></div>
+            <div className="w-px h-6 bg-white/10 hidden sm:block"></div>
             <button 
               onClick={() => setBypass(!bypass)} 
-              className={`px-6 py-1.5 rounded-md text-xs font-black tracking-widest transition-all border ${bypass ? 'bg-black/50 text-white/50 border-white/10 hover:text-white hover:border-white/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
+              className={`px-4 sm:px-6 py-1.5 rounded-md text-[10px] sm:text-xs font-black tracking-widest transition-all border ${bypass ? 'bg-black/50 text-white/50 border-white/10 hover:text-white hover:border-white/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.2)]'}`}
             >
               {bypass ? 'BYPASSED' : 'ACTIVE'}
             </button>
-            <button onClick={onClose} className="text-white/40 hover:text-white ml-2 transition-colors">
+            <button onClick={onClose} className="hidden sm:block text-white/40 hover:text-white ml-2 transition-colors">
               <X className="w-6 h-6" />
             </button>
           </div>

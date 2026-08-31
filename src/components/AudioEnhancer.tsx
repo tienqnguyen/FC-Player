@@ -479,24 +479,28 @@ export function AudioEnhancer({ onClose, isOpen = true, audioCtx, inputNode, out
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-sm">
       <div className="absolute inset-0" onClick={onClose} />
       
-      <div className="relative w-full max-w-[1000px] bg-[#1a1b23] rounded-xl border border-white/10 shadow-2xl overflow-hidden flex flex-col font-sans">
+      <div className="relative w-full max-w-[1000px] max-h-[95vh] sm:max-h-[90vh] bg-[#1a1b23] rounded-xl border border-white/10 shadow-2xl overflow-hidden flex flex-col font-sans">
         
         {/* Top Header */}
-        <div className="flex items-center justify-between px-5 py-3 bg-[#121319] border-b border-white/5">
-          <div className="flex items-center gap-3">
-            <h2 className="text-white font-black tracking-widest text-xl flex items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between px-4 sm:px-5 py-3 sm:py-3 bg-[#121319] border-b border-white/5 gap-3 sm:gap-0 shrink-0">
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-start">
+            <h2 className="text-white font-black tracking-widest text-lg sm:text-xl flex items-center gap-2">
               <span className="text-cyan-400">FC</span> AUDIO <span className="text-[10px] bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-1.5 py-0.5 rounded font-bold ml-1">PRO</span>
             </h2>
+            {/* Close button on mobile moves here for better UX */}
+            <button onClick={onClose} className="sm:hidden text-white/40 hover:text-white transition-colors">
+              <X className="w-6 h-6" />
+            </button>
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4 w-full sm:w-auto justify-between sm:justify-end">
             {/* Presets */}
-            <div className="flex items-center bg-black/40 border border-white/10 rounded-md px-3 py-1.5 min-w-[220px] justify-between">
-              <span className="text-white text-xs font-semibold tracking-wide mr-2">{presets[presetIdx].name}</span>
-              <div className="flex items-center gap-1.5 text-white/40">
+            <div className="flex items-center bg-black/40 border border-white/10 rounded-md px-3 py-1.5 flex-1 sm:flex-none min-w-[180px] sm:min-w-[220px] justify-between">
+              <span className="text-white text-[10px] sm:text-xs font-semibold tracking-wide mr-2 truncate">{presets[presetIdx].name}</span>
+              <div className="flex items-center gap-1.5 text-white/40 shrink-0">
                 <ChevronLeft className="w-4 h-4 cursor-pointer hover:text-white transition-colors" onClick={() => applyPreset((presetIdx - 1 + presets.length) % presets.length)} />
                 <ChevronRight className="w-4 h-4 cursor-pointer hover:text-white transition-colors" onClick={() => applyPreset((presetIdx + 1) % presets.length)} />
                 <div className="w-px h-3 bg-white/20 mx-1"></div>
@@ -506,19 +510,18 @@ export function AudioEnhancer({ onClose, isOpen = true, audioCtx, inputNode, out
             
             <button 
               onClick={() => setBypass(!bypass)} 
-              className={`px-6 py-1.5 rounded-md text-xs font-black tracking-widest transition-all border ${bypass ? 'bg-black/50 text-white/50 border-white/10 hover:text-white hover:border-white/30' : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50 shadow-[0_0_15px_rgba(34,211,238,0.2)]'}`}
+              className={`px-4 sm:px-6 py-1.5 rounded-md text-[10px] sm:text-xs font-black tracking-widest transition-all border ${bypass ? 'bg-black/50 text-white/50 border-white/10 hover:text-white hover:border-white/30' : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50 shadow-[0_0_15px_rgba(34,211,238,0.2)]'}`}
             >
               {bypass ? 'BYPASSED' : 'ACTIVE'}
             </button>
-
-            <button onClick={onClose} className="text-white/40 hover:text-white ml-2 transition-colors">
+            <button onClick={onClose} className="hidden sm:block text-white/40 hover:text-white ml-2 transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
         </div>
         
         {/* Modules Grid */}
-        <div className={`p-4 grid grid-cols-1 md:grid-cols-4 gap-4 ${bypass ? 'opacity-40 grayscale-[0.8] pointer-events-none transition-all duration-500' : 'transition-all duration-500'}`}>
+        <div className={`p-4 grid grid-cols-1 md:grid-cols-4 gap-4 overflow-y-auto ${bypass ? 'opacity-40 grayscale-[0.8] pointer-events-none transition-all duration-500' : 'transition-all duration-500'}`}>
           
           {/* DYNAMICS Module */}
           <div className="bg-[#21232d] border border-white/5 rounded-xl p-4 flex flex-col shadow-lg">
