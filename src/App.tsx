@@ -4174,7 +4174,7 @@ export default function App() {
   };
 
   const togglePlay = () => {
-    if (!audioRef.current || !audioUrl) return;
+    if (!audioRef.current || !audioUrl || showStemmix) return;
 
     resumeContext(); // Do not await to preserve synchronous user gesture context
 

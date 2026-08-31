@@ -3064,8 +3064,10 @@ export default function StemStudio({
 
     if (isPlaying) {
       Object.values(audioElementsRef.current).forEach((a: any) => a.pause());
+      if (originalAudioElementRef.current) originalAudioElementRef.current.pause();
     } else {
       const currentSyncTime = currentTime;
+      if (originalAudioElementRef.current) originalAudioElementRef.current.pause(); // Pause original audio when playing stems
       Object.values(audioElementsRef.current).forEach((a: any) => {
         try { a.currentTime = currentSyncTime; } catch (err) {}
       });
@@ -5141,7 +5143,7 @@ export default function StemStudio({
                                  className="w-full h-10 outline-none opacity-80 hover:opacity-100 transition-opacity" 
                                  onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
                                  onPlay={() => { 
-                                   setIsPlaying(true); 
+                                   setIsPlaying(false); Object.values(audioElementsRef.current).forEach((a: any) => { try { a.pause(); } catch {} }); 
                                    initAudio(); 
                                    if (audioContextRef.current?.state === 'suspended') {
                                      audioContextRef.current.resume();
