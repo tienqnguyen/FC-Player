@@ -89,7 +89,7 @@ import PixabayStudio from "./PixabayStudio";
 import { AudioEnhancer } from "./AudioEnhancer";
 import { FcOneKnobPro } from "./FcOneKnobPro";
 import { FcStudioFx } from "./FcStudioFx";
-import { Mic, Maximize } from "lucide-react";
+import { Mic, Maximize, ExternalLink } from "lucide-react";
 
 interface StemStudioProps {
   originalAudioUrl?: string | null;
@@ -4541,7 +4541,7 @@ export default function StemStudio({
           )}
 
           {/* Export Buttons */}
-          <div className="flex items-center gap-1 shrink-0 ml-auto">
+          <div className="flex items-center gap-1.5 shrink-0 ml-auto">
              <button
                 onClick={() => handleExportMix("mp3")}
                 disabled={stemmixStatus !== "ready" || isExporting}
@@ -4642,6 +4642,17 @@ export default function StemStudio({
                 <Brain className="w-3 h-3 shrink-0" />
                 <span>ONNX</span>
              </button>
+             <a
+                href="https://fc-karaoke.vercel.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-2.5 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 cursor-pointer bg-gradient-to-r from-amber-500/20 via-amber-400/30 to-amber-500/20 text-amber-300 hover:text-white border border-amber-400/40 hover:border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.2)] hover:scale-105 active:scale-95 ml-1 shrink-0"
+                title="Open FC Karaoke Maker"
+             >
+                <Mic className="w-3 h-3 text-amber-400 shrink-0" />
+                <span>KARAOKE MAKER</span>
+                <ExternalLink className="w-2.5 h-2.5 opacity-75 shrink-0" />
+             </a>
           </div>
        </div>
 
