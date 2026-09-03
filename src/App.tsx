@@ -10,6 +10,7 @@ import { separateStemsWithONNX } from "./utils/onnxSeparation";
 import audioBufferToWav from "audiobuffer-to-wav";
 import { db, auth, initAuth, handleFirestoreError, OperationType } from "./firebase";
 import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
+import { AudioFormatConverter } from "./components/AudioFormatConverter";
 import { GoogleDriveAlbum } from "./components/GoogleDriveAlbum";
 
 function safeDecodeAudioData(ctx: AudioContext, audioData: ArrayBuffer): Promise<AudioBuffer> {
@@ -4174,7 +4175,7 @@ export default function App() {
   };
 
   const togglePlay = () => {
-    if (!audioRef.current || !audioUrl || showStemmix) return;
+    if (!audioRef.current || !audioUrl) return;
 
     resumeContext(); // Do not await to preserve synchronous user gesture context
 
@@ -4191,6 +4192,8 @@ export default function App() {
           setStemsPlaying(false);
           Object.values(stemsAudioRefs.current).forEach((a: any) => a.pause());
       }
+      // Dispatch custom event to notify StemStudio to pause
+      window.dispatchEvent(new CustomEvent('master-audio-played'));
     }
     setIsPlaying(!isPlaying);
   };
@@ -7274,4 +7277,3 @@ onClearStems={() => {
       </div>
   );
 }
-

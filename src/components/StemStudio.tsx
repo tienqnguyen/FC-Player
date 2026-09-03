@@ -3,6 +3,7 @@ import JSZip from 'jszip';
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import SunoLyricDownloader from './SunoLyricDownloader';
 import SunoGuideModal from './SunoGuideModal';
+import { AudioFormatConverter } from './AudioFormatConverter';
 import audioBufferToWav from 'audiobuffer-to-wav';
 
 function normalizeAudioBuffer(buffer: AudioBuffer) {
@@ -78,7 +79,7 @@ function audioBufferToMp3(buffer: AudioBuffer): Blob {
   }
   return new Blob(mp3Data, {type: 'audio/mp3'});
 }
-import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search, Scissors, Replace, Trash2, SlidersHorizontal, Undo2, Redo2, Edit3, Eye, Speaker, Heart } from "lucide-react";
+import { Play, Pause, ChevronDown, ChevronRight, ChevronUp, Volume2, VolumeX, X, Settings2, Download, Maximize2, Minimize2, Radio, Activity, Sliders, Sparkles, ArrowLeft, Plus, Loader2, Zap, Cloud, Brain, Headphones, Clock, Music, Wind, RotateCcw, Type, Check, Search, Scissors, Replace, Trash2, SlidersHorizontal, Undo2, Redo2, Edit3, Eye, Speaker, Heart, AudioWaveform } from "lucide-react";
 import AudioTrimmer from "./AudioTrimmer";
 import { transcribeWithCohere } from '../utils/cohereTranscriber';
 import { transcribeWithRNNT } from '../utils/rnntTranscriber';
@@ -311,6 +312,7 @@ export default function StemStudio({
   const [exportError, setExportError] = useState<string | null>(null);
   const [downloadLink, setDownloadLink] = useState<{ url: string; filename: string } | null>(null);
   const [isTrimmingMixdown, setIsTrimmingMixdown] = useState(false);
+  const [showConverter, setShowConverter] = useState(false);
   const downloadLinkRef = useRef<HTMLDivElement>(null);
 
   // Stop all playing audio elements whenever stem separation starts loading
@@ -327,6 +329,19 @@ export default function StemStudio({
       }
     }
   }, [stemmixStatus]);
+
+  useEffect(() => {
+    const handleMasterPlay = () => {
+       setIsPlaying(false);
+       Object.values(audioElementsRef.current).forEach((a: any) => {
+         try { a.pause(); } catch {}
+       });
+       if (previewAudioRef.current) previewAudioRef.current.pause();
+       if (ambientAudioRef.current) ambientAudioRef.current.pause();
+    };
+    window.addEventListener('master-audio-played', handleMasterPlay);
+    return () => window.removeEventListener('master-audio-played', handleMasterPlay);
+  }, []);
 
   // To avoid memory leaks, revoke old URL when setting a new one or unmounting
   useEffect(() => {
@@ -4653,6 +4668,14 @@ export default function StemStudio({
                 <span>KARAOKE MAKER</span>
                 <ExternalLink className="w-2.5 h-2.5 opacity-75 shrink-0" />
              </a>
+             <button
+                onClick={() => setShowConverter(true)}
+                className="px-2.5 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 cursor-pointer bg-white/10 text-emerald-400 hover:bg-white/20 hover:text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/60 shadow-[0_0_10px_rgba(16,185,129,0.15)] hover:scale-105 active:scale-95 ml-1 shrink-0"
+                title="Open M4A to MP3 Converter"
+             >
+                <AudioWaveform className="w-3 h-3 text-emerald-400 shrink-0" />
+                <span>CONVERTER</span>
+             </button>
           </div>
        </div>
 
@@ -6388,7 +6411,7 @@ export default function StemStudio({
              onClose={() => setShowSpectrogram(false)} 
           />
        )}
-
+       {showConverter && <AudioFormatConverter onClose={() => setShowConverter(false)} />}
     </div>
    );
 }

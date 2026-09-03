@@ -463,6 +463,7 @@ async function startServer() {
         res.setHeader("Transfer-Encoding", "chunked");
         if (subprocess.stdout) {
           subprocess.stdout.pipe(res);
+      subprocess.stderr.on("data", (data) => console.log(data.toString()));
         } else {
           res.status(500).json({ error: "Failed to create audio stream" });
         }
@@ -2340,6 +2341,7 @@ async function startServer() {
         res.setHeader("Transfer-Encoding", "chunked");
         if (subprocess.stdout) {
           subprocess.stdout.pipe(res);
+      subprocess.stderr.on("data", (data) => console.log(data.toString()));
         } else {
           res
             .status(500)
@@ -2548,6 +2550,78 @@ async function startServer() {
       res.status(500).json({ error: error.message || "Failed to stream Drive file" });
     }
   });
+  const uploadFile = multer({ dest: "/tmp/" });
+
+  app.post("/api/convert-audio", uploadFile.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+      const inputPath = req.file.path;
+      
+      const ext = path.extname(req.file.originalname || "");
+      const inputPathWithExt = inputPath + ext;
+      await fs.rename(inputPath, inputPathWithExt);
+      const outputPath = inputPath + ".mp3";
+      
+      // Read first 100 bytes to check if it's actually an HTML/Text file instead of audio
+      const buffer = Buffer.alloc(100);
+      const fd = await fs.open(inputPathWithExt, 'r');
+      await fd.read(buffer, 0, 100, 0);
+      await fd.close();
+      
+      const headerText = buffer.toString('utf-8').trim().toLowerCase();
+      if (headerText.startsWith('<!doctype html') || headerText.startsWith('<html') || headerText.includes('<body') || headerText.startsWith('{') || headerText.includes('<?xml')) {
+         await fs.unlink(inputPathWithExt).catch(()=>{});
+         return res.status(400).json({ error: "File appears to be an HTML/Text error page (maybe a failed download from Suno?), not a valid audio file. Please check the file on your computer." });
+      }
+
+      const ffmpegArgs = [
+        "-err_detect", "ignore_err",
+        "-i", inputPathWithExt,
+        "-c:a", "libmp3lame",
+        "-b:a", "192k",
+        "-y",
+        outputPath
+      ];
+      
+      const subprocess = spawn("ffmpeg", ffmpegArgs);
+      
+      let stderrLog = "";
+      subprocess.stderr.on("data", (data) => {
+        stderrLog += data.toString();
+        console.log(data.toString());
+      });
+      
+      subprocess.on("close", (code) => {
+        if (code !== 0) {
+          fs.unlink(inputPathWithExt).catch(() => {});
+          console.error("FFmpeg Error:", stderrLog);
+          
+          if (!res.headersSent) {
+             let customError = "FFmpeg conversion failed.";
+             if (stderrLog.includes("moov atom not found")) {
+                customError = "The file is an incomplete/corrupted M4A/MP4 stream (missing 'moov' atom). It was likely downloaded improperly from the stream. Please download the file correctly.";
+             } else if (stderrLog.includes("Invalid data found when processing input")) {
+                customError = "The file format could not be recognized. It might be corrupted or not a valid audio file.";
+             }
+             res.status(500).json({ error: customError });
+          }
+          return;
+        }
+        res.download(outputPath, "converted.mp3", (err) => {
+          fs.unlink(inputPathWithExt).catch(() => {});
+          fs.unlink(outputPath).catch(() => {});
+        });
+      });
+    } catch (error: any) {
+      console.error("[Conversion Error]", error);
+      if (!res.headersSent) {
+         res.status(500).json({ error: error.message || "Conversion failed" });
+      }
+    }
+  });
+
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
