@@ -1,4 +1,6 @@
-import React, { useState } from "react";
+const fs = require('fs');
+
+const code = `import React, { useState } from "react";
 import { FileAudio, Download, Loader2, X, Music, Link as LinkIcon, Search } from "lucide-react";
 
 export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
@@ -34,11 +36,11 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
     setIsFetchingInfo(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(`/api/suno-info?sunoId=${sunoId}`);
+      const res = await fetch(\`/api/suno-info?sunoId=\${sunoId}\`);
       if (!res.ok) throw new Error("Failed to fetch info");
       const data = await res.json();
       setSunoInfo(data);
-      setDownloadName(`${data.title}.mp3`);
+      setDownloadName(\`\${data.title}.mp3\`);
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to fetch song info");
     } finally {
@@ -53,7 +55,7 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
 
     try {
       if (activeTab === "file" && selectedFile) {
-        setDownloadName(selectedFile.name.replace(/\.[^/.]+$/, "") + "_converted.mp3");
+        setDownloadName(selectedFile.name.replace(/\\.[^/.]+$/, "") + "_converted.mp3");
         const formData = new FormData();
         formData.append("file", selectedFile);
         setProgress(40);
@@ -131,13 +133,13 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
           <div className="flex gap-2 p-1 bg-black/40 rounded-lg border border-white/5">
             <button
               onClick={() => { setActiveTab("file"); setDownloadUrl(null); }}
-              className={`flex-1 text-[11px] font-bold uppercase tracking-wider py-2 rounded-md transition-all ${activeTab === "file" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/80"}`}
+              className={\`flex-1 text-[11px] font-bold uppercase tracking-wider py-2 rounded-md transition-all \${activeTab === "file" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/80"}\`}
             >
               Upload File
             </button>
             <button
               onClick={() => { setActiveTab("suno"); setDownloadUrl(null); }}
-              className={`flex-1 text-[11px] font-bold uppercase tracking-wider py-2 rounded-md transition-all ${activeTab === "suno" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/80"}`}
+              className={\`flex-1 text-[11px] font-bold uppercase tracking-wider py-2 rounded-md transition-all \${activeTab === "suno" ? "bg-white/10 text-white" : "text-white/40 hover:text-white/80"}\`}
             >
               Suno URL
             </button>
@@ -196,7 +198,7 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
                    <a 
                      href={sunoInfo.mp4Url} 
                      target="_blank" rel="noopener noreferrer"
-                     download={`${sunoInfo.title}.mp4`}
+                     download={\`\${sunoInfo.title}.mp4\`}
                      className="flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-[10px] font-bold uppercase py-2 rounded-lg transition-colors"
                    >
                      <Download className="w-3 h-3" /> Raw MP4
@@ -204,7 +206,7 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
                    <a 
                      href={sunoInfo.m4aUrl} 
                      target="_blank" rel="noopener noreferrer"
-                     download={`${sunoInfo.title}.m4a`}
+                     download={\`\${sunoInfo.title}.m4a\`}
                      className="flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-[10px] font-bold uppercase py-2 rounded-lg transition-colors"
                    >
                      <Download className="w-3 h-3" /> Raw M4A
@@ -258,11 +260,11 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
               <button
                 disabled={isConverting}
                 onClick={startConversion}
-                className={`w-full flex items-center justify-center gap-2 font-black text-[11px] tracking-wider uppercase py-3 rounded-xl transition-all ${
+                className={\`w-full flex items-center justify-center gap-2 font-black text-[11px] tracking-wider uppercase py-3 rounded-xl transition-all \${
                   isConverting 
                     ? 'bg-white/5 text-white/30 cursor-not-allowed'
                     : 'bg-white/10 hover:bg-white/20 text-white'
-                }`}
+                }\`}
               >
                 {isConverting ? (
                   <>
@@ -281,3 +283,7 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
+`;
+
+fs.writeFileSync('src/components/AudioFormatConverter.tsx', code);
+console.log("Rewrote AudioFormatConverter.tsx");

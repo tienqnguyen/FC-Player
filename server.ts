@@ -2550,7 +2550,142 @@ async function startServer() {
       res.status(500).json({ error: error.message || "Failed to stream Drive file" });
     }
   });
+  
+
+  app.get("/api/suno-info", async (req, res) => {
+    try {
+      const { sunoId } = req.query;
+      if (!sunoId) {
+        return res.status(400).json({ error: "No Suno ID provided" });
+      }
+
+      const oembedUrl = `https://studio-api.prod.suno.com/api/oembed?url=https%3A%2F%2Fsuno.com%2Fsong%2F${sunoId}`;
+      const fetchRes = await fetch(oembedUrl);
+      
+      let title = sunoId;
+      if (fetchRes.ok) {
+         const data = await fetchRes.json();
+         if (data && data.title) {
+            title = data.title;
+         }
+      }
+
+      // We can also provide the expected direct links
+      const mp4Url = `https://cdn1.suno.ai/${sunoId}.mp4`;
+      const m4aUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${sunoId}.m4a`;
+
+      res.json({ title, mp4Url, m4aUrl, sunoId });
+    } catch (e: any) {
+      console.error("Failed to fetch suno info:", e);
+      res.status(500).json({ error: e.message || "Failed to fetch info" });
+    }
+  });
+
+  app.post("/api/convert-audio-url",
+ express.json(), async (req, res) => {
+    try {
+      const { sunoId } = req.body;
+      if (!sunoId) {
+        return res.status(400).json({ error: "No Suno ID provided" });
+      }
+
+      let fetchRes = null;
+      let urlUsed = "";
+      
+      // Step 1: Try direct known URLs first
+      const urlsToTry = [
+        `https://cdn1.suno.ai/${sunoId}.mp4`,
+        `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${sunoId}.m4a`,
+        `https://cdn1.suno.ai/${sunoId}.mp3`
+      ];
+      for (const url of urlsToTry) {
+         fetchRes = await fetch(url);
+         if (fetchRes.ok) {
+            urlUsed = url;
+            break;
+         }
+      }
+
+      // Step 2: Fallback to scraping the HTML source code
+      if (!fetchRes || !fetchRes.ok) {
+        try {
+          const pageRes = await fetch(`https://suno.com/song/${sunoId}`);
+          if (pageRes.ok) {
+             const pageText = await pageRes.text();
+             const regex = new RegExp(`https:\\/\\/[a-z0-9\\-]+\\.cloudfront\\.net\\/[^"\\'\\\\]*${sunoId}\\.m4a`, 'i');
+             const match = pageText.match(regex);
+             if (match) {
+                const scrapedUrl = match[0];
+                const testRes = await fetch(scrapedUrl);
+                if (testRes.ok) {
+                   fetchRes = testRes;
+                   urlUsed = scrapedUrl;
+                }
+             }
+          }
+        } catch (e) {
+           console.error("Failed to scrape suno page:", e);
+        }
+      }
+
+      if (!fetchRes || !fetchRes.ok) {
+        return res.status(400).json({ error: `Failed to download audio from Suno: ${fetchRes ? fetchRes.statusText : "Unknown"}` });
+      }
+
+      const ext = urlUsed.endsWith(".mp4") ? ".mp4" : urlUsed.endsWith(".mp3") ? ".mp3" : ".m4a";
+      const inputPathWithExt = `/tmp/${sunoId}_${Date.now()}${ext}`;
+      const outputPath = `/tmp/${sunoId}_${Date.now()}.mp3`;
+
+      const buffer = await fetchRes.arrayBuffer();
+      await fs.writeFile(inputPathWithExt, Buffer.from(buffer));
+
+      const ffmpegArgs = [
+        "-analyzeduration", "100M",
+        "-probesize", "100M",
+        "-err_detect", "ignore_err",
+        "-i", inputPathWithExt,
+        "-vn",
+        "-map_metadata", "-1",
+        "-c:a", "libmp3lame",
+        "-b:a", "192k",
+        "-y",
+        outputPath
+      ];
+
+      const subprocess = spawn("ffmpeg", ffmpegArgs);
+      
+      let stderrLog = "";
+      subprocess.stderr.on("data", (data) => {
+        stderrLog += data.toString();
+        console.log(data.toString());
+      });
+      
+      subprocess.on("close", (code) => {
+        if (code !== 0) {
+          fs.unlink(inputPathWithExt).catch(() => {});
+          console.error("FFmpeg Error:", stderrLog);
+          if (!res.headersSent) {
+             res.status(500).json({ error: "FFmpeg conversion failed." });
+          }
+          return;
+        }
+
+        res.download(outputPath, `${sunoId}.mp3`, (err) => {
+          fs.unlink(inputPathWithExt).catch(() => {});
+          fs.unlink(outputPath).catch(() => {});
+        });
+      });
+
+    } catch (error: any) {
+      console.error("[Conversion Error]", error);
+      if (!res.headersSent) {
+         res.status(500).json({ error: error.message || "Conversion failed" });
+      }
+    }
+  });
+
   const uploadFile = multer({ dest: "/tmp/" });
+
 
   app.post("/api/convert-audio", uploadFile.single("file"), async (req, res) => {
     try {
