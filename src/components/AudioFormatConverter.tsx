@@ -67,7 +67,7 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between p-4 border-b border-white/10 bg-white/5">
           <div className="flex items-center gap-2">
             <Music className="w-4 h-4 text-emerald-400" />
-            <h3 className="text-[12px] font-bold text-white tracking-widest uppercase">M4A to MP3 Converter</h3>
+            <h3 className="text-[12px] font-bold text-white tracking-widest uppercase">M4A/MP4 to MP3 Converter</h3>
           </div>
           <button 
             onClick={onClose}
@@ -80,10 +80,10 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
         <div className="p-5 flex flex-col gap-4">
           <label className="flex flex-col items-center justify-center p-6 border-2 border-dashed border-white/10 rounded-xl hover:border-white/20 hover:bg-white/5 transition-all cursor-pointer">
             <FileAudio className="w-8 h-8 text-white/30 mb-2" />
-            <span className="text-[11px] text-white/60 font-medium">Click to select an M4A/Audio file</span>
+            <span className="text-[11px] text-white/60 font-medium">Click to select an M4A/MP4/Audio file</span>
             <input 
               type="file" 
-              accept="audio/*,.m4a,.wav,.ogg" 
+              accept="audio/*,video/mp4,.m4a,.mp4,.wav,.ogg" 
               className="hidden" 
               onChange={handleFileSelect}
             />

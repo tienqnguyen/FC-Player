@@ -4671,7 +4671,7 @@ export default function StemStudio({
              <button
                 onClick={() => setShowConverter(true)}
                 className="px-2.5 py-1 flex items-center justify-center gap-1 rounded-full text-[9px] font-black tracking-wider uppercase transition-all duration-300 cursor-pointer bg-white/10 text-emerald-400 hover:bg-white/20 hover:text-emerald-300 border border-emerald-500/30 hover:border-emerald-500/60 shadow-[0_0_10px_rgba(16,185,129,0.15)] hover:scale-105 active:scale-95 ml-1 shrink-0"
-                title="Open M4A to MP3 Converter"
+                title="Open M4A/MP4 to MP3 Converter"
              >
                 <AudioWaveform className="w-3 h-3 text-emerald-400 shrink-0" />
                 <span>CONVERTER</span>

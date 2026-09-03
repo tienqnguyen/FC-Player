@@ -2577,8 +2577,12 @@ async function startServer() {
       }
 
       const ffmpegArgs = [
+        "-analyzeduration", "100M",
+        "-probesize", "100M",
         "-err_detect", "ignore_err",
         "-i", inputPathWithExt,
+        "-vn",
+        "-map_metadata", "-1",
         "-c:a", "libmp3lame",
         "-b:a", "192k",
         "-y",
