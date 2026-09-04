@@ -6,7 +6,7 @@ import multer from "multer";
 import cors from "cors";
 import path from "path";
 import fs from "fs/promises";
-import { existsSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, writeFileSync, mkdirSync, createReadStream } from "fs";
 import { Readable } from "stream";
 import { spawn } from "child_process";
 import ytSearch from "yt-search";
@@ -39,6 +39,12 @@ import {
   arrangeLyric,
   suggestLyricTags,
 } from "./server/lyricProcessor";
+import {
+  getMangoLicense,
+  getMangoDecryptionKeys,
+  getDecryptedAudioStream,
+  getDecryptedAudioBuffer,
+} from "./server/sunoMangoDecryptor";
 import { GoogleGenAI } from "@google/genai";
 
 async function resolveFacebookRedirect(url: string): Promise<string> {
@@ -2555,7 +2561,7 @@ async function startServer() {
   app.get("/api/suno-info", async (req, res) => {
     try {
       const { sunoId } = req.query;
-      if (!sunoId) {
+      if (!sunoId || typeof sunoId !== "string") {
         return res.status(400).json({ error: "No Suno ID provided" });
       }
 
@@ -2570,116 +2576,366 @@ async function startServer() {
          }
       }
 
-      // We can also provide the expected direct links
+      // Direct media link & decrypted stream link
       const mp4Url = `https://cdn1.suno.ai/${sunoId}.mp4`;
       const m4aUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${sunoId}.m4a`;
+      const decryptedM4aUrl = `/api/suno-decrypt?sunoId=${sunoId}`;
 
-      res.json({ title, mp4Url, m4aUrl, sunoId });
+      res.json({ 
+        title, 
+        mp4Url, 
+        m4aUrl,
+        decryptedM4aUrl,
+        sunoId,
+        mangoDrm: true 
+      });
     } catch (e: any) {
       console.error("Failed to fetch suno info:", e);
       res.status(500).json({ error: e.message || "Failed to fetch info" });
     }
   });
 
-  app.post("/api/convert-audio-url",
- express.json(), async (req, res) => {
+  function formatSafeDownloadHeader(filename: string, fallbackBase = "suno_audio"): string {
+    let cleanName = filename
+      .replace(/[\0\r\n\t]/g, " ")
+      .replace(/[\/\\?%*:|"<>;,]/g, "")
+      .trim();
+    if (!cleanName) cleanName = fallbackBase;
+
+    // Transliterate to standard ASCII for fallback
+    const asciiFallback = cleanName
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .replace(/[^\w\s.-]/g, "")
+      .replace(/\s+/g, " ")
+      .trim() || fallbackBase;
+
+    // RFC 5987 / RFC 6266 UTF-8 encoded filename for full Unicode / Vietnamese support
+    const rfc5987Encoded = encodeURIComponent(cleanName)
+      .replace(/['()]/g, escape)
+      .replace(/\*/g, "%2A");
+
+    return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${rfc5987Encoded}`;
+  }
+
+  app.get("/api/suno-decrypt", async (req, res) => {
     try {
-      const { sunoId } = req.body;
-      if (!sunoId) {
-        return res.status(400).json({ error: "No Suno ID provided" });
+      const { sunoId, download, title } = req.query;
+      if (!sunoId || typeof sunoId !== "string") {
+        return res.status(400).json({ error: "Suno Song ID is required." });
       }
 
-      let fetchRes = null;
-      let urlUsed = "";
-      
-      // Step 1: Try direct known URLs first
-      const urlsToTry = [
-        `https://cdn1.suno.ai/${sunoId}.mp4`,
-        `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${sunoId}.m4a`,
-        `https://cdn1.suno.ai/${sunoId}.mp3`
-      ];
-      for (const url of urlsToTry) {
-         fetchRes = await fetch(url);
-         if (fetchRes.ok) {
-            urlUsed = url;
+      const { stream, contentLength } = await getDecryptedAudioStream(sunoId);
+      const rawTitle = (typeof title === "string" && title.trim()) ? title.trim() : sunoId;
+      const downloadFilename = `${rawTitle}.m4a`;
+
+      res.setHeader("Content-Type", "audio/mp4");
+      res.setHeader("Accept-Ranges", "bytes");
+      if (download === "true") {
+        res.setHeader("Content-Disposition", formatSafeDownloadHeader(downloadFilename, `${sunoId}.m4a`));
+      }
+      if (contentLength) {
+        res.setHeader("Content-Length", contentLength);
+      }
+
+      stream.pipe(res);
+      res.on("close", () => {
+        try { stream.destroy(); } catch (_) {}
+      });
+    } catch (err: any) {
+      console.error("[Suno Mango Decrypt Error]", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message || "Failed to decrypt Suno M4A stream" });
+      }
+    }
+  });
+
+
+  app.post("/api/suno-export-wav", express.json(), async (req, res) => {
+    try {
+      const { sunoId, token } = req.body;
+      if (!sunoId || !token) {
+        return res.status(400).json({ error: "Both Suno song ID and session token are required." });
+      }
+      const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+      const API = 'https://studio-api-prod.suno.com';
+      const H = {
+        'accept': '*/*',
+        'content-type': 'application/json',
+        'authorization': `Bearer ${cleanToken}`,
+        'browser-token': JSON.stringify({ token: Buffer.from(JSON.stringify({ timestamp: Date.now() })).toString('base64') }),
+        'device-id': '00000000-0000-4000-8000-000000000001',
+        'origin': 'https://suno.com',
+        'referer': 'https://suno.com/',
+      };
+
+      // Request WAV generation
+      const reqRes = await fetch(`${API}/api/gen/${sunoId}/convert_wav/`, { method: 'POST', headers: H }).catch(() => null);
+      if (reqRes && !reqRes.ok && reqRes.status === 401) {
+        return res.status(401).json({ error: "Invalid or expired Suno session token." });
+      }
+
+      // Poll for WAV url
+      const deadline = Date.now() + 50 * 1000;
+      let wavUrl = null;
+      while (Date.now() < deadline) {
+        const r = await fetch(`${API}/api/gen/${sunoId}/wav_file/`, { headers: H }).catch(() => null);
+        if (r && r.ok) {
+          const j = await r.json();
+          if (j.wav_file_url) {
+            wavUrl = j.wav_file_url;
             break;
-         }
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 3000));
       }
 
-      // Step 2: Fallback to scraping the HTML source code
-      if (!fetchRes || !fetchRes.ok) {
+      if (wavUrl) {
+        return res.json({ success: true, wavUrl });
+      } else {
+        return res.status(202).json({ pending: true, message: "Suno is still processing the WAV file. Please click again in a few seconds." });
+      }
+    } catch (err: any) {
+      console.error("Suno WAV export error:", err);
+      res.status(500).json({ error: err.message || "Failed to export WAV from Suno" });
+    }
+  });
+
+  app.post("/api/convert-audio-url", async (req, res) => {
+    try {
+      const { sunoId, format, title, streamUrl: passedStreamUrl } = req.body || {};
+      const isWav = (format === "wav");
+      const isM4a = (format === "m4a");
+      if (!sunoId) {
+        return res.status(400).json({ error: "Chưa cung cấp Suno Song ID." });
+      }
+
+      const rawTitle = (typeof title === "string" && title.trim()) ? title.trim() : sunoId;
+      const targetExt = isWav ? "wav" : isM4a ? "m4a" : "mp3";
+      const targetFilename = `${rawTitle}.${targetExt}`;
+
+      // If user specifically requested original decrypted M4A
+      if (isM4a) {
         try {
-          const pageRes = await fetch(`https://suno.com/song/${sunoId}`);
-          if (pageRes.ok) {
-             const pageText = await pageRes.text();
-             const regex = new RegExp(`https:\\/\\/[a-z0-9\\-]+\\.cloudfront\\.net\\/[^"\\'\\\\]*${sunoId}\\.m4a`, 'i');
-             const match = pageText.match(regex);
-             if (match) {
-                const scrapedUrl = match[0];
-                const testRes = await fetch(scrapedUrl);
-                if (testRes.ok) {
-                   fetchRes = testRes;
-                   urlUsed = scrapedUrl;
-                }
-             }
-          }
-        } catch (e) {
-           console.error("Failed to scrape suno page:", e);
+          const { stream, contentLength } = await getDecryptedAudioStream(sunoId);
+          res.setHeader("Content-Type", "audio/mp4");
+          res.setHeader("Content-Disposition", formatSafeDownloadHeader(targetFilename, `${sunoId}.m4a`));
+          if (contentLength) res.setHeader("Content-Length", contentLength);
+          stream.pipe(res);
+          return;
+        } catch (mangoDirectErr: any) {
+          console.warn("Direct M4A stream failed, will attempt fallback:", mangoDirectErr);
         }
       }
 
-      if (!fetchRes || !fetchRes.ok) {
-        return res.status(400).json({ error: `Failed to download audio from Suno: ${fetchRes ? fetchRes.statusText : "Unknown"}` });
+      const fileId = `${sunoId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const outputPath = `/tmp/out_${fileId}.${isWav ? "wav" : "mp3"}`;
+
+      // 1. Primary Strategy: Decrypt native Suno M4A (Mango DRM / AES-128-CTR) and pipe to FFmpeg
+      try {
+        const { stream: decryptedAudioStream } = await getDecryptedAudioStream(sunoId);
+        
+        const ffmpegPipedArgs = [
+          "-threads", "2",
+          "-analyzeduration", "10M",
+          "-probesize", "10M",
+          "-err_detect", "ignore_err",
+          "-i", "pipe:0",
+          "-vn",
+          "-map_metadata", "-1",
+          ...(isWav ? ["-c:a", "pcm_s16le", "-ar", "44100"] : ["-c:a", "libmp3lame", "-b:a", "320k", "-q:a", "2"]),
+          "-y",
+          outputPath
+        ];
+
+        const subprocess = spawn("ffmpeg", ffmpegPipedArgs);
+        decryptedAudioStream.pipe(subprocess.stdin);
+
+        const timer = setTimeout(() => {
+          try { subprocess.kill("SIGKILL"); } catch (_) {}
+        }, 35000);
+
+        let stderrLog = "";
+        subprocess.stderr.on("data", (data) => {
+          stderrLog += data.toString();
+        });
+
+        const code: number = await new Promise((resolve) => {
+          subprocess.on("error", (err) => {
+            console.warn("FFmpeg piped error:", err);
+            resolve(1);
+          });
+          subprocess.on("close", (c) => resolve(c ?? 1));
+        });
+        clearTimeout(timer);
+
+        if (code === 0 && existsSync(outputPath)) {
+          res.setHeader("Content-Type", isWav ? "audio/wav" : "audio/mpeg");
+          res.setHeader("Content-Disposition", formatSafeDownloadHeader(targetFilename, `${sunoId}.${targetExt}`));
+          const fileStream = createReadStream(outputPath);
+          fileStream.pipe(res);
+          fileStream.on("close", () => {
+            fs.unlink(outputPath).catch(() => {});
+          });
+          return;
+        } else {
+          fs.unlink(outputPath).catch(() => {});
+          console.warn("Mango DRM piped FFmpeg finished with non-zero or missing output, falling back to CDN streams. Code:", code);
+        }
+      } catch (mangoErr) {
+        console.warn("Mango DRM decryption unavailable, trying fallback CDN streams:", mangoErr);
       }
 
-      const ext = urlUsed.endsWith(".mp4") ? ".mp4" : urlUsed.endsWith(".mp3") ? ".mp3" : ".m4a";
-      const inputPathWithExt = `/tmp/${sunoId}_${Date.now()}${ext}`;
-      const outputPath = `/tmp/${sunoId}_${Date.now()}.mp3`;
+      // 2. Secondary Strategy: Probe candidate CDN video/audio streams
+      let streamUrl = passedStreamUrl || "";
 
-      const buffer = await fetchRes.arrayBuffer();
-      await fs.writeFile(inputPathWithExt, Buffer.from(buffer));
+      // If no valid direct streamUrl was passed, probe candidate CDNs concurrently
+      if (!streamUrl) {
+        const candidates = [
+          `https://cdn1.suno.ai/${sunoId}.mp4`,
+          `https://cdn2.suno.ai/${sunoId}.mp4`,
+          `https://cdn1.suno.ai/${sunoId}.mp3`,
+          `https://cdn2.suno.ai/${sunoId}.mp3`,
+        ];
 
+        const probePromises = candidates.map(async (url) => {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2500);
+            const testR = await fetch(url, { 
+              method: "HEAD",
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
+              signal: controller.signal,
+            });
+            clearTimeout(timeoutId);
+            if (testR.ok) {
+              const ct = testR.headers.get("content-type") || "";
+              if (!ct.includes("xml") && !ct.includes("html") && !ct.includes("json")) {
+                return url;
+              }
+            }
+          } catch (_) {}
+          return null;
+        });
+
+        const results = await Promise.all(probePromises);
+        streamUrl = results.find((u) => !!u) || "";
+      }
+
+      // If direct CDNs didn't match, scrape page for valid media url
+      if (!streamUrl) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3500);
+          const pageRes = await fetch(`https://suno.com/song/${sunoId}`, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+
+          if (pageRes.ok) {
+            const pageText = await pageRes.text();
+            const mediaMatches = [...pageText.matchAll(/https?:\/\/[^"'\s<>\\]+?\.(?:mp4|mp3)[^"'\s<>\\]*/gi)].map(m => m[0].replace(/\\/g, ''));
+            for (const mUrl of mediaMatches) {
+              if (mUrl.includes(sunoId) && !mUrl.includes("sil-100")) {
+                try {
+                  const testRes = await fetch(mUrl, { 
+                    method: "HEAD",
+                    headers: { "User-Agent": "Mozilla/5.0" }
+                  });
+                  if (testRes.ok) {
+                    streamUrl = mUrl;
+                    break;
+                  }
+                } catch (_) {}
+              }
+            }
+          }
+        } catch (e) {
+          console.error("Failed to scrape suno page:", e);
+        }
+      }
+
+      if (!streamUrl) {
+        return res.status(404).json({ 
+          error: "Không tìm thấy luồng âm thanh công khai của bài hát này trên Suno. Hãy chắc chắn link bài hát chính xác và đang ở chế độ Công khai (Public)." 
+        });
+      }
+
+      const fallbackFileId = `${sunoId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const fallbackOutputPath = `/tmp/out_${fallbackFileId}.${isWav ? "wav" : "mp3"}`;
+
+      // Optimized FFmpeg args: fast probing, multi-threading, high quality encoding
       const ffmpegArgs = [
-        "-analyzeduration", "100M",
-        "-probesize", "100M",
+        "-threads", "2",
+        "-analyzeduration", "10M",
+        "-probesize", "10M",
         "-err_detect", "ignore_err",
-        "-i", inputPathWithExt,
+        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "-i", streamUrl,
         "-vn",
         "-map_metadata", "-1",
-        "-c:a", "libmp3lame",
-        "-b:a", "192k",
+        ...(isWav ? ["-c:a", "pcm_s16le", "-ar", "44100"] : ["-c:a", "libmp3lame", "-b:a", "320k", "-q:a", "2"]),
         "-y",
-        outputPath
+        fallbackOutputPath
       ];
 
       const subprocess = spawn("ffmpeg", ffmpegArgs);
+      const timer = setTimeout(() => {
+        try { subprocess.kill("SIGKILL"); } catch (_) {}
+      }, 35000);
       
       let stderrLog = "";
       subprocess.stderr.on("data", (data) => {
         stderrLog += data.toString();
-        console.log(data.toString());
+      });
+
+      subprocess.on("error", (err) => {
+        clearTimeout(timer);
+        fs.unlink(fallbackOutputPath).catch(() => {});
+        console.error("FFmpeg spawn error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: `Không thể khởi động FFmpeg: ${err.message}` });
+        }
       });
       
       subprocess.on("close", (code) => {
+        clearTimeout(timer);
         if (code !== 0) {
-          fs.unlink(inputPathWithExt).catch(() => {});
-          console.error("FFmpeg Error:", stderrLog);
+          fs.unlink(fallbackOutputPath).catch(() => {});
+          console.error("FFmpeg Stream Error:", stderrLog);
           if (!res.headersSent) {
-             res.status(500).json({ error: "FFmpeg conversion failed." });
+             let customError = "Lỗi khi chuyển đổi file âm thanh từ Suno.";
+             if (stderrLog.includes("moov atom not found")) {
+                customError = "File từ Suno chưa hoàn tất chỉ mục (moov atom). Vui lòng thử lại sau vài giây.";
+             } else if (stderrLog.includes("Invalid data found") || stderrLog.includes("403 Forbidden")) {
+                customError = "Không thể đọc dữ liệu âm thanh từ liên kết Suno này.";
+             } else {
+                const lastLine = stderrLog.trim().split("\n").slice(-1)[0] || "";
+                if (lastLine) customError = `Lỗi chuyển đổi: ${lastLine}`;
+             }
+             res.status(422).json({ error: customError });
           }
           return;
         }
 
-        res.download(outputPath, `${sunoId}.mp3`, (err) => {
-          fs.unlink(inputPathWithExt).catch(() => {});
-          fs.unlink(outputPath).catch(() => {});
+        res.setHeader("Content-Type", isWav ? "audio/wav" : "audio/mpeg");
+        res.setHeader("Content-Disposition", formatSafeDownloadHeader(targetFilename, `${sunoId}.${targetExt}`));
+        const fileStream = createReadStream(fallbackOutputPath);
+        fileStream.pipe(res);
+        fileStream.on("close", () => {
+          fs.unlink(fallbackOutputPath).catch(() => {});
         });
       });
 
     } catch (error: any) {
       console.error("[Conversion Error]", error);
       if (!res.headersSent) {
-         res.status(500).json({ error: error.message || "Conversion failed" });
+         res.status(500).json({ error: error.message || "Quá trình chuyển đổi gặp sự cố" });
       }
     }
   });
@@ -2694,10 +2950,11 @@ async function startServer() {
       }
       const inputPath = req.file.path;
       
-      const ext = path.extname(req.file.originalname || "");
-      const inputPathWithExt = inputPath + ext;
+      const ext = path.extname(req.file.originalname || "") || ".tmp";
+      const inputPathWithExt = `${inputPath}_in${ext}`;
       await fs.rename(inputPath, inputPathWithExt);
-      const outputPath = inputPath + ".mp3";
+      const isWav = (req.body?.format === "wav" || req.query?.format === "wav");
+      const outputPath = `${inputPath}_out.${isWav ? "wav" : "mp3"}`;
       
       // Read first 100 bytes to check if it's actually an HTML/Text file instead of audio
       const buffer = Buffer.alloc(100);
@@ -2708,7 +2965,7 @@ async function startServer() {
       const headerText = buffer.toString('utf-8').trim().toLowerCase();
       if (headerText.startsWith('<!doctype html') || headerText.startsWith('<html') || headerText.includes('<body') || headerText.startsWith('{') || headerText.includes('<?xml')) {
          await fs.unlink(inputPathWithExt).catch(()=>{});
-         return res.status(400).json({ error: "File appears to be an HTML/Text error page (maybe a failed download from Suno?), not a valid audio file. Please check the file on your computer." });
+         return res.status(400).json({ error: "File có vẻ là trang HTML/Text (có thể file tải về bị lỗi), không phải file âm thanh hợp lệ. Vui lòng kiểm tra lại file của bạn." });
       }
 
       const ffmpegArgs = [
@@ -2718,13 +2975,15 @@ async function startServer() {
         "-i", inputPathWithExt,
         "-vn",
         "-map_metadata", "-1",
-        "-c:a", "libmp3lame",
-        "-b:a", "192k",
+        ...(isWav ? ["-c:a", "pcm_s16le", "-ar", "44100"] : ["-c:a", "libmp3lame", "-b:a", "320k"]),
         "-y",
         outputPath
       ];
       
       const subprocess = spawn("ffmpeg", ffmpegArgs);
+      const timer = setTimeout(() => {
+        try { subprocess.kill("SIGKILL"); } catch (_) {}
+      }, 60000);
       
       let stderrLog = "";
       subprocess.stderr.on("data", (data) => {
@@ -2733,22 +2992,34 @@ async function startServer() {
       });
       
       subprocess.on("close", (code) => {
+        clearTimeout(timer);
         if (code !== 0) {
           fs.unlink(inputPathWithExt).catch(() => {});
+          fs.unlink(outputPath).catch(() => {});
           console.error("FFmpeg Error:", stderrLog);
           
           if (!res.headersSent) {
-             let customError = "FFmpeg conversion failed.";
+             let customError = "Lỗi chuyển đổi file âm thanh trên máy chủ.";
              if (stderrLog.includes("moov atom not found")) {
-                customError = "The file is an incomplete/corrupted M4A/MP4 stream (missing 'moov' atom). It was likely downloaded improperly from the stream. Please download the file correctly.";
+                customError = "File M4A/MP4 bị thiếu dữ liệu chỉ mục 'moov atom' (do file tải về chưa hoàn tất). Hãy thử dán link vào tab 'Suno URL' để lấy âm thanh gốc chuẩn!";
              } else if (stderrLog.includes("Invalid data found when processing input")) {
-                customError = "The file format could not be recognized. It might be corrupted or not a valid audio file.";
+                customError = "Định dạng file không thể giải mã hoặc file bị hỏng. Vui lòng kiểm tra lại file tải lên.";
+             } else {
+                const lastLine = stderrLog.trim().split("\n").slice(-1)[0] || "";
+                if (lastLine) customError = `Lỗi chuyển đổi âm thanh: ${lastLine}`;
              }
              res.status(500).json({ error: customError });
           }
           return;
         }
-        res.download(outputPath, "converted.mp3", (err) => {
+        
+        const originalBase = path.basename(req.file.originalname || "converted", path.extname(req.file.originalname || ""));
+        const targetFilename = `${originalBase}.${isWav ? "wav" : "mp3"}`;
+        res.setHeader("Content-Type", isWav ? "audio/wav" : "audio/mpeg");
+        res.setHeader("Content-Disposition", formatSafeDownloadHeader(targetFilename, `audio.${isWav ? "wav" : "mp3"}`));
+        const fileStream = createReadStream(outputPath);
+        fileStream.pipe(res);
+        fileStream.on("close", () => {
           fs.unlink(inputPathWithExt).catch(() => {});
           fs.unlink(outputPath).catch(() => {});
         });
@@ -2761,6 +3032,15 @@ async function startServer() {
     }
   });
 
+  // Global API error handler ensuring clean JSON errors
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("[Express Global Error]", err);
+    if (!res.headersSent) {
+      res.status(err.status || 500).json({
+        error: err.message || "Lỗi máy chủ nội bộ"
+      });
+    }
+  });
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
