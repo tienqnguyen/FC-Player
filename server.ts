@@ -5,8 +5,9 @@ import youtubedl from "youtube-dl-exec";
 import multer from "multer";
 import cors from "cors";
 import path from "path";
+import os from "os";
 import fs from "fs/promises";
-import { existsSync, writeFileSync, mkdirSync, createReadStream } from "fs";
+import { existsSync, writeFileSync, mkdirSync, createReadStream, mkdtempSync, rmSync } from "fs";
 import { Readable } from "stream";
 import { spawn } from "child_process";
 import ytSearch from "yt-search";
@@ -45,6 +46,11 @@ import {
   getDecryptedAudioStream,
   getDecryptedAudioBuffer,
 } from "./server/sunoMangoDecryptor";
+import {
+  fetchSoundCloudPlaylist,
+  fetchSoundCloudOembed,
+  extractSoundCloudIdentifier,
+} from "./server/soundcloudParser";
 import { GoogleGenAI } from "@google/genai";
 
 async function resolveFacebookRedirect(url: string): Promise<string> {
@@ -334,11 +340,14 @@ async function getDirectMediaUrl(rawInputUrl: string, forceRefresh: boolean = fa
           }
         }
 
+        const isSoundcloud = url.includes("soundcloud.com");
         const ytdlOptions: any = {
           dumpSingleJson: true,
           noWarnings: true,
           noPlaylist: true,
-          f: "ba/bestaudio/b",
+          f: isSoundcloud
+            ? "bestaudio[protocol^=http]/bestaudio[ext=mp3]/bestaudio/b"
+            : "ba/bestaudio/b",
           jsRuntimes: "node",
           noCheckCertificates: true,
         };
@@ -348,16 +357,21 @@ async function getDirectMediaUrl(rawInputUrl: string, forceRefresh: boolean = fa
         }
 
         const info = (await youtubedl(url, ytdlOptions)) as any;
-        if (!info || !info.url) {
+        const resolvedDirectUrl =
+          info?.url ||
+          (info?.requested_formats && info.requested_formats.find((f: any) => f?.url)?.url) ||
+          (info?.formats && info.formats.find((f: any) => f?.url && (f.protocol?.startsWith("http") || f.ext === "mp3" || f.ext === "m4a"))?.url);
+
+        if (!info || !resolvedDirectUrl) {
           throw new Error("No direct stream URL found in media metadata");
         }
 
         directStreamMemoryCache.set(url, {
-          url: info.url,
+          url: resolvedDirectUrl,
           expiresAt: Date.now() + 2 * 60 * 60 * 1000, // cache for 2 hours
         });
 
-        return info.url;
+        return resolvedDirectUrl;
       } finally {
         directStreamInFlightPromises.delete(url);
       }
@@ -421,8 +435,10 @@ async function startServer() {
           if (req.headers.range) headers["Range"] = req.headers.range;
 
           const response = await fetch(directUrl, { headers });
-          if (!response.ok || response.headers.get("content-type")?.includes("text/html")) {
-            throw new Error(`Direct fetch failed or returned HTML: ${response.status}`);
+          const cType = response.headers.get("content-type") || "";
+          const isMpegUrl = cType.includes("mpegurl") || directUrl.includes(".m3u8");
+          if (!response.ok || cType.includes("text/html") || isMpegUrl) {
+            throw new Error(`Direct fetch failed or returned non-progressive audio: ${response.status}`);
           }
 
           res.status(response.status);
@@ -454,23 +470,71 @@ async function startServer() {
 
       if (!streamServed) {
         const streamTarget = url || `ytsearch1:${queryParam}`;
+        const isSoundcloud = streamTarget.includes("soundcloud.com");
+        const tempDir = mkdtempSync(path.join(os.tmpdir(), "ytdlp_stream_"));
+
         const ytDlpArgs = [
           "-f",
-          "ba/bestaudio/b/best",
+          isSoundcloud
+            ? "bestaudio[protocol^=http]/bestaudio[ext=mp3]/ba/bestaudio/b/best"
+            : "ba/bestaudio/b/best",
+          "--no-part",
+          "--no-playlist",
+          "--no-warnings",
           "-o",
           "-",
           streamTarget,
         ];
+
+        if (await hasYoutubeCookies()) {
+          ytDlpArgs.push("--cookies", getCookiesFilePath());
+        }
+
         const subprocess = spawn(
           (youtubedl as any).constants.YOUTUBE_DL_PATH,
           ytDlpArgs,
+          { cwd: tempDir }
         );
+
+        let cleanedUp = false;
+        const cleanup = () => {
+          if (cleanedUp) return;
+          cleanedUp = true;
+          try {
+            if (subprocess && !subprocess.killed) {
+              subprocess.kill("SIGKILL");
+            }
+          } catch (e) {}
+          try {
+            if (existsSync(tempDir)) {
+              rmSync(tempDir, { recursive: true, force: true });
+            }
+          } catch (e) {}
+        };
+
+        res.on("close", cleanup);
+        res.on("finish", cleanup);
+        subprocess.on("close", cleanup);
+        subprocess.on("error", (err) => {
+          console.error("[Stream Proxy] Subprocess error:", err.message);
+          cleanup();
+        });
+
         res.setHeader("Content-Type", "audio/mpeg");
         res.setHeader("Transfer-Encoding", "chunked");
+        res.setHeader("Accept-Ranges", "none");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+
         if (subprocess.stdout) {
           subprocess.stdout.pipe(res);
-      subprocess.stderr.on("data", (data) => console.log(data.toString()));
+          subprocess.stderr.on("data", (data) => {
+            const msg = data.toString();
+            if (msg.includes("ERROR") || msg.includes("WARNING")) {
+              console.warn(`[Stream yt-dlp] ${msg.trim()}`);
+            }
+          });
         } else {
+          cleanup();
           res.status(500).json({ error: "Failed to create audio stream" });
         }
       }
@@ -1359,6 +1423,55 @@ async function startServer() {
     }
   });
 
+  // API to fetch SoundCloud playlist or creator tracks with oEmbed enrichment
+  app.get("/api/soundcloud/playlist", async (req, res) => {
+    try {
+      const targetUrl = (req.query.url as string) || "";
+      const limit = parseInt((req.query.limit as string) || "50", 10);
+      const forceRefresh = req.query.refresh === "true";
+
+      if (!targetUrl) {
+        return res.status(400).json({ success: false, error: "SoundCloud URL is required" });
+      }
+
+      const cacheKey = `${targetUrl}_${limit}`;
+      if (!forceRefresh) {
+        const cached = await getCachedData<any>("soundcloud", cacheKey);
+        if (cached) {
+          console.log(`[SoundCloud API] Serving cached playlist for: ${targetUrl}`);
+          return res.json(cached);
+        }
+      }
+
+      const playlistData = await fetchSoundCloudPlaylist(targetUrl, limit);
+      await setCachedData("soundcloud", cacheKey, playlistData);
+      res.json(playlistData);
+    } catch (error: any) {
+      console.error("[SoundCloud API Error]", error.message);
+      res.status(500).json({
+        success: false,
+        error: error.message || "Failed to fetch SoundCloud playlist or user tracks",
+      });
+    }
+  });
+
+  // API to fetch oEmbed metadata for a single SoundCloud track
+  app.get("/api/soundcloud/oembed", async (req, res) => {
+    try {
+      const trackUrl = (req.query.url as string) || "";
+      if (!trackUrl) {
+        return res.status(400).json({ error: "Track URL is required" });
+      }
+      const data = await fetchSoundCloudOembed(trackUrl);
+      if (!data) {
+        return res.status(404).json({ error: "oEmbed metadata not found" });
+      }
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/tiktok/user", async (req, res) => {
     try {
       const unique_id = req.query.unique_id as string;
@@ -2095,11 +2208,35 @@ async function startServer() {
         }
       }
 
+      if (url.includes("soundcloud.com")) {
+        try {
+          const oembed = await fetchSoundCloudOembed(url);
+          if (oembed) {
+            let title = oembed.title || "SoundCloud Track";
+            const author = oembed.author || "SoundCloud Artist";
+            if (author && title.endsWith(` by ${author}`)) {
+              title = title.substring(0, title.length - ` by ${author}`.length).trim();
+            }
+            return res.json({
+              title,
+              cover:
+                oembed.thumbnail_url ||
+                "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=300",
+              author,
+              duration: 0,
+            });
+          }
+        } catch (scErr: any) {
+          console.warn("[Metadata API] SoundCloud oEmbed lookup failed:", scErr.message);
+        }
+      }
+
+      const isSoundcloud = url.includes("soundcloud.com");
       const ytdlOptions: any = {
         dumpSingleJson: true,
         noWarnings: true,
         noPlaylist: true,
-        f: "ba/bestaudio/b",
+        f: isSoundcloud ? "bestaudio[protocol^=http]/bestaudio/b" : "ba/bestaudio/b",
         jsRuntimes: "node",
         noCheckCertificates: true,
       };
@@ -2177,16 +2314,29 @@ async function startServer() {
         }
       }
 
+      const isSoundcloud = url.includes("soundcloud.com");
+      const tempDir = mkdtempSync(path.join(os.tmpdir(), "ytdlp_wav_"));
       const ytDlpArgs = [
         "-f",
-        "ba/bestaudio/b/best",
+        isSoundcloud
+          ? "bestaudio[protocol^=http]/bestaudio[ext=mp3]/ba/bestaudio/b/best"
+          : "ba/bestaudio/b/best",
+        "--no-part",
+        "--no-playlist",
+        "--no-warnings",
         "-o",
         "-",
         url,
       ];
+
+      if (await hasYoutubeCookies()) {
+        ytDlpArgs.push("--cookies", getCookiesFilePath());
+      }
+
       const subprocess = spawn(
         (youtubedl as any).constants.YOUTUBE_DL_PATH,
         ytDlpArgs,
+        { cwd: tempDir }
       );
 
       const ffmpegArgs = [
@@ -2209,12 +2359,34 @@ async function startServer() {
       res.setHeader("Content-Type", "audio/wav");
       ffmpegProcess.stdout.pipe(res);
 
-      subprocess.on("error", (err) =>
-        console.error("[Clean WAV] yt-dlp error:", err),
-      );
-      ffmpegProcess.on("error", (err) =>
-        console.error("[Clean WAV] ffmpeg error:", err),
-      );
+      let cleanedUp = false;
+      const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        try {
+          if (subprocess && !subprocess.killed) subprocess.kill("SIGKILL");
+        } catch (e) {}
+        try {
+          if (ffmpegProcess && !ffmpegProcess.killed) ffmpegProcess.kill("SIGKILL");
+        } catch (e) {}
+        try {
+          if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+        } catch (e) {}
+      };
+
+      res.on("close", cleanup);
+      res.on("finish", cleanup);
+      subprocess.on("close", cleanup);
+      ffmpegProcess.on("close", cleanup);
+
+      subprocess.on("error", (err) => {
+        console.error("[Clean WAV] yt-dlp error:", err);
+        cleanup();
+      });
+      ffmpegProcess.on("error", (err) => {
+        console.error("[Clean WAV] ffmpeg error:", err);
+        cleanup();
+      });
     } catch (err: any) {
       console.error("[Clean WAV API Error]", err);
       res.status(500).json({ error: err.message || "Failed to transcode" });
@@ -2328,17 +2500,51 @@ async function startServer() {
 
       if (!response) {
         // Fallback to yt-dlp
+        const isSoundcloud = url.includes("soundcloud.com");
+        const tempDir = mkdtempSync(path.join(os.tmpdir(), "ytdlp_dl_"));
         const ytDlpArgs = [
           "-f",
-          "ba/bestaudio/b/best",
+          isSoundcloud
+            ? "bestaudio[protocol^=http]/bestaudio[ext=mp3]/ba/bestaudio/b/best"
+            : "ba/bestaudio/b/best",
+          "--no-part",
+          "--no-playlist",
+          "--no-warnings",
           "-o",
           "-",
           url, // USE THE ORIGINAL URL for yt-dlp
         ];
+
+        if (await hasYoutubeCookies()) {
+          ytDlpArgs.push("--cookies", getCookiesFilePath());
+        }
+
         const subprocess = spawn(
           (youtubedl as any).constants.YOUTUBE_DL_PATH,
           ytDlpArgs,
+          { cwd: tempDir }
         );
+
+        let cleanedUp = false;
+        const cleanup = () => {
+          if (cleanedUp) return;
+          cleanedUp = true;
+          try {
+            if (subprocess && !subprocess.killed) subprocess.kill("SIGKILL");
+          } catch (e) {}
+          try {
+            if (existsSync(tempDir)) rmSync(tempDir, { recursive: true, force: true });
+          } catch (e) {}
+        };
+
+        res.on("close", cleanup);
+        res.on("finish", cleanup);
+        subprocess.on("close", cleanup);
+        subprocess.on("error", (err) => {
+          console.error("[Download API] Subprocess error:", err.message);
+          cleanup();
+        });
+
         res.setHeader(
           "Content-Disposition",
           `attachment; filename="audio.m4a"; filename*=UTF-8''${encodeURIComponent(safeTitle)}.m4a`,
@@ -2347,8 +2553,14 @@ async function startServer() {
         res.setHeader("Transfer-Encoding", "chunked");
         if (subprocess.stdout) {
           subprocess.stdout.pipe(res);
-      subprocess.stderr.on("data", (data) => console.log(data.toString()));
+          subprocess.stderr.on("data", (data) => {
+            const msg = data.toString();
+            if (msg.includes("ERROR") || msg.includes("WARNING")) {
+              console.warn(`[Download yt-dlp] ${msg.trim()}`);
+            }
+          });
         } else {
+          cleanup();
           res
             .status(500)
             .json({ error: "Failed to create audio stream via yt-dlp" });

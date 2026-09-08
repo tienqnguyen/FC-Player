@@ -3130,12 +3130,122 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  const isSoundCloudPlaylistOrUser = (inputUrl: string): boolean => {
+    try {
+      let u = inputUrl.trim();
+      if (!u.includes("soundcloud.com")) return false;
+      if (!u.startsWith("http")) u = "https://" + u;
+      const parsed = new URL(u);
+      const pathParts = parsed.pathname.split("/").filter(Boolean);
+      if (pathParts.length === 0) return false;
+      // 1 path segment: soundcloud.com/username -> user profile!
+      if (pathParts.length === 1) return true;
+      // 2+ path segments: sets, tracks, albums, popular-tracks, reposts, likes
+      if (
+        pathParts.length >= 2 &&
+        ["sets", "tracks", "popular-tracks", "albums", "reposts", "likes"].includes(
+          pathParts[1].toLowerCase()
+        )
+      ) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  const fetchSoundCloudAlbum = async (urlOrUsername: string, forceRefresh = false) => {
+    if (isFetchingTiktok || isLoadingMore) return;
+    setIsFetchingTiktok(true);
+    setTiktokError("");
+    try {
+      let targetUrl = urlOrUsername.trim();
+      if (!targetUrl.includes("soundcloud.com")) {
+        targetUrl = `https://soundcloud.com/${targetUrl.replace(/^@/, "")}`;
+      } else if (!targetUrl.startsWith("http")) {
+        targetUrl = `https://${targetUrl}`;
+      }
+
+      const refreshParam = forceRefresh ? "&refresh=true" : "";
+      const res = await fetch(`/api/soundcloud/playlist?url=${encodeURIComponent(targetUrl)}${refreshParam}`);
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to load SoundCloud tracks.");
+      }
+
+      const songs = data.songs || [];
+      if (songs.length === 0) {
+        throw new Error("No tracks found on this SoundCloud page.");
+      }
+
+      setRecentSongs(songs);
+      shouldAutoPlayRef.current = true;
+      if (songs.length > 0) {
+        playRecentSong(songs[0]);
+      }
+
+      const scUsername = data.username || "soundcloud";
+      const scDisplayName = data.title || `@${scUsername}`;
+      setActiveAlbumUsername(scUsername);
+
+      // Save to album list if not exists
+      setTiktokAlbums((prev) => {
+        const exists = prev.some(
+          (a) =>
+            (a.username || "").toLowerCase() === scUsername.toLowerCase() ||
+            (a.url && a.url.toLowerCase() === targetUrl.toLowerCase())
+        );
+        if (!exists) {
+          return [
+            {
+              id: `sc_${Date.now()}`,
+              username: scUsername,
+              displayName: scDisplayName,
+              avatar: data.avatar,
+              avatarSub: "SC",
+              platform: "soundcloud",
+              url: targetUrl,
+            },
+            ...prev,
+          ];
+        }
+        return prev;
+      });
+
+      setPlaylistTab("upnext");
+      setNewAlbumInput("");
+      setShowAddAlbum(false);
+      setTiktokError("");
+    } catch (err: any) {
+      console.error("[SoundCloud Fetch Error]", err);
+      setTiktokError(err.message || "Failed to fetch SoundCloud tracks.");
+    } finally {
+      setIsFetchingTiktok(false);
+    }
+  };
+
   const fetchAndPlayUserAlbum = async (username: string, loadMore = false, forceRefresh = false) => {
     if (isFetchingTiktok || isLoadingMore) return;
     
     // Normalize username
     const normalizedUsername = username.replace("@", "").trim();
     setActiveAlbumUsername(normalizedUsername);
+
+    // If this album is from SoundCloud, delegate to fetchSoundCloudAlbum
+    const matchingAlbum = allAlbums.find(
+      (a) =>
+        (a.username || "").toLowerCase() === normalizedUsername.toLowerCase() ||
+        a.id === normalizedUsername
+    );
+    if (
+      matchingAlbum?.platform === "soundcloud" ||
+      matchingAlbum?.url?.includes("soundcloud.com") ||
+      normalizedUsername.startsWith("sc_")
+    ) {
+      await fetchSoundCloudAlbum(matchingAlbum?.url || `https://soundcloud.com/${normalizedUsername}`, forceRefresh);
+      return;
+    }
 
     // Cache-first optimization for initial loads
     if (!loadMore && !forceRefresh) {
@@ -3317,6 +3427,18 @@ export default function App() {
     let val = newAlbumInput.trim();
     if (!val) return;
 
+    // Direct SoundCloud profile, artist or playlist link
+    if (val.includes("soundcloud.com")) {
+      const cleanScUrl = val.startsWith("http") ? val : `https://${val}`;
+      if (isSoundCloudPlaylistOrUser(cleanScUrl)) {
+        setNewAlbumInput("");
+        setShowAddAlbum(false);
+        setPlaylistTab("upnext");
+        await fetchSoundCloudAlbum(cleanScUrl);
+        return;
+      }
+    }
+
     let username = "";
     const isDirectLink = val.includes("youtube.com") || 
                          val.includes("youtu.be") || 
@@ -3383,6 +3505,15 @@ export default function App() {
     setTiktokError("");
     
     // Robust general URL fetching (supports YouTube, Facebook, SoundCloud, Twitch, Vimeo, Twitter/X, etc. via yt-dlp)
+    const isSoundCloudUrl = urlToUse.includes("soundcloud.com");
+    if (isSoundCloudUrl) {
+      const cleanScUrl = urlToUse.startsWith("http") ? urlToUse : `https://${urlToUse}`;
+      if (isSoundCloudPlaylistOrUser(cleanScUrl)) {
+        await fetchSoundCloudAlbum(cleanScUrl, forceRefresh);
+        return;
+      }
+    }
+
     const isTikTokUrl = urlToUse.includes("tiktok.com") || (urlToUse.includes("@") && !urlToUse.includes("://"));
     const isNctUrl = urlToUse.includes("nhaccuatui.com") || urlToUse.includes("nct.vn") || urlToUse.startsWith("[") || urlToUse.includes("__NUXT_DATA__");
     const isTKaraokeUrl = urlToUse.includes("tkaraoke.com");
@@ -5463,12 +5594,12 @@ export default function App() {
                 Add Creator or Track
               </div>
               <p className="text-[11px] text-white/50 mb-3">
-                Paste a link from <strong>TikTok, YouTube, Facebook, NCT, or TKaraoke</strong>.
+                Paste a link from <strong>SoundCloud, TikTok, YouTube, Facebook, NCT, or TKaraoke</strong>.
               </p>
               <div className="flex gap-2">
                 <input
                   type="text"
-                  placeholder="Paste URL here..."
+                  placeholder="Paste URL (e.g. soundcloud.com/sonbach4444)..."
                   value={newAlbumInput}
                   onChange={(e) => setNewAlbumInput(e.target.value)}
                   className="flex-1 bg-black/40 border border-white/5 rounded-xl px-3.5 py-2.5 text-[16px] md:text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-white/20"
@@ -5496,7 +5627,7 @@ export default function App() {
                 </label>
               </div>
               <p className="text-[10px] text-white/40 mt-1.5 px-1 leading-normal">
-                Type any creator username like `@khaby.lame` to load posts as dynamic albums, paste video URLs, or import local files.
+                Type any creator username like `@khaby.lame`, paste SoundCloud artist link like `soundcloud.com/sonbach4444`, or import local files.
               </p>
             </form>
           )}
@@ -5774,10 +5905,10 @@ export default function App() {
                   <div className="flex flex-col">
                     <h3 className="text-xs font-black tracking-widest text-[#E0E2E8]/90 uppercase flex items-center gap-1.5">
                       <User className="w-3.5 h-3.5 text-amber-400" />
-                      Creators
+                      Creators & Artists
                     </h3>
                     <p className="text-[10px] text-white/30 font-semibold tracking-wide">
-                      TikTok and Community Profiles
+                      SoundCloud, TikTok, and Community Profiles
                     </p>
                   </div>
                 </div>
@@ -5792,6 +5923,11 @@ export default function App() {
                       <div className="relative w-full aspect-square rounded-[8px] sm:rounded-xl overflow-hidden shrink-0 shadow-md">
                          <CreatorAvatar alb={alb} />
                          <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-all" />
+                         {alb.platform === "soundcloud" && (
+                           <div className="absolute top-1.5 left-1.5 bg-orange-500/90 text-white font-black text-[8px] px-1.5 py-0.5 rounded shadow-md uppercase tracking-wider backdrop-blur-sm z-10">
+                             SoundCloud
+                           </div>
+                         )}
                          <div className="absolute bottom-1.5 right-1.5 w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-400/90 text-black flex items-center justify-center opacity-0 group-hover:opacity-100 translate-y-2 group-hover:translate-y-0 transition-all duration-300 shadow-lg">
                            <Play className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-current ml-0.5" />
                          </div>
