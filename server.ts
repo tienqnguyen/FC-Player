@@ -1958,18 +1958,39 @@ async function startServer() {
         return res.json(cached);
       }
 
-      // Add timeout to prevent hanging
-      const resYtdl = (await Promise.race([
-        youtubedl(`scsearch${limit}:${keywords}`, {
+      // Helper to execute yt-dlp search with proper timeout handling
+      const executeSearch = async (queryLimit: number, timeoutMs = 25000) => {
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutHandle = setTimeout(() => reject(new Error("SoundCloud search timeout")), timeoutMs);
+        });
+
+        const ytdlPromise = youtubedl(`scsearch${queryLimit}:${keywords}`, {
           dumpSingleJson: true,
           flatPlaylist: true,
           noWarnings: true,
           noCheckCertificates: true,
-        }),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("SoundCloud search timeout")), 12000)
-        ),
-      ])) as any;
+          socketTimeout: 20,
+        });
+
+        try {
+          const result = await Promise.race([ytdlPromise, timeoutPromise]);
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          return result;
+        } catch (err) {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          throw err;
+        }
+      };
+
+      let resYtdl: any = null;
+      try {
+        resYtdl = (await executeSearch(limit, 25000)) as any;
+      } catch (firstErr: any) {
+        console.warn(`[SoundCloud Search] First attempt failed (${firstErr.message}), retrying automatically...`);
+        // Retry once automatically with slightly smaller limit if needed or same limit
+        resYtdl = (await executeSearch(Math.min(limit, 25), 25000)) as any;
+      }
 
       const rawEntries = resYtdl?.entries || [];
       const videos = rawEntries
