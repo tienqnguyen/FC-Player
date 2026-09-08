@@ -3,8 +3,8 @@
 
 .facebook.com	TRUE	/	TRUE	1815257350	sb	Bkkjau3OBfQ4VLlSQXRnhM_y
 .soundcloud.com	TRUE	/	FALSE	1851973109	sc_tracking_anonymous_id	%22a2ddbdfe-a79b-4cf0-9b73-1897b4270d91%22
-.tiktok.com	TRUE	/	TRUE	1788918162	msToken	XfdKqYKAfhUm0hWd7c5gFVG_cA83-8k9eqULi0oFck8Yl1eWBs4QbbHNZO3deUCT2ObG0DIzSu7qqAIkfLu0Vb7ewysOVUhUQkVlRGv-71nIrI3xek41e9KU
-.tiktok.com	TRUE	/	TRUE	1803606160	tt_chain_token	pGzM8U1vBKLeucGUxwAbCw==
+.tiktok.com	TRUE	/	TRUE	1789767346	msToken	kcPhTpqlhuq4EMlgAwXCSFwUnGbbHLM2a_Z_G5I47hKEjRhkEoNW1xRZKcRDqaER5hmaVwz_Ob12GUycxNBU6fPnfxNyhyWA6Bo4DObx6U3Rch4hW__hEEcl
+.tiktok.com	TRUE	/	TRUE	1804455344	tt_chain_token	pGzM8U1vBKLeucGUxwAbCw==
 .tiktok.com	TRUE	/	TRUE	0	tt_csrf_token	gTMc7e5X-BVYMZN6vohA4UMDNrdVPpGocBRM
 .tiktok.com	TRUE	/	TRUE	1818294222	ttwid	1%7CKTM5dBvBvFI8A3eKPeRzoPp6vxEjVmL7nvtNSf3rbaM%7C1786844253%7C6ef805e091613e0ec0d9f97ca95f4c6c5b8567f1c3e69929395f3b3dec75736f
 .youtube.com	TRUE	/	FALSE	1849918416	APISID	5Bp02VZ-1Ramilv2/AObXqSGei2-TdRRyd

@@ -1943,6 +1943,71 @@ async function startServer() {
     }
   });
 
+  // 4b. SoundCloud Search
+  app.get("/api/soundcloud/search", async (req, res) => {
+    try {
+      const keywords = ((req.query.q as string) || "").trim();
+      const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 30, 5), 50);
+      if (!keywords) {
+        return res.status(400).json({ error: "Search query is required" });
+      }
+
+      const cacheKey = `search_${keywords.toLowerCase()}_${limit}`;
+      const cached = await getCachedData<any>("soundcloud", cacheKey);
+      if (cached) {
+        return res.json(cached);
+      }
+
+      // Add timeout to prevent hanging
+      const resYtdl = (await Promise.race([
+        youtubedl(`scsearch${limit}:${keywords}`, {
+          dumpSingleJson: true,
+          flatPlaylist: true,
+          noWarnings: true,
+          noCheckCertificates: true,
+        }),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("SoundCloud search timeout")), 12000)
+        ),
+      ])) as any;
+
+      const rawEntries = resYtdl?.entries || [];
+      const videos = rawEntries
+        .filter((e: any) => e && (e.title || e.track))
+        .map((entry: any) => {
+          let cover = "";
+          if (entry.thumbnails && Array.isArray(entry.thumbnails)) {
+            const t500 = entry.thumbnails.find((t: any) => t.id === "t500x500" || t.url?.includes("t500x500"));
+            const t300 = entry.thumbnails.find((t: any) => t.id === "t300x300" || t.url?.includes("t300x300"));
+            const large = entry.thumbnails.find((t: any) => t.id === "large" || t.url?.includes("large"));
+            cover = t500?.url || t300?.url || large?.url || entry.thumbnails[entry.thumbnails.length - 1]?.url || "";
+          }
+          if (!cover && entry.thumbnail) {
+            cover = entry.thumbnail.replace(/-mini\./, "-t500x500.").replace(/-large\./, "-t500x500.");
+          }
+
+          const trackUrl = entry.webpage_url || entry.url || `https://soundcloud.com/${entry.uploader_id || "track"}/${entry.id}`;
+
+          return {
+            id: `sc_${entry.id}`,
+            title: entry.title || entry.track || "SoundCloud Track",
+            url: trackUrl,
+            author: entry.uploader || (entry.artists && entry.artists[0]) || "SoundCloud Artist",
+            duration: typeof entry.duration === "number" ? Math.round(entry.duration) : 0,
+            cover: cover || "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=200",
+            source: "soundcloud",
+          };
+        });
+
+      const responseData = { videos };
+      await setCachedData("soundcloud", cacheKey, responseData);
+      res.json(responseData);
+    } catch (error: any) {
+      console.error("[SoundCloud Search Error]", error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // 5. Search Autocomplete Suggestions (Google Suggest API proxy)
   app.get("/api/search/suggest", async (req, res) => {
     try {

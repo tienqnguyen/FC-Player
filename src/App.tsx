@@ -2585,7 +2585,7 @@ export default function App() {
   const [playlistTab, setPlaylistTab] = useState<"upnext" | "albums" | "guide" | "community" | "search" | "gdrive">("upnext");
   const [showDriveOptions, setShowDriveOptions] = useState(false);
 
-  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "nhaccuatui" | "tkaraoke">("youtube");
+  const [tiktokSearchType, setTiktokSearchType] = useState<"sound" | "video" | "youtube" | "soundcloud" | "nhaccuatui" | "tkaraoke">("youtube");
   const [tiktokSearchQuery, setTiktokSearchQuery] = useState("");
   const [tiktokSearchResults, setTiktokSearchResults] = useState<any[]>([]);
   const [tiktokSearchPage, setTiktokSearchPage] = useState(1);
@@ -2623,7 +2623,7 @@ export default function App() {
       return;
     }
     try {
-      const isYt = tiktokSearchType === "youtube";
+      const isYt = tiktokSearchType === "youtube" || tiktokSearchType === "soundcloud";
       const res = await fetch(`/api/search/suggest?yt=${isYt}&q=${encodeURIComponent(query)}`);
       if (res.ok) {
         let data;
@@ -2670,6 +2670,8 @@ export default function App() {
       let endpoint = "";
       if (activeType === "youtube") {
         endpoint = `/api/youtube/search?q=${encodeURIComponent(activeQuery)}`;
+      } else if (activeType === "soundcloud") {
+        endpoint = `/api/soundcloud/search?q=${encodeURIComponent(activeQuery)}`;
       } else if (activeType === "nhaccuatui") {
         endpoint = `/api/nct-search?q=${encodeURIComponent(activeQuery)}`;
       } else if (activeType === "tkaraoke") {
@@ -6136,6 +6138,26 @@ export default function App() {
                     <button
                       type="button"
                       onClick={() => {
+                        setTiktokSearchType("soundcloud");
+                        if (tiktokSearchQuery.trim()) {
+                          handleTiktokSearch(undefined, false, "soundcloud");
+                        } else {
+                          setTiktokSearchResults([]);
+                          setTiktokSearchError("");
+                        }
+                      }}
+                      className={`text-[8px] sm:text-[9px] font-black tracking-wider uppercase px-1.5 py-1.5 rounded-lg transition-all flex items-center gap-1 flex-1 sm:flex-initial justify-center whitespace-nowrap ${
+                        tiktokSearchType === "soundcloud"
+                          ? "bg-amber-400 text-black shadow-md shadow-amber-400/10"
+                          : "text-white/40 hover:text-white/75"
+                      }`}
+                    >
+                      <span className="text-[7px] sm:text-[8px] bg-orange-500/20 border border-orange-500/35 text-orange-400 px-1 py-0.2 rounded font-black">SC</span>
+                      <span className="hidden sm:inline">SoundCloud</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
                         setTiktokSearchType("nhaccuatui");
                         if (tiktokSearchQuery.trim()) {
                           handleTiktokSearch(undefined, false, "nhaccuatui");
@@ -6184,6 +6206,8 @@ export default function App() {
                             ? "Search viral TikTok sounds/music names..."
                             : tiktokSearchType === "video"
                             ? "Search TikTok videos & post hashtags..."
+                            : tiktokSearchType === "soundcloud"
+                            ? "Search SoundCloud tracks, artists, remixes..."
                             : tiktokSearchType === "nhaccuatui"
                             ? "Search NhacCuaTui Vietnamese songs..."
                             : tiktokSearchType === "tkaraoke"
@@ -6326,7 +6350,7 @@ export default function App() {
                     {tiktokSearchResults.map((song: any, index: number) => {
                       let isActive = false;
                       if (currentSong) {
-                        if (tiktokSearchType === "youtube") {
+                        if (tiktokSearchType === "youtube" || tiktokSearchType === "soundcloud") {
                           isActive = (song.url && currentSong.originalUrl === song.url) || (song.id && currentSong.id === song.id);
                         } else if (tiktokSearchType === "nhaccuatui") {
                           isActive = currentSong.id === ("nct_" + song.id);
@@ -6342,17 +6366,18 @@ export default function App() {
                         <div
                           key={`${song.id || song.video_id || song.url || 'search-result'}-${index}`}
                           onClick={() => {
-                            if (tiktokSearchType === "youtube") {
+                            if (tiktokSearchType === "youtube" || tiktokSearchType === "soundcloud") {
                               const streamUrl = `/api/stream?url=${encodeURIComponent(song.url)}`;
                               const newSong = {
                                 id: song.id,
                                 title: song.title,
                                 originalUrl: song.url,
                                 audioUrl: streamUrl,
-                                videoUrl: streamUrl,
+                                videoUrl: tiktokSearchType === "youtube" ? streamUrl : undefined,
                                 cover: song.cover,
                                 author: song.author,
                                 duration: song.duration,
+                                source: tiktokSearchType,
                                 timestamp: Date.now()
                               };
                               setRecentSongs(prev => {
@@ -6466,6 +6491,8 @@ export default function App() {
                             <p className="text-[10px] text-white/40 truncate mt-0.5">
                               {tiktokSearchType === "tkaraoke"
                                 ? "TKaraoke"
+                                : tiktokSearchType === "soundcloud"
+                                ? (song.author || "SoundCloud Artist")
                                 : (song.author?.nickname || (song.author?.unique_id ? `${song.author.unique_id}` : (typeof song.author === "string" ? song.author : "TikTok Creator")))}
                             </p>
                           </div>
@@ -6474,6 +6501,8 @@ export default function App() {
                             {/* Source badges */}
                             {tiktokSearchType === "youtube" ? (
                               <span className="text-[8px] font-black tracking-wider text-red-500 bg-red-500/10 border border-red-500/20 px-1 py-0.5 rounded-md uppercase select-none">YT</span>
+                            ) : tiktokSearchType === "soundcloud" ? (
+                              <span className="text-[8px] font-black tracking-wider text-orange-400 bg-orange-500/15 border border-orange-500/30 px-1 py-0.5 rounded-md uppercase select-none">SC</span>
                             ) : tiktokSearchType === "nhaccuatui" ? (
                               <span className="text-[8px] font-black tracking-wider text-[#2cc0ff] bg-[#2cc0ff]/10 border border-[#2cc0ff]/20 px-1 py-0.5 rounded-md uppercase select-none">NCT</span>
                             ) : tiktokSearchType === "tkaraoke" ? (
