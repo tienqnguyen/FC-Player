@@ -2858,33 +2858,140 @@ async function startServer() {
 
   app.get("/api/suno-info", async (req, res) => {
     try {
-      const { sunoId } = req.query;
-      if (!sunoId || typeof sunoId !== "string") {
-        return res.status(400).json({ error: "No Suno ID provided" });
+      const rawInput = (
+        (req.query.sunoId as string) ||
+        (req.query.url as string) ||
+        (req.query.input as string) ||
+        (req.query.q as string) ||
+        ""
+      ).trim();
+
+      if (!rawInput) {
+        return res.status(400).json({ error: "Chưa cung cấp liên kết hoặc ID bài hát Suno." });
       }
 
-      const oembedUrl = `https://studio-api.prod.suno.com/api/oembed?url=https%3A%2F%2Fsuno.com%2Fsong%2F${sunoId}`;
-      const fetchRes = await fetch(oembedUrl);
-      
-      let title = sunoId;
-      if (fetchRes.ok) {
-         const data = await fetchRes.json();
-         if (data && data.title) {
-            title = data.title;
-         }
+      const uuidRegex = /[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i;
+      let resolvedId = "";
+      let title = "";
+      let pageHtml = "";
+
+      // 1. Check if rawInput directly contains a 36-char UUID
+      const directUuidMatch = rawInput.match(uuidRegex);
+      if (directUuidMatch) {
+        resolvedId = directUuidMatch[0].toLowerCase();
+      }
+
+      // 2. If it is a URL or short link (e.g. suno.com/s/..., /s/xxx, /song/xxx), fetch to resolve redirects & HTML
+      const isLikelyUrl = /^https?:\/\//i.test(rawInput) || rawInput.includes("suno.com") || /^(s\/|song\/)/i.test(rawInput);
+
+      if (isLikelyUrl) {
+        let targetFetchUrl = rawInput;
+        if (!/^https?:\/\//i.test(targetFetchUrl)) {
+          if (targetFetchUrl.startsWith("s/") || targetFetchUrl.startsWith("song/")) {
+            targetFetchUrl = `https://suno.com/${targetFetchUrl}`;
+          } else {
+            targetFetchUrl = `https://${targetFetchUrl}`;
+          }
+        }
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+          const pageRes = await fetch(targetFetchUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            },
+            redirect: "follow",
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          // Check if followed redirect landing URL contains the song UUID (e.g. suno.com/song/<UUID>?sh=...)
+          if (pageRes.url) {
+            const redirectMatch = pageRes.url.match(uuidRegex);
+            if (redirectMatch && !resolvedId) {
+              resolvedId = redirectMatch[0].toLowerCase();
+            }
+          }
+
+          if (pageRes.ok) {
+            pageHtml = await pageRes.text();
+
+            // Check canonical link in HTML
+            if (!resolvedId) {
+              const canonicalMatch = pageHtml.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)
+                || pageHtml.match(/rel=["']canonical["'][^>]*href=["']([^"']+)["']/i);
+              if (canonicalMatch) {
+                const canUuid = canonicalMatch[1].match(uuidRegex);
+                if (canUuid) resolvedId = canUuid[0].toLowerCase();
+              }
+            }
+
+            // Check song link or clip entity in HTML
+            if (!resolvedId) {
+              const htmlUuidMatch = pageHtml.match(/suno\.com\/song\/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i)
+                || pageHtml.match(/"id":"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"/i)
+                || pageHtml.match(uuidRegex);
+              if (htmlUuidMatch) {
+                resolvedId = (htmlUuidMatch[1] || htmlUuidMatch[0]).toLowerCase();
+              }
+            }
+
+            // Extract title from HTML metadata
+            const ogTitleMatch = pageHtml.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
+              || pageHtml.match(/<title>([^<]+)<\/title>/i);
+            if (ogTitleMatch && ogTitleMatch[1]) {
+              const cleanTitle = ogTitleMatch[1]
+                .replace(/\s*\|\s*Suno.*$/i, "")
+                .replace(/\s*by\s+.*$/i, "")
+                .trim();
+              if (cleanTitle) {
+                title = cleanTitle;
+              }
+            }
+          }
+        } catch (fetchErr: any) {
+          console.warn("[Suno URL Resolution Warning]", fetchErr.message);
+        }
+      }
+
+      if (!resolvedId) {
+        return res.status(400).json({ error: "Không tìm thấy ID bài hát Suno từ liên kết hoặc mã đã nhập. Vui lòng kiểm tra lại đường dẫn." });
+      }
+
+      // If title not found or equals ID, query Suno oEmbed API
+      if (!title || title === resolvedId) {
+        try {
+          const oembedUrl = `https://studio-api.prod.suno.com/api/oembed?url=https%3A%2F%2Fsuno.com%2Fsong%2F${resolvedId}`;
+          const fetchRes = await fetch(oembedUrl);
+          if (fetchRes.ok) {
+            const data = await fetchRes.json();
+            if (data && data.title) {
+              title = data.title;
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (!title) {
+        title = resolvedId;
       }
 
       // Direct media link & decrypted stream link
-      const mp4Url = `https://cdn1.suno.ai/${sunoId}.mp4`;
-      const m4aUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${sunoId}.m4a`;
-      const decryptedM4aUrl = `/api/suno-decrypt?sunoId=${sunoId}`;
+      const mp4Url = `https://cdn1.suno.ai/${resolvedId}.mp4`;
+      const m4aUrl = `https://d2lwuy8qc234o3.cloudfront.net/1/clip/${resolvedId}.m4a`;
+      const decryptedM4aUrl = `/api/suno-decrypt?sunoId=${resolvedId}`;
+      const canonicalUrl = `https://suno.com/song/${resolvedId}`;
 
       res.json({ 
         title, 
         mp4Url, 
         m4aUrl,
         decryptedM4aUrl,
-        sunoId,
+        sunoId: resolvedId,
+        canonicalUrl,
         mangoDrm: true 
       });
     } catch (e: any) {
@@ -2925,14 +3032,16 @@ async function startServer() {
         return res.status(400).json({ error: "Suno Song ID is required." });
       }
 
-      const { stream, contentLength } = await getDecryptedAudioStream(sunoId);
-      const rawTitle = (typeof title === "string" && title.trim()) ? title.trim() : sunoId;
+      const cleanSunoId = (sunoId.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i) || [sunoId.trim()])[0].toLowerCase();
+
+      const { stream, contentLength } = await getDecryptedAudioStream(cleanSunoId);
+      const rawTitle = (typeof title === "string" && title.trim()) ? title.trim() : cleanSunoId;
       const downloadFilename = `${rawTitle}.m4a`;
 
       res.setHeader("Content-Type", "audio/mp4");
       res.setHeader("Accept-Ranges", "bytes");
       if (download === "true") {
-        res.setHeader("Content-Disposition", formatSafeDownloadHeader(downloadFilename, `${sunoId}.m4a`));
+        res.setHeader("Content-Disposition", formatSafeDownloadHeader(downloadFilename, `${cleanSunoId}.m4a`));
       }
       if (contentLength) {
         res.setHeader("Content-Length", contentLength);
@@ -3003,12 +3112,16 @@ async function startServer() {
 
   app.post("/api/convert-audio-url", async (req, res) => {
     try {
-      const { sunoId, format, title, streamUrl: passedStreamUrl } = req.body || {};
+      const { sunoId: rawSunoId, format, title, streamUrl: passedStreamUrl } = req.body || {};
       const isWav = (format === "wav");
       const isM4a = (format === "m4a");
-      if (!sunoId) {
+      if (!rawSunoId) {
         return res.status(400).json({ error: "Chưa cung cấp Suno Song ID." });
       }
+
+      const sunoId = (typeof rawSunoId === "string" 
+        ? (rawSunoId.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i) || [rawSunoId.trim()])[0] 
+        : rawSunoId).toLowerCase();
 
       const rawTitle = (typeof title === "string" && title.trim()) ? title.trim() : sunoId;
       const targetExt = isWav ? "wav" : isM4a ? "m4a" : "mp3";

@@ -31,7 +31,7 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
   const [targetFormat, setTargetFormat] = useState<"mp3" | "wav" | "m4a">("mp3");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sunoUrl, setSunoUrl] = useState("");
-  const [sunoInfo, setSunoInfo] = useState<{title: string, mp4Url: string, m4aUrl?: string, sunoId: string, mangoDrm?: boolean} | null>(null);
+  const [sunoInfo, setSunoInfo] = useState<{title: string, mp4Url: string, m4aUrl?: string, decryptedM4aUrl?: string, sunoId: string, canonicalUrl?: string, mangoDrm?: boolean} | null>(null);
   const [isFetchingInfo, setIsFetchingInfo] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -56,22 +56,32 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
   };
 
   const fetchInfo = async () => {
-    if (!sunoUrl) return;
-    const match = sunoUrl.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
-    if (!match) {
-       setErrorMsg("Invalid Suno URL or ID. Please check the link.");
-       return;
-    }
-    const sunoId = match[0];
+    const rawInput = sunoUrl.trim();
+    if (!rawInput) return;
     
     setIsFetchingInfo(true);
     setErrorMsg(null);
     try {
-      const res = await fetch(`/api/suno-info?sunoId=${sunoId}`);
-      if (!res.ok) throw new Error("Failed to fetch info from Suno");
+      const match = rawInput.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+      const queryParam = match 
+        ? `sunoId=${encodeURIComponent(match[0])}` 
+        : `url=${encodeURIComponent(rawInput)}`;
+
+      const res = await fetch(`/api/suno-info?${queryParam}`);
+      if (!res.ok) {
+        let errDesc = "Failed to fetch song info";
+        try {
+          const errData = await res.json();
+          errDesc = errData.error || errDesc;
+        } catch (_) {}
+        throw new Error(errDesc);
+      }
       const data = await res.json();
+      if (!data.sunoId) {
+        throw new Error("Không thể trích xuất ID bài hát Suno.");
+      }
       setSunoInfo(data);
-      setDownloadName(cleanVietnameseFilename(data.title, targetFormat, sunoId));
+      setDownloadName(cleanVietnameseFilename(data.title, targetFormat, data.sunoId));
     } catch (err: any) {
       setErrorMsg(err.message || "Failed to fetch song info");
     } finally {
@@ -388,17 +398,17 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
                <div className="flex flex-col gap-2 p-4 border border-white/10 rounded-xl bg-white/5">
                  <div className="flex items-center gap-2 text-white/60 mb-1">
                    <LinkIcon className="w-4 h-4 text-emerald-400" />
-                   <span className="text-[11px] font-medium">Dán link bài hát Suno hoặc ID</span>
+                   <span className="text-[11px] font-medium">Dán link bài hát Suno hoặc ID (Hỗ trợ link rút gọn suno.com/s/...)</span>
                  </div>
                  <input
                    type="text"
-                   placeholder="e.g. https://suno.com/song/2feba957-e976-4588-a734-9b42682e855f"
+                   placeholder="e.g. https://suno.com/s/zDM92s2pPiF7yzI3 hoặc /song/0a3716ae-..."
                    value={sunoUrl}
                    onChange={(e) => setSunoUrl(e.target.value)}
                    className="w-full bg-black/40 border border-white/10 rounded-lg p-3 text-[12px] text-white outline-none focus:border-emerald-500/50 transition-colors placeholder:text-white/20 font-mono"
                  />
                  <button
-                   disabled={sunoUrl.length < 10 || isFetchingInfo}
+                   disabled={sunoUrl.trim().length < 5 || isFetchingInfo}
                    onClick={fetchInfo}
                    className="mt-2 w-full flex items-center justify-center gap-2 font-black text-[11px] tracking-wider uppercase py-3 rounded-xl transition-all bg-emerald-500 hover:bg-emerald-400 text-black shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:bg-white/10 disabled:text-white/30 disabled:shadow-none"
                  >
@@ -412,7 +422,20 @@ export function AudioFormatConverter({ onClose }: { onClose: () => void }) {
                    <div className="flex flex-col">
                      <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider mb-0.5">Bài hát tìm thấy</span>
                      <span className="text-sm font-bold text-white line-clamp-1">{sunoInfo.title}</span>
-                     <span className="text-[10px] text-white/40 font-mono mt-0.5">{sunoInfo.sunoId}</span>
+                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                       <span className="text-[10px] text-white/40 font-mono">{sunoInfo.sunoId}</span>
+                       {sunoInfo.canonicalUrl && (
+                         <a 
+                           href={sunoInfo.canonicalUrl} 
+                           target="_blank" 
+                           rel="noopener noreferrer" 
+                           className="text-[9px] text-emerald-400/80 hover:text-emerald-300 underline font-mono"
+                           title="Mở bài hát gốc trên Suno"
+                         >
+                           suno.com/song/{sunoInfo.sunoId.slice(0, 8)}...
+                         </a>
+                       )}
+                     </div>
                    </div>
                    <button 
                      onClick={() => {
