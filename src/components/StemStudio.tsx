@@ -590,13 +590,20 @@ export default function StemStudio({
   const [newRuleReplace, setNewRuleReplace] = useState<string>("");
 
   // Advanced Suno Bypass States
-  const [bypassMethod, setBypassMethod] = useState<"hyphen" | "zerowidth" | "homoglyph" | "alternating" | "extreme" | "underscore" | "diacritics" | "none">("none");
+  const [bypassMethod, setBypassMethod] = useState<"hyphen" | "zerowidth" | "homoglyph" | "alternating" | "extreme" | "underscore" | "diacritics" | "tail_noise" | "none">("none");
   const [hyphenStyle, setHyphenStyle] = useState<"consonant" | "auto">("consonant");
   const [bypassIntensity, setBypassIntensity] = useState<"minimal" | "low" | "medium" | "high">("minimal");
   const [protectTags, setProtectTags] = useState<boolean>(true);
   const [preserveSensitive, setPreserveSensitive] = useState<boolean>(true);
   const [showSensitiveWords, setShowSensitiveWords] = useState<boolean>(false);
   const [sensitiveWords, setSensitiveWords] = useState<string[]>(["lên", "nên", "nói", "lòng", "nỗi", "lo", "nắng", "lạnh", "non", "nơi", "lại", "nào", "trời", "chờ", "trăng", "chân", "tròn", "chưa", "trước", "chỉ", "trách", "chạy", "sao", "xanh", "sương", "xa", "sông", "xuống", "sầu", "xưa", "sáng", "xin", "rừng", "dòng", "gió", "ra", "dù", "gần", "rơi", "đường", "duyên", "giấc", "về", "vẫn", "vào", "với", "vui", "vàng", "mắt", "mắc", "biết", "tiếc", "yêu", "thương", "anh", "em", "đâu", "đây"]);
+
+  // Tail Noise / Ký tự lạ cuối bài (wwww...) States
+  const [tailNoiseCharType, setTailNoiseCharType] = useState<"w" | "random" | "custom">("w");
+  const [tailNoiseLength, setTailNoiseLength] = useState<number>(300);
+  const [tailNoiseCustomChar, setTailNoiseCustomChar] = useState<string>("w");
+  const [tailNoiseTagStyle, setTailNoiseTagStyle] = useState<"outro" | "end" | "none">("outro");
+  const [alsoAppendTailNoise, setAlsoAppendTailNoise] = useState<boolean>(false);
 
     const [isAIBypassing, setIsAIBypassing] = useState<boolean>(false);
   const [aiBypassStatus, setAiBypassStatus] = useState<string>("");
@@ -929,9 +936,75 @@ export default function StemStudio({
     }, 3000);
   };
 
+  const generateTailNoiseString = (
+    type: "w" | "random" | "custom",
+    len: number,
+    customChar: string,
+    tagStyle: "outro" | "end" | "none"
+  ): string => {
+    const targetLength = Math.max(10, Math.min(2000, len || 300));
+    let noiseBody = "";
+
+    if (type === "w") {
+      noiseBody = "w".repeat(targetLength);
+    } else if (type === "random") {
+      const charset = "wzxqkvjymnprstdglchf";
+      const arr: string[] = [];
+      for (let i = 0; i < targetLength; i++) {
+        arr.push(charset[Math.floor(Math.random() * charset.length)]);
+      }
+      noiseBody = arr.join("");
+    } else {
+      const raw = customChar.trim() || "w";
+      let repeated = "";
+      while (repeated.length < targetLength) {
+        repeated += raw;
+      }
+      noiseBody = repeated.slice(0, targetLength);
+    }
+
+    if (tagStyle === "outro") {
+      return `\n\n[Outro]\n${noiseBody}`;
+    } else if (tagStyle === "end") {
+      return `\n\n[End]\n${noiseBody}`;
+    } else {
+      return `\n\n${noiseBody}`;
+    }
+  };
+
+  const handleRemoveTailNoise = () => {
+    const currentText = lyricFormatted || lyricRaw;
+    if (!currentText) return;
+
+    const cleanedText = currentText
+      .replace(/\n\s*\[(Outro|End)\]\s*\n[a-z0-9~!@#$%^&*()_+=\-[\]{}|;:,.<>?]{30,}\s*$/i, "")
+      .replace(/\n\s*[a-z0-9~!@#$%^&*()_+=\-[\]{}|;:,.<>?]{30,}\s*$/i, "")
+      .trimEnd();
+
+    recordLyricState(cleanedText);
+  };
+
+  const handleApplyTailNoise = () => {
+    const currentText = lyricFormatted || lyricRaw;
+    if (!currentText) return;
+
+    const baseText = currentText
+      .replace(/\n\s*\[(Outro|End)\]\s*\n[a-z0-9~!@#$%^&*()_+=\-[\]{}|;:,.<>?]{30,}\s*$/i, "")
+      .replace(/\n\s*[a-z0-9~!@#$%^&*()_+=\-[\]{}|;:,.<>?]{30,}\s*$/i, "")
+      .trimEnd();
+
+    const tail = generateTailNoiseString(tailNoiseCharType, tailNoiseLength, tailNoiseCustomChar, tailNoiseTagStyle);
+    recordLyricState(baseText + tail);
+  };
+
   const handleApplyAdvancedBypass = () => {
     let textToProcess = lyricFormatted || lyricRaw;
     if (!textToProcess) return;
+
+    if (bypassMethod === 'tail_noise') {
+      handleApplyTailNoise();
+      return;
+    }
 
     let intensityProb = 0.65;
     if (bypassIntensity === 'minimal') intensityProb = 0.15;
@@ -1057,7 +1130,16 @@ export default function StemStudio({
       }).join('');
     });
 
-    recordLyricState(processedLines.join('\n'));
+    let finalText = processedLines.join('\n');
+    if (alsoAppendTailNoise) {
+      const baseClean = finalText
+        .replace(/\n\s*\[(Outro|End)\]\s*\n[a-z0-9~!@#$%^&*()_+=\-[\]{}|;:,.<>?]{30,}\s*$/i, "")
+        .replace(/\n\s*[a-z0-9~!@#$%^&*()_+=\-[\]{}|;:,.<>?]{30,}\s*$/i, "")
+        .trimEnd();
+      finalText = baseClean + generateTailNoiseString(tailNoiseCharType, tailNoiseLength, tailNoiseCustomChar, tailNoiseTagStyle);
+    }
+
+    recordLyricState(finalText);
   };
 
   const handleApplySelectedQuickPicks = () => {
@@ -3771,8 +3853,18 @@ export default function StemStudio({
                               </div>
                               <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Đổi "vẫn" thành "vẩn", "giữa" thành "giửa". Đánh lừa filter tốt và Suno vẫn hát khá giống.</span>
                            </button>
-                           {/* Button 7 - Pro / Extreme */}
-                           <button onClick={() => setBypassMethod("extreme")} className={`p-3 border rounded-xl flex flex-col items-start gap-1.5 transition-all text-left sm:col-span-2 ${bypassMethod === 'extreme' ? 'bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-black/60 border-red-500/20 text-white/70 hover:bg-red-500/10'}`}>
+                           {/* Button 7 - Tail Noise Buffer (wwww...) */}
+                           <button onClick={() => setBypassMethod("tail_noise")} className={`p-3 border rounded-xl flex flex-col items-start gap-1.5 transition-all text-left ${bypassMethod === 'tail_noise' ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.2)]' : 'bg-black/60 border-white/5 text-white/70 hover:bg-white/5'}`}>
+                              <div className="flex items-center justify-between w-full">
+                                <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1">
+                                  <Sparkles className="w-3 h-3 text-amber-400" /> Ký tự lạ cuối bài (wwww...)
+                                </span>
+                                <span className="flex items-center text-[9px] text-amber-400 font-bold bg-amber-400/10 px-1.5 py-0.5 rounded">SUNO ★★★★★</span>
+                              </div>
+                              <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Thêm 100-1000 chữ "w", random hoặc tự chọn vào cuối bài. Làm nhiễu bộ đệm token Suno, lách kiểm duyệt & bản quyền cực nhạy mà giữ nguyên 100% lời chính.</span>
+                           </button>
+                           {/* Button 8 - Pro / Extreme */}
+                           <button onClick={() => setBypassMethod("extreme")} className={`p-3 border rounded-xl flex flex-col items-start gap-1.5 transition-all text-left ${bypassMethod === 'extreme' ? 'bg-red-500/20 border-red-500 text-red-400 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'bg-black/60 border-red-500/20 text-white/70 hover:bg-red-500/10'}`}>
                               <div className="flex items-center justify-between w-full">
                                 <span className="text-[11px] font-bold text-red-400">Chuyên nghiệp (Pro / Nhiễu loạn)</span>
                                 <span className="flex items-center text-[9px] text-red-400 font-bold bg-red-400/10 px-1.5 py-0.5 rounded">ULTIMATE MODE</span>
@@ -3780,6 +3872,181 @@ export default function StemStudio({
                               <span className="text-[9px] opacity-70 leading-relaxed text-white/60">Sử dụng mã ASCII, Unicode ẩn, invisible separators, kết hợp tối đa để đánh lừa các filter mạnh nhất.</span>
                            </button>
                         </div>
+                        
+                        {/* Tail Noise (Ký tự lạ cuối bài) Settings Panel */}
+                        {bypassMethod === 'tail_noise' && (
+                           <div className="flex flex-col bg-black/40 p-3.5 rounded-xl border border-amber-500/30 mb-2 gap-3 relative shadow-[0_0_20px_rgba(245,158,11,0.08)]">
+                              <div className="flex items-center justify-between flex-wrap gap-2">
+                                 <div className="flex flex-col gap-0.5">
+                                    <span className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
+                                       <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                                       Cấu hình ký tự lạ cuối bài (wwww...)
+                                    </span>
+                                    <span className="text-[9px] text-white/50">
+                                       Đệm chuỗi ký tự ở cuối bài để vô hiệu hóa bộ lọc kiểm duyệt của Suno AI
+                                    </span>
+                                 </div>
+                                 <div className="flex items-center gap-1.5 ml-auto">
+                                    <button
+                                       onClick={handleRemoveTailNoise}
+                                       disabled={!lyricFormatted && !lyricRaw}
+                                       className="text-[8.5px] font-bold text-red-400/80 hover:text-red-300 hover:bg-red-500/10 px-2 py-1 rounded border border-red-500/20 transition-all cursor-pointer flex items-center gap-1"
+                                       title="Dọn dẹp chuỗi ký tự lạ ở cuối lời bài hát"
+                                    >
+                                       <Trash2 className="w-2.5 h-2.5" />
+                                       Xóa đuôi lạ
+                                    </button>
+                                    <button
+                                       onClick={handleApplyTailNoise}
+                                       disabled={!lyricFormatted && !lyricRaw}
+                                       className="bg-amber-400 hover:bg-amber-300 disabled:opacity-40 text-black text-[9px] font-black uppercase tracking-wider py-1 px-3 rounded-lg transition-all flex items-center gap-1 shadow-md cursor-pointer"
+                                       title="Chèn ngay chuỗi ký tự lạ vào cuối bài"
+                                    >
+                                       <Plus className="w-3 h-3" />
+                                       Chèn vào cuối bài ngay
+                                    </button>
+                                 </div>
+                              </div>
+
+                              {/* 1. Chọn kiểu ký tự: w vs random vs custom */}
+                              <div className="flex flex-col gap-1.5">
+                                 <span className="text-[10px] font-bold text-white/90">1. Kiểu ký tự:</span>
+                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <button
+                                       type="button"
+                                       onClick={() => setTailNoiseCharType("w")}
+                                       className={`p-2 rounded-lg border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${tailNoiseCharType === 'w' ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.15)]' : 'bg-black/40 border-white/10 text-white/60 hover:bg-white/5'}`}
+                                    >
+                                       <div className="flex items-center justify-between">
+                                          <span className="text-[10px] font-bold text-white">Chuỗi chữ "w"</span>
+                                          <span className="text-[8px] font-black bg-amber-400/20 text-amber-300 px-1 py-0.2 rounded">Khuyên dùng</span>
+                                       </div>
+                                       <span className="text-[8px] text-white/50 font-mono truncate">wwwwwwwwwwwwwwwwwwww...</span>
+                                    </button>
+
+                                    <button
+                                       type="button"
+                                       onClick={() => setTailNoiseCharType("random")}
+                                       className={`p-2 rounded-lg border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${tailNoiseCharType === 'random' ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.15)]' : 'bg-black/40 border-white/10 text-white/60 hover:bg-white/5'}`}
+                                    >
+                                       <div className="flex items-center justify-between">
+                                          <span className="text-[10px] font-bold text-white">Ký tự ngẫu nhiên</span>
+                                          <span className="text-[8px] font-bold bg-white/10 text-white/70 px-1 py-0.2 rounded">Random</span>
+                                       </div>
+                                       <span className="text-[8px] text-white/50 font-mono truncate">wzxqkvjymnprstdglchf...</span>
+                                    </button>
+
+                                    <button
+                                       type="button"
+                                       onClick={() => setTailNoiseCharType("custom")}
+                                       className={`p-2 rounded-lg border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${tailNoiseCharType === 'custom' ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.15)]' : 'bg-black/40 border-white/10 text-white/60 hover:bg-white/5'}`}
+                                    >
+                                       <div className="flex items-center justify-between">
+                                          <span className="text-[10px] font-bold text-white">User tự chọn</span>
+                                          <span className="text-[8px] font-bold bg-white/10 text-white/70 px-1 py-0.2 rounded">Tùy biến</span>
+                                       </div>
+                                       <span className="text-[8px] text-white/50 truncate">Tự nhập ký tự mong muốn</span>
+                                    </button>
+                                 </div>
+
+                                 {tailNoiseCharType === 'custom' && (
+                                    <div className="flex items-center gap-2 mt-1 bg-black/50 border border-amber-500/30 p-2 rounded-lg">
+                                       <span className="text-[9px] text-amber-400 font-bold shrink-0">Ký tự / Chuỗi tùy chọn:</span>
+                                       <input
+                                          type="text"
+                                          value={tailNoiseCustomChar}
+                                          onChange={(e) => setTailNoiseCustomChar(e.target.value)}
+                                          placeholder="Nhập ký tự hoặc từ (vd: w, x, z, ~, la...)"
+                                          className="bg-black/60 border border-white/20 rounded px-2 py-1 text-[11px] text-white font-mono flex-1 outline-none focus:border-amber-400"
+                                       />
+                                    </div>
+                                 )}
+                              </div>
+
+                              {/* 2. Số lượng ký tự (100 - 1000 character) */}
+                              <div className="flex flex-col gap-1.5">
+                                 <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-bold text-white/90">2. Số lượng ký tự (100 - 1000 character):</span>
+                                    <span className="text-[11px] font-mono font-black text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
+                                       {tailNoiseLength} ký tự
+                                    </span>
+                                 </div>
+
+                                 {/* Range slider */}
+                                 <input
+                                    type="range"
+                                    min={100}
+                                    max={1000}
+                                    step={25}
+                                    value={tailNoiseLength}
+                                    onChange={(e) => setTailNoiseLength(parseInt(e.target.value, 10))}
+                                    className="w-full accent-amber-400 cursor-pointer h-1.5 bg-white/10 rounded-lg appearance-none"
+                                 />
+
+                                 {/* Quick presets */}
+                                 <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[8px] text-white/40 uppercase tracking-wider">Chọn nhanh:</span>
+                                    {[100, 200, 300, 500, 750, 1000].map((preset) => (
+                                       <button
+                                          key={preset}
+                                          type="button"
+                                          onClick={() => setTailNoiseLength(preset)}
+                                          className={`text-[8.5px] font-mono font-bold px-2 py-0.5 rounded transition-all cursor-pointer ${tailNoiseLength === preset ? 'bg-amber-400 text-black shadow' : 'bg-white/5 hover:bg-white/10 text-white/70 border border-white/10'}`}
+                                       >
+                                          {preset} {preset === 100 ? '(Nhẹ)' : preset === 300 ? '(Chuẩn)' : preset === 1000 ? '(Cực đại)' : ''}
+                                       </button>
+                                    ))}
+                                 </div>
+                              </div>
+
+                              {/* 3. Thẻ bao bọc cuối bài */}
+                              <div className="flex flex-col gap-1.5">
+                                 <span className="text-[10px] font-bold text-white/90">3. Vị trí & Thẻ cuối bài:</span>
+                                 <div className="grid grid-cols-3 gap-2">
+                                    <button
+                                       type="button"
+                                       onClick={() => setTailNoiseTagStyle("outro")}
+                                       className={`p-2 rounded-lg border text-center transition-all cursor-pointer ${tailNoiseTagStyle === 'outro' ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-black/40 border-white/10 text-white/60 hover:bg-white/5'}`}
+                                    >
+                                       <span className="text-[9.5px] font-bold block">[Outro]</span>
+                                       <span className="text-[7.5px] text-white/40">Kèm thẻ [Outro] (Khuyên dùng)</span>
+                                    </button>
+                                    <button
+                                       type="button"
+                                       onClick={() => setTailNoiseTagStyle("end")}
+                                       className={`p-2 rounded-lg border text-center transition-all cursor-pointer ${tailNoiseTagStyle === 'end' ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-black/40 border-white/10 text-white/60 hover:bg-white/5'}`}
+                                    >
+                                       <span className="text-[9.5px] font-bold block">[End]</span>
+                                       <span className="text-[7.5px] text-white/40">Kèm thẻ [End]</span>
+                                    </button>
+                                    <button
+                                       type="button"
+                                       onClick={() => setTailNoiseTagStyle("none")}
+                                       className={`p-2 rounded-lg border text-center transition-all cursor-pointer ${tailNoiseTagStyle === 'none' ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-black/40 border-white/10 text-white/60 hover:bg-white/5'}`}
+                                    >
+                                       <span className="text-[9.5px] font-bold block">Chỉ ký tự</span>
+                                       <span className="text-[7.5px] text-white/40">Nối trực tiếp không thẻ</span>
+                                    </button>
+                                 </div>
+                              </div>
+
+                              {/* 4. Live Preview Box */}
+                              <div className="flex flex-col gap-1 bg-black/60 p-2.5 rounded-lg border border-white/10">
+                                 <div className="flex items-center justify-between text-[8.5px] text-white/50">
+                                    <span>Mẫu xem trước chuỗi sẽ chèn:</span>
+                                    <span className="font-mono text-amber-400/80">{tailNoiseLength} ký tự</span>
+                                 </div>
+                                 <div className="text-[9px] font-mono text-amber-300/80 break-all max-h-14 overflow-y-auto leading-tight bg-black/40 p-1.5 rounded border border-white/5 select-all">
+                                    {tailNoiseTagStyle === 'outro' ? '[Outro]\n' : tailNoiseTagStyle === 'end' ? '[End]\n' : ''}
+                                    {tailNoiseCharType === 'w' 
+                                       ? 'w'.repeat(Math.min(100, tailNoiseLength)) + (tailNoiseLength > 100 ? '...' : '') 
+                                       : tailNoiseCharType === 'random' 
+                                          ? 'wzxqkvjymnprstdglchf'.repeat(Math.ceil(Math.min(100, tailNoiseLength) / 20)).slice(0, Math.min(100, tailNoiseLength)) + (tailNoiseLength > 100 ? '...' : '')
+                                          : (tailNoiseCustomChar || 'w').repeat(Math.ceil(Math.min(100, tailNoiseLength) / Math.max(1, (tailNoiseCustomChar || 'w').length))).slice(0, Math.min(100, tailNoiseLength)) + (tailNoiseLength > 100 ? '...' : '')}
+                                 </div>
+                              </div>
+                           </div>
+                        )}
                         
                         {(bypassMethod === 'hyphen' || bypassMethod === 'zerowidth') && (
                            <div className="flex flex-col bg-black/40 p-3 rounded-xl border border-white/10 mb-2 gap-3 relative">
@@ -3807,6 +4074,28 @@ export default function StemStudio({
                                  <span className="text-[12px]">💡</span>
                                  <span className="text-[9px] text-emerald-400 leading-relaxed font-medium"><strong>Khuyên dùng cho Suno AI:</strong> Chế độ Phân tách Phụ âm đầu giúp công nghệ TTS (phát âm) của Suno tự động bắt nhịp và ghép vần cực mượt từ phụ âm sang nguyên âm mà không hề bị ngắc ngứ hay đọc từ "gạch"!</span>
                               </div>
+                           </div>
+                        )}
+                        
+                        {bypassMethod !== 'tail_noise' && (
+                           <div className="flex flex-col bg-black/30 p-2.5 rounded-xl border border-amber-500/20 mb-2">
+                              <label className="flex items-center gap-2.5 cursor-pointer">
+                                 <input
+                                    type="checkbox"
+                                    checked={alsoAppendTailNoise}
+                                    onChange={(e) => setAlsoAppendTailNoise(e.target.checked)}
+                                    className="rounded border-amber-400/40 bg-black/40 text-amber-400 focus:ring-0 w-3.5 h-3.5 cursor-pointer"
+                                 />
+                                 <div className="flex flex-col">
+                                    <span className="text-[9.5px] font-bold text-amber-300 flex items-center gap-1.5">
+                                       <Sparkles className="w-3 h-3 text-amber-400" />
+                                       Combo: Chèn thêm chuỗi ký tự lạ ({tailNoiseLength} ký tự "{tailNoiseCharType === 'w' ? 'w' : tailNoiseCharType === 'random' ? 'random' : tailNoiseCustomChar}") vào cuối bài
+                                    </span>
+                                    <span className="text-[8.5px] text-white/50">
+                                       Nhân đôi hiệu quả lách Suno: vừa xử lý từ ngữ trong bài vừa gắn đệm token ở cuối bài
+                                    </span>
+                                 </div>
+                              </label>
                            </div>
                         )}
                         
