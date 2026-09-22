@@ -5182,10 +5182,17 @@ export default function App() {
                 <div className="flex items-center gap-5 justify-center w-full">
                   <button 
                     onClick={handleToggleHD} 
-                    className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all active:scale-95 ${isSignatureSound ? 'text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.8)]' : 'text-white/40 hover:text-white/70'}`}
+                    className={`flex items-center justify-center px-3 py-1.5 rounded-xl border transition-all duration-300 active:scale-95 ${
+                      isSignatureSound 
+                        ? 'border-amber-400/50 bg-amber-400/15 text-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.35)]' 
+                        : 'border-white/10 bg-white/5 text-white/50 hover:text-white/80 hover:bg-white/10 hover:border-white/20'
+                    }`}
                     title="Toggle Lossless HD Audio"
                   >
-                      <span className="font-black text-[13px] tracking-widest uppercase">HD</span>
+                      <span className="font-black text-[12px] tracking-widest uppercase flex items-center gap-1.5">
+                        <span className={`w-1.5 h-1.5 rounded-full transition-all ${isSignatureSound ? 'bg-amber-400 animate-pulse shadow-[0_0_6px_#fbbf24]' : 'bg-white/30'}`} />
+                        HD
+                      </span>
                   </button>
                   {(() => {
                     const ytUrl = currentSong ? getYouTubeEmbedUrl(currentSong.originalUrl) : null;

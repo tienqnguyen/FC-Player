@@ -150,6 +150,37 @@ html, body {
   overscroll-behavior-y: none;
 }
 
+/* Custom Slim & Elegant Global Scrollbar (Nhỏ & Đẹp) */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+::-webkit-scrollbar-thumb:active {
+  background: rgba(245, 158, 11, 0.65);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
 body {
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
